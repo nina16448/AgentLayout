@@ -1,0 +1,356 @@
+"""Aesthetic Judge Action — Agent 4 of the AgentLayout pipeline.
+
+The only multi-modal LLM agent in the pipeline. Renders each candidate to a
+PNG, encodes it as base64, and asks a vision-capable LLM to score the layouts
+across four aesthetic dimensions (each 0-25, total 0-100).
+
+Pipeline position::
+
+    K_VALID candidates that passed Quality Checker
+        |
+        v
+    JudgeAesthetic (THIS) -> AestheticJudgement
+        |                       |
+        |                       +-> decision == 'accept' (>= 75) -> stop, return best
+        |                       +-> decision == 'reject'         -> feedback to
+        |                                                            Generator (rounds 1..N)
+        |                                                            or Analyst (round N+1+)
+
+Validation layers:
+1. Pydantic schema (``AestheticJudgement`` / ``Evaluation`` / ``JudgeScores``):
+   - JudgeScores 4 dims each 0-25
+   - Evaluation total == sum(scores)  (model_validator)
+   - accept <-> feedback null, reject <-> feedback non-null  (model_validator)
+2. Action-level semantic check (``_validate_against_input``):
+   - best_candidate_id appears in input candidates
+   - evaluations id set == input candidates id set
+
+The prompt deliberately shows TWO format examples (accept and reject) so the
+LLM does not collapse onto one of the two output shapes by mimicry.
+"""
+from __future__ import annotations
+
+import json
+from typing import List, Optional
+
+from pydantic import ValidationError
+
+from metagpt.actions import Action
+from metagpt.ext.agentlayout.schema import (
+    AestheticJudgement,
+    BackgroundAnalysis,
+    Candidate,
+    DesignSpec,
+    LayoutTree,
+)
+from metagpt.ext.agentlayout.tools.renderer import image_to_base64, render
+from metagpt.logs import logger
+from metagpt.utils.common import CodeParser
+
+
+# ============================================================
+# Custom exception
+# ============================================================
+
+
+class _JudgementValidationError(ValueError):
+    """Pydantic accepted the JSON, but best_candidate_id or evaluations don't match input."""
+
+
+# ============================================================
+# Prompt template (verbatim port of layout_agent/aesthetic_judge.md)
+# ============================================================
+
+
+FORMAT_EXAMPLE_ACCEPT = """{
+  "decision": "accept",
+  "best_candidate_id": "cand_02",
+  "evaluations": [
+    {
+      "candidate_id": "cand_01",
+      "total": 74,
+      "scores": {
+        "requirement_alignment": 20,
+        "info_hierarchy": 18,
+        "layout_balance": 19,
+        "visual_coherence": 17
+      },
+      "strengths": "headline_1 position is clear, logo_1 in top-right matches the brief.",
+      "weaknesses": "product_img_1 and headline_1 are too far apart, weakening their semantic link."
+    },
+    {
+      "candidate_id": "cand_02",
+      "total": 85,
+      "scores": {
+        "requirement_alignment": 23,
+        "info_hierarchy": 21,
+        "layout_balance": 20,
+        "visual_coherence": 21
+      },
+      "strengths": "Generous whitespace, clear visual hierarchy, palette matches style_keywords.",
+      "weaknesses": "price_1 is slightly small and could be more legible."
+    }
+  ],
+  "feedback": null
+}"""
+
+
+FORMAT_EXAMPLE_REJECT = """{
+  "decision": "reject",
+  "best_candidate_id": "cand_03",
+  "evaluations": [
+    {
+      "candidate_id": "cand_03",
+      "total": 71,
+      "scores": {
+        "requirement_alignment": 20,
+        "info_hierarchy": 16,
+        "layout_balance": 18,
+        "visual_coherence": 17
+      },
+      "strengths": "Palette aligns with style_keywords, background space is well used.",
+      "weaknesses": "headline_1 is too small to dominate the layout, inconsistent with its importance."
+    }
+  ],
+  "feedback": {
+    "common_issues": "All candidates fail to make headline_1 dominate visually. product_img_1 and headline_1 are too far apart.",
+    "suggestions": [
+      "Increase headline_1 size so it visibly dominates other text elements.",
+      "Reduce the distance between product_img_1 and headline_1 so they form a visual group.",
+      "Consider bolder whitespace to avoid a crowded layout."
+    ],
+    "structured_suggestions": [
+      {
+        "kind": "typography",
+        "target_id": "headline_1",
+        "metric": "font_size",
+        "op": ">=",
+        "value": 72,
+        "rationale": "Currently ~32px, too small to anchor info hierarchy."
+      },
+      {
+        "kind": "spacing",
+        "target_id": "product_img_1",
+        "metric": "gap_to:headline_1",
+        "op": "<=",
+        "value": 40,
+        "rationale": "Currently ~180px apart, weakens semantic grouping."
+      },
+      {
+        "kind": "resize",
+        "target_id": "headline_1",
+        "metric": "width",
+        "op": ">=",
+        "value": 600,
+        "rationale": "Width must dominate the canvas band to read as the title."
+      }
+    ]
+  }
+}"""
+
+
+PROMPT_TEMPLATE = """Role: You are a senior graphic designer and aesthetic evaluator.
+Your goal is to evaluate each layout candidate and provide scores,
+strengths, weaknesses, and actionable improvement suggestions.
+
+# Context
+Design Spec: {design_spec}
+Layout Tree: {layout_tree}
+Dominant palette: {dominant_palette}
+Candidate IDs (in the same order as the attached images): {candidate_ids}
+
+# Scoring rubric (each dimension 0-25, total 100)
+A. requirement_alignment (0-25)
+   Does the layout fulfill the user's design goals and hard_constraints?
+
+B. info_hierarchy (0-25)
+   Is the visual focus clear? Is the reading order natural?
+   Do elements follow the importance hierarchy in the Layout Tree?
+
+C. layout_balance (0-25)
+   Is visual weight distributed evenly?
+   No excessive crowding or empty space?
+
+D. visual_coherence (0-25)
+   Do the style, spacing, and colors align with style_keywords and dominant_palette?
+
+# Structured suggestions (REQUIRED on reject)
+When the best candidate scores below 80 you must emit a `feedback` object that
+contains BOTH `suggestions` (free text, human-readable) AND
+`structured_suggestions` (machine-readable, verifiable). The downstream Layout
+Generator will only act on `structured_suggestions`; vague free text gets ignored.
+
+Each structured suggestion is a JSON object with these fields:
+
+  - kind: one of
+        "resize"      -> change an element's width or height (numeric pixels)
+        "move"        -> change an element's x/y/top/left/right/bottom (numeric pixels)
+        "spacing"     -> change a gap between two elements (numeric pixels)
+        "typography"  -> change font_size or font_weight (numeric)
+        "color"       -> set a hex color like "#RRGGBB"
+        "zorder"      -> set explicit z_index (integer)
+        "other"       -> avoid; only use when none of the above fit
+  - target_id: an element id that EXISTS in the Layout Tree above.
+  - metric: a short string naming the quantity, e.g.
+        "width", "height", "x", "y", "top", "left", "right", "bottom",
+        "font_size", "font_weight", "gap_to:OTHER_ID", "z_index", "color".
+  - op: a comparator or action, one of ">=", "<=", "==", "set_to",
+        "increase_by", "decrease_by".
+  - value: the target value. MUST be numeric (int or float) when kind is
+        resize / move / spacing / typography / zorder. MUST be a hex string
+        like "#FFFFFF" when kind is color.
+  - rationale: optional one-line explanation.
+
+Numeric example:  {{"kind":"resize","target_id":"headline_1","metric":"height","op":">=","value":80}}
+Color example:    {{"kind":"color","target_id":"bg_1","metric":"color","op":"set_to","value":"#1A1A2E"}}
+
+# Format examples (output one JSON matching whichever case applies)
+
+Case A -- best score >= 75, accept:
+{format_example_accept}
+
+Case B -- best score < 75, reject with feedback:
+{format_example_reject}
+
+# Instruction
+ATTENTION: Evaluate ALL candidates listed above. Do not skip any.
+ATTENTION: strengths and weaknesses must reference specific element IDs.
+ATTENTION: If decision is "reject", feedback.structured_suggestions MUST contain
+           at least one entry and SHOULD contain 2 to 5 entries. Each entry must
+           reference an element id that exists in the Layout Tree.
+ATTENTION: For numeric kinds (resize / move / spacing / typography / zorder),
+           the `value` field must be a number, NOT a string like "bigger".
+ATTENTION: Prefer kind != "other"; aim for at most one "other" per response.
+ATTENTION: If decision is "accept", feedback must be null.
+ATTENTION: best_candidate_id must be the candidate with the highest total score.
+ATTENTION: Each evaluation's "total" must equal the sum of its four scores.
+Output a single JSON object, nothing else.
+"""
+
+
+MAX_RETRIES: int = 3
+
+
+# ============================================================
+# Action
+# ============================================================
+
+
+class JudgeAesthetic(Action):
+    """Agent 4 -- score candidate layouts and emit feedback when none qualify."""
+
+    name: str = "JudgeAesthetic"
+    desc: str = (
+        "Evaluate rendered layout candidates across four aesthetic dimensions; "
+        "either accept the highest-scoring one or emit actionable feedback for "
+        "the next iteration."
+    )
+
+    async def run(
+        self,
+        *,
+        candidates: List[Candidate],
+        spec: DesignSpec,
+        tree: LayoutTree,
+        bg: BackgroundAnalysis,
+    ) -> AestheticJudgement:
+        """Render candidates, build multi-modal prompt, call vision LLM, validate.
+
+        Pre-condition: ``spec`` must be enriched (Asset Analyzer ran).
+        Each candidate is rendered to PNG and base64-encoded; the order in the
+        ``images`` list matches the order of ``candidates`` so the LLM can
+        match images to ``candidate_ids``.
+        """
+        spec.assert_enriched()
+        if not candidates:
+            raise ValueError("JudgeAesthetic requires at least one candidate.")
+
+        if not self.llm.support_image_input():
+            logger.warning(
+                f"JudgeAesthetic: LLM model '{getattr(self.llm, 'model', '?')}' does "
+                f"not support image input. The 'images' arg will be silently dropped "
+                f"and scores will be based on text context only."
+            )
+
+        prompt = self._build_prompt(candidates, spec, tree, bg)
+        images = self._render_images(candidates, spec)
+
+        last_err: Optional[Exception] = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            rsp = await self.llm.aask(prompt, images=images)
+            try:
+                judgement = self._parse_response(rsp)
+                self._validate_against_input(judgement, candidates)
+                return judgement
+            except (ValueError, ValidationError) as err:
+                last_err = err
+                logger.warning(
+                    f"JudgeAesthetic attempt {attempt}/{MAX_RETRIES} failed: {err}"
+                )
+
+        raise ValueError(
+            f"JudgeAesthetic: could not produce a valid AestheticJudgement after "
+            f"{MAX_RETRIES} attempts. Last error: {last_err}"
+        )
+
+    def _build_prompt(
+        self,
+        candidates: List[Candidate],
+        spec: DesignSpec,
+        tree: LayoutTree,
+        bg: BackgroundAnalysis,
+    ) -> str:
+        """Render PROMPT_TEMPLATE; the actual images go via ``llm.aask(images=...)``."""
+        spec_str = json.dumps(spec.model_dump(), indent=2, ensure_ascii=False)
+        tree_dump = {"layout_tree": tree.root.model_dump()}
+        tree_str = json.dumps(tree_dump, indent=2, ensure_ascii=False)
+        palette_str = json.dumps(bg.dominant_palette, ensure_ascii=False)
+        cand_ids_str = json.dumps(
+            [c.candidate_id for c in candidates], ensure_ascii=False
+        )
+        return PROMPT_TEMPLATE.format(
+            design_spec=spec_str,
+            layout_tree=tree_str,
+            dominant_palette=palette_str,
+            candidate_ids=cand_ids_str,
+            format_example_accept=FORMAT_EXAMPLE_ACCEPT,
+            format_example_reject=FORMAT_EXAMPLE_REJECT,
+        )
+
+    @staticmethod
+    def _render_images(candidates: List[Candidate], spec: DesignSpec) -> List[str]:
+        """Render each candidate to a base64 PNG string, preserving order."""
+        return [image_to_base64(render(c, spec)) for c in candidates]
+
+    @staticmethod
+    def _parse_response(rsp: str) -> AestheticJudgement:
+        """Strip markdown fences if present, then validate against AestheticJudgement."""
+        text = rsp.strip()
+        if "```" in text:
+            try:
+                text = CodeParser.parse_code(text=text, lang="json") or text
+            except Exception:
+                pass
+        return AestheticJudgement.model_validate_json(text)
+
+    @staticmethod
+    def _validate_against_input(
+        judgement: AestheticJudgement, candidates: List[Candidate]
+    ) -> None:
+        """Raise if best_candidate_id or evaluations don't match the input candidates."""
+        cand_ids = {c.candidate_id for c in candidates}
+        eval_ids = {e.candidate_id for e in judgement.evaluations}
+
+        if judgement.best_candidate_id not in cand_ids:
+            raise _JudgementValidationError(
+                f"best_candidate_id '{judgement.best_candidate_id}' "
+                f"not found in input candidate ids {sorted(cand_ids)}."
+            )
+
+        missing = sorted(cand_ids - eval_ids)
+        extra = sorted(eval_ids - cand_ids)
+        if missing or extra:
+            raise _JudgementValidationError(
+                f"AestheticJudgement evaluations id set does not match input. "
+                f"missing={missing}, extra={extra}"
+            )

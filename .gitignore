@@ -119,6 +119,10 @@ ENV/
 env.bak/
 venv.bak/
 
+# Local secrets — never commit API keys. Use *.example.yaml as templates.
+config/config2.yaml
+config/vault.yaml
+
 # Spyder project settings
 .spyderproject
 .spyproject
