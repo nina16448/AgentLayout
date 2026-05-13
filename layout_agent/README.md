@@ -2233,6 +2233,32 @@ pytest tests/metagpt/ext/agentlayout/ -m requires_llm --collect-only --no-cov
 - ❌ 5 處需要同時改的 hardcoded value 是個 anti-pattern；後續若再改數值，最好考慮把 PROMPT_TEMPLATE 也改用 `{threshold}` placeholder（這次先不動以免擴大改動範圍）
 - ⚠️ 未來該做：在 N=10+ Crello sample 上重做 corner Case 2 看 GT 分布，數據驗證 75 是否是 sweet spot
 
+### Aesthetic Judge Prompt 兩階段 leak 修補（2026-05-14 步驟 4+5）
+
+**動機：** 2026-05-14 第二輪 live run（步驟 2+3 落地後）發現 score 仍卡 72，且 QC RuntimeError 持續。離線 reproducer（`layout_agent/output/debug_qc_retry.py`，純檢測無 LLM cost）讓 retry-round QC 失敗原因第一次可見。揭露 **兩層獨立 leak**：
+
+#### Leak #1：Judge metric coordinate semantics 不明
+- Judge 之前用 `metric="right"` / `"bottom"`（margin-from-edge 語意），但 Layout schema 根本沒這兩個欄位 — Generator 把 `bottom=20` 當成 `top=20`，logo 跑到畫布頂端反而違反 `position_preference(bottom_right)` hard constraint
+- **修補**：`judge_aesthetic.py` PROMPT_TEMPLATE 加 per-kind metric whitelist + 「NEVER emit `metric:"right"` / `"bottom"`」明示禁令 + 拆成 left/top 兩條 move 的 worked example
+- **回歸測試**：`test_judge_prompt_lists_metric_whitelist_and_forbids_right_bottom` pinned 字串
+- **live 驗證**：第二輪 live run（~$0.30）顯示 Judge 不再 emit right/bottom，但 QC retry 仍全 fail（揭露第二層 leak）
+
+#### Leak #2：Judge 只下 width 沒同步 height，撞 area_ratio 門檻
+- QC `size_preference(prominent)` 算的是 `width × height / canvas_area >= 0.10`。Judge 之前下 `resize width>=600` 但忘了同時下 height suggestion，Generator 老實照辦把 title 弄成 600×100=60000 px²，永遠卡在 area_ratio=0.062 < 0.10
+- **修補**：PROMPT_TEMPLATE 加 ATTENTION 區塊明示 area math（`width*height >= 0.10*canvas_area`），要求 enlarge prominent element 時同時 emit width AND height 兩條 resize；附 800×1200 canvas + title_1 prominent 的 worked example（600 × 180 = 108000 ≥ 96000）
+- **回歸測試**：`test_judge_prompt_explains_size_preference_area_math` 校 area 數字 + 「BOTH a width AND a height」字串
+- **live 驗證**：第三輪 live run（~$0.30）— **QC crash 完全消除**，pipeline 第一次跑完 3 完整 iter（含 RetryGeneration×2 + RetryAnalyst×1）才退場；Judge 三輪都精確 emit `width + height + gap_to:title_1` 三條 suggestion；分數仍 72（plateau 從 prompt 層移到 vision rubric / element placement 層）
+
+#### 工具產出
+- **離線 QC reproducer**：`layout_agent/output/debug_qc_retry.py`（解析 live log 的 candidate JSON 區塊，直接餵 `quality_checker.filter_valid`，輸出每個 candidate 的 violation type / targets / detail）— 之後診斷 retry-round QC fail 不必再燒 LLM
+- **pytest 累計**：58 passed + 12 skipped in 2.37s（57 + 2 新 prompt-content 回歸測試）
+
+**Trade-off：**
+- ✅ QC RuntimeError 完全消除，feedback loop 第一次能跑滿 max_total_rounds=3 含 Analyst-target rebuild
+- ✅ Judge 主動下「成對」suggestion（width + height、left + top）符合 schema 限制
+- ❌ 分數仍 plateau 72：bottleneck 已脫離 prompt 層，下次該轉戰 vision rubric / Generator placement 細節 / 或考慮 ACCEPT_THRESHOLD 再降到 70
+- ⚠️ 5 處 hardcoded area threshold 同樣是 anti-pattern — Judge prompt 寫死 `0.10`、`0.08`、`0.05` 跟 `quality_checker.SIZE_HINT_LOWER_BOUND` 必須手動同步；未來若改門檻應考慮 prompt placeholder 機制
+
 ---
 
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/14*

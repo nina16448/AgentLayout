@@ -343,3 +343,45 @@ def test_reject_judgement_just_below_threshold_validates():
     assert j.decision == JudgeDecision.REJECT
     assert j.evaluations[0].total == below
     assert j.feedback is not None
+
+
+# ============================================================
+# Judge PROMPT_TEMPLATE metric whitelist (2026-05-14 leak fix)
+# ============================================================
+
+
+def test_judge_prompt_lists_metric_whitelist_and_forbids_right_bottom():
+    """2026-05-14 live run produced metric=\"right\"/\"bottom\" suggestions which
+    the Layout schema does not have, causing Generator to derive coordinates
+    that collided in QC. The Judge prompt must explicitly call out the
+    forbidden values so the LLM stops emitting them."""
+    from metagpt.ext.agentlayout.actions.judge_aesthetic import PROMPT_TEMPLATE
+
+    # The per-kind whitelist mentions the legal schema field names.
+    assert "kind=resize" in PROMPT_TEMPLATE
+    assert "kind=move" in PROMPT_TEMPLATE
+    assert '"width"' in PROMPT_TEMPLATE
+    assert '"left"' in PROMPT_TEMPLATE
+    # The explicit "NEVER emit" guard on `right` / `bottom`.
+    assert 'metric: "right"' in PROMPT_TEMPLATE
+    assert 'metric: "bottom"' in PROMPT_TEMPLATE
+    assert "NEVER emit" in PROMPT_TEMPLATE
+
+
+def test_judge_prompt_explains_size_preference_area_math():
+    """2026-05-14 live run #2: metric whitelist fix worked (no more bottom/
+    right), but QC retry still failed 15/15 because Judge emitted only a
+    `resize width>=600` suggestion. title_1 ended up 600x100 which is
+    area_ratio=0.0625, below the `prominent` lower bound of 0.10. The Judge
+    prompt must teach the LLM that prominent => area >= 0.10*canvas_area, so
+    a width-only resize is insufficient — width AND height must be raised
+    together."""
+    from metagpt.ext.agentlayout.actions.judge_aesthetic import PROMPT_TEMPLATE
+
+    # The area-math rule is spelled out so the LLM knows what gate it hits.
+    assert "width * height >= 0.10" in PROMPT_TEMPLATE
+    assert "prominent" in PROMPT_TEMPLATE
+    # The fix instruction: emit BOTH width and height when enlarging.
+    assert "BOTH a width AND a height" in PROMPT_TEMPLATE
+    # The worked example numbers add up.
+    assert "600 * 180 = 108000" in PROMPT_TEMPLATE

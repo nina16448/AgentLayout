@@ -184,16 +184,29 @@ Each structured suggestion is a JSON object with these fields:
 
   - kind: one of
         "resize"      -> change an element's width or height (numeric pixels)
-        "move"        -> change an element's x/y/top/left/right/bottom (numeric pixels)
+        "move"        -> change an element's top-left position (numeric pixels)
         "spacing"     -> change a gap between two elements (numeric pixels)
         "typography"  -> change font_size or font_weight (numeric)
         "color"       -> set a hex color like "#RRGGBB"
         "zorder"      -> set explicit z_index (integer)
         "other"       -> avoid; only use when none of the above fit
   - target_id: an element id that EXISTS in the Layout Tree above.
-  - metric: a short string naming the quantity, e.g.
-        "width", "height", "x", "y", "top", "left", "right", "bottom",
-        "font_size", "font_weight", "gap_to:OTHER_ID", "z_index", "color".
+  - metric: REQUIRED to be a schema-native field name. The Layout schema only
+    has `left`, `top`, `width`, `height`, `font_size`, `font_weight`, `color`,
+    `z_index`. There is NO `right` or `bottom` field. The allowed metric
+    string is determined by `kind`:
+        kind=resize     -> "width" or "height"
+        kind=move       -> "left" or "top"   (NOT "right" / "bottom" / "x" / "y";
+                                              if you want the element pushed to
+                                              the bottom-right, compute the
+                                              target `left` and `top` yourself
+                                              from canvas_width / canvas_height
+                                              and emit TWO move suggestions)
+        kind=spacing    -> "gap_to:OTHER_ID"  (OTHER_ID is an element id)
+        kind=typography -> "font_size" or "font_weight"
+        kind=color      -> "color"
+        kind=zorder     -> "z_index"
+        kind=other      -> any string (use sparingly)
   - op: a comparator or action, one of ">=", "<=", "==", "set_to",
         "increase_by", "decrease_by".
   - value: the target value. MUST be numeric (int or float) when kind is
@@ -220,6 +233,22 @@ ATTENTION: If decision is "reject", feedback.structured_suggestions MUST contain
            reference an element id that exists in the Layout Tree.
 ATTENTION: For numeric kinds (resize / move / spacing / typography / zorder),
            the `value` field must be a number, NOT a string like "bigger".
+ATTENTION: `metric` MUST be from the per-kind whitelist above. NEVER emit
+           `metric: "right"` or `metric: "bottom"` (the schema has no such
+           fields). If you want an element flush to bottom-right, compute and
+           emit TWO suggestions like
+               {{"kind":"move","target_id":"logo_1","metric":"left","op":"set_to","value":700}}
+               {{"kind":"move","target_id":"logo_1","metric":"top","op":"set_to","value":1150}}
+ATTENTION: Hard-constraint `size_preference` with hint "prominent" is enforced
+           downstream as `width * height >= 0.10 * canvas_width * canvas_height`
+           ("medium" => 0.08, "balanced" => 0.05). Resizing only `width` while
+           keeping `height` small often fails this area gate. When you ask to
+           enlarge a prominent element, emit BOTH a width AND a height resize
+           so the product clears the area threshold. Example for an 800x1200
+           canvas where title_1 must be "prominent" (area >= 96000 px^2):
+               {{"kind":"resize","target_id":"title_1","metric":"width","op":">=","value":600}}
+               {{"kind":"resize","target_id":"title_1","metric":"height","op":">=","value":180}}
+           600 * 180 = 108000 >= 96000, so QC will pass.
 ATTENTION: Prefer kind != "other"; aim for at most one "other" per response.
 ATTENTION: If decision is "accept", feedback must be null.
 ATTENTION: best_candidate_id must be the candidate with the highest total score.
