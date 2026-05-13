@@ -182,6 +182,17 @@ ATTENTION: For text elements, also output font_family, font_size, font_weight, c
 ATTENTION: For image elements, output geometry only -- no visual style fields needed.
 ATTENTION: Each candidate must take a distinctly different compositional approach.
            Do not repeat similar layouts across candidates.
+ATTENTION: Canvas vertical coverage. The layout MUST occupy the full canvas
+           height -- a poster with the bottom 30% empty looks unfinished and
+           gets penalised on layout_balance / visual_coherence. Concretely:
+               max(top + height) across all elements >= 0.85 * canvas_height
+               min(top)                              <= 0.10 * canvas_height
+           Worked example for an 800x1200 canvas: the lowest element's bottom
+           edge MUST reach y >= 1020, and at least one element MUST start at
+           y <= 120. If you only have 3 elements and the natural total height
+           is short, distribute them with larger inter-element gaps so the
+           bottom edge still hits 0.85 of canvas_height -- do NOT cluster
+           everything in the top half and leave a giant white band below.
 ATTENTION: If feedback is provided, satisfy every structured_suggestion in at
            least 4 of 5 candidates. Use the suggestions[] free text only as
            supplementary context. Do not ignore the structured list, but also

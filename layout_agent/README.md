@@ -2259,6 +2259,35 @@ pytest tests/metagpt/ext/agentlayout/ -m requires_llm --collect-only --no-cov
 - ❌ 分數仍 plateau 72：bottleneck 已脫離 prompt 層，下次該轉戰 vision rubric / Generator placement 細節 / 或考慮 ACCEPT_THRESHOLD 再降到 70
 - ⚠️ 5 處 hardcoded area threshold 同樣是 anti-pattern — Judge prompt 寫死 `0.10`、`0.08`、`0.05` 跟 `quality_checker.SIZE_HINT_LOWER_BOUND` 必須手動同步；未來若改門檻應考慮 prompt placeholder 機制
 
+### Generator canvas-coverage rule + plateau 結構性根因確認（2026-05-14 步驟 6）
+
+**動機：** 步驟 5 修補 QC crash 後，分數 plateau 72 仍在。觀察 r6_cand_02 渲染 PNG 揭露真因——`bottom 1/3 of 800×1200 canvas` 全白、title 是裸字浮在白底、整體上重下輕。Judge 給「title not prominent」的回饋其實不準（title 已經 600×180），Judge 真正不滿意的是 visual_coherence 與 layout_balance。
+
+**修補：** `generate_layout.py` PROMPT_TEMPLATE 加 ATTENTION 區塊：
+- `max(top + height) >= 0.85 * canvas_height`（最低元素 bottom edge 必須觸底）
+- `min(top) <= 0.10 * canvas_height`（至少一元素貼頂）
+- 附 800×1200 worked example（y >= 1020 / y <= 120）+ 「do NOT cluster everything in the top half」明示禁令
+
+**回歸測試：** 新檔 `test_generator_prompt_template.py`（給未來 Generator prompt regression 集中放）— `test_generator_prompt_pins_canvas_vertical_coverage_rule` pin 6 條字串。
+
+**live 驗證（第四輪 ~$0.30）：**
+- ✅ 規則部分遵守：r6_cand_03 `max(top+height)=1200 ≥ 1020` 通過，logo 落到 y=1100
+- ❌ 規則部分違反：`min(top)=200 > 120`，product 不肯貼頂，上方仍留 200px 白
+- ❌ 分數無變化：仍 72/70/70/69/68（跟第三輪 72/70/68/69/67 結構同）
+
+**Plateau 結構性根因確認：**
+> 3 個元素（product + title + logo）在 800×1200 上**本來就無法構成 balanced poster**。真實設計有背景色、裝飾色塊、副標、CTA 按鈕——稀疏 3 元素不管怎麼擺，Judge vision rubric 都只能給到 17/25 visual_coherence + 17/25 layout_balance。bottleneck 已**脫離 prompt 工程**範疇。
+
+**Trade-off：**
+- ✅ Generator 確實會聽 partial coverage 規則（bottom edge 達 0.92 canvas_height）
+- ❌ 未能突破 plateau — 證實「prompt 工程的分數天花板已到」
+- 📌 此**負向結果本身是論文資料點**：證明 (a) score plateau 是 spec sparsity 問題不是 LLM 能力問題、(b) 純 prompt 層改進有 diminishing returns
+
+**下次 session 三條候選方向（未做、依研究受益排序）：**
+1. **換真實 Crello brief（5-7 elements）重跑** — 識別 plateau 是不是真的出在 spec sparsity 的最直接實驗。~$0.30/sample
+2. **Analyst 加 default background_color** — Generator/renderer 接住 background 填色，預期 push visual_coherence 17→20
+3. **ACCEPT_THRESHOLD 75→70（認輸 plateau）** — $0、step 3 doc 本來就規劃要降；讓 pipeline 走到 ACCEPT 完成 reject-loop 收斂示範
+
 ---
 
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/14*
