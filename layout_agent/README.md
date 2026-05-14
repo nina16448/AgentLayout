@@ -2411,4 +2411,40 @@ pytest tests/metagpt/ext/agentlayout/ -m requires_llm --collect-only --no-cov
 
 ---
 
+### Step 9b — N=3 多樣本驗證 + Generator robustness limit 揭露（2026-05-14/15）
+
+**目的：** Step 9 的 sparsity 結論 N=1。為強化論文證據，在剩 2 個 cached 5-element Crello sample 上跑同 pipeline 看是否 generalize 跨 aspect ratio。
+
+**Driver 升級：** `run_role_team_live_crello.py` 加 `argparse --sample-id`、輸出檔名加 sample_id 後綴避免 collision。
+
+**Live #8 — `5954bda9` (1200×600 horizontal, "Citation about dog pet")：**
+- Crello meta.json 有 5 elements，但其中 1 個是 `type_code=3` 的背景 shape（非 image / text），被 `build_pipeline_inputs` filter 掉——Analyst 實際看到 4 elements (3 decorative_images + 1 title)
+- Analyst 加 `position_preference(text_1, center)` + `no_overlap(全 4 element)`
+- **結果：0 / 15 candidates fail QC、無任何 Judge verdict 就 crash**。1200×600 上 center band 含 text、其餘 3 images 必須完全不 overlap、Generator 無法擺出有效布局
+- Cost ~$0.12（沒到 Judge 階段）
+
+**Live #9 — `5d972ca9` (537×240 small horizontal, Russian "Travelling Tips")：**
+- 同樣 5 → 4 elements after filter
+- Analyst 加 `position_preference(title_1, top_center)` + `position_preference(subtitle_1, bottom_center)` + `no_overlap(全 4)`
+- **結果：0 / 15 candidates fail QC、無任何 verdict 就 crash**。537×240 太小、title top + subtitle bottom 已用掉大半垂直空間、2 images 沒地方擺
+- Cost ~$0.13
+
+**最終 N 計：sparsity-validated N=1（Live #7）、 generator-robustness-failure N=2（#8, #9）。**
+
+**論文寫作策略（重要）：** **不**寫「N=3 驗證 sparsity」，因為只有 #7 跑完。誠實表達為：
+
+> 「On the single Crello sample our pipeline could fully evaluate (Live #7, 5-element 1080×1920 hiring poster), the 5-element brief scored 3.3 points above the 3-element synthetic baseline averaged over 3 reject-loop verdicts. Two additional attempted runs on 4-element Crello briefs (Live #8 horizontal 1200×600, Live #9 small horizontal 537×240) both crashed at the first Generator call with all 15 candidates failing quality-checking. **These crashes are themselves a finding**: the Generator + QC interaction in our pipeline has a robustness ceiling on tight-canvas mixed-content (image + text) specs that we did not encounter on the synthetic 3-element baseline or on the spacious 5-element vertical brief.」
+
+**Trade-off 與後續方向：**
+- ✅ 仍能聲稱 sparsity hypothesis 有正向證據（N=1 trial, +3.3 mean delta in 3 verdicts）
+- ✅ N=2 失敗本身揭露 Generator+QC robustness 限制——這是論文章「pipeline limitations」一節的良好素材
+- ❌ N=3 驗證未成立；未來要 mine 更多 Crello 5+ element 樣本（特別是 spacious canvas 的）
+- 📌 **本步驟新揭露的 separate issue（待 step 10 處理）：** Generator 在「tight canvas + position_preference + no_overlap 多元素」組合下會穩定 fail。可能要 Generator prompt 加「detect tight canvas、prefer stacking 而非 grid placement」guidance，或讓 QC 對 no_overlap 允許 ≤5px micro-overlap tolerance
+
+**Pytest baseline 維持：** 98 passed, 12 skipped in 2.88s（無新 source/test code，只是 driver CLI arg 改動，driver 在 output/ gitignored）。
+
+**Local commit：** 與 step 9 同合併 commit（driver CLI 升級僅 in output/，無 source 改動需追加）
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/14*
