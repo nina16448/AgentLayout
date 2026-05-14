@@ -2324,4 +2324,38 @@ pytest tests/metagpt/ext/agentlayout/ -m requires_llm --collect-only --no-cov
 
 ---
 
+### Step 8 嘗試 contrast-aware text color — REVERTED（2026-05-14 負向實驗）
+
+**假設：** Live #5 plateau 從 72 掉到 68，疑似肇因於 hardcoded `#111111` 文字在 `#E8F1F8` 冷藍底上 contrast 不夠 elegant，被 Aesthetic Judge 扣到 visual_coherence。教 Generator 從 `recommended_text_color` 取色就能拉分。
+
+**做法：**
+- `generate_layout.py` `{recommended_text_color}` 行從「override if needed」改成「use this hex verbatim」三個 MUST 措辭；尾段新增 14 行 ATTENTION 「Text-on-background contrast」block + 明示 `Do NOT default to "#111111"` + 點名 FORMAT_EXAMPLE 內 `#1B3A6B`/`#FFFFFF` 是 anti-pattern
+- `test_generator_prompt_template.py` 新增 `test_generator_prompt_pins_contrast_aware_text_color_rule`（pin 8 條字串）
+- pytest 82 passed（+1 新測試）
+
+**Live #6 結果（cost $0.34）：**
+- ✅ 前 3 reject cycles 順利跑完（Generator 每輪 5 valid candidates、Judge 給 verdict）
+- ❌ **Analyst retry 後的 Generator 第 4 round 大爆炸**：3 top-up rounds × 5 candidates = **15 candidates 全 fail QC**、`RuntimeError: 0 candidates passed QC`
+- ❌ Pipeline 沒有 graceful 退場、沒有 final PNG（render 階段沒到）
+
+**根因檢討（負向實驗的金礦）：**
+1. **假設前提不成立。** 重看 Live #5 Judge feedback——「title_1 not prominent」「product and title too far apart」。Judge **從來沒抱怨 contrast / readability / color**。「72→68 是 contrast 問題」是我的事後假設、不是 Judge 直接訴求。
+2. **Recommended_text_color 在此 spec 下根本不會變。** Analyst pick 的 `#E8F1F8` luminance > 128，pipeline.py 自動算出 `recommended_text_color = "#111111"`——和 Generator 原本 hardcoded 的值一樣。step 8 的 prompt 變動對此 light canvas 的實際輸出**零差異**。
+3. **Prompt 容量是有限的 attention budget。** 多加 14 行對輸出沒實際影響的指令，反而在 retry round 排擠 LLM 對 `size_preference: prominent` 的注意力——Generator 開始忽略 area_ratio ≥ 0.10 要求、QC 全 reject。這呼應 step 5 修過的同一 failure mode：Judge over-prescribes、Generator over-applies。
+4. **沒有 isolated reproducer 就 live 燒錢是浪費。** 應該先寫 offline test 驗證 step 8 真的會 emit non-#111111 才 live。
+
+**處理：**
+- 還原 `generate_layout.py` 與 `test_generator_prompt_template.py` 到 step 7 commit（`7c5118d4`）狀態
+- 不寫新 commit、把 step 8 留在 git log 之外；但保留此章節作為**論文負向結果與 prompt-engineering 邊界的證據**
+
+**論文價值（這次失敗的可發表面向）：**
+- **Prompt-engineering 有 attention budget**：相同 LLM 在相同 spec 下，加無關緊要的 ATTENTION 會讓**既有重要規則被淡化**，造成下游 QC failure。這是個可量化的 prompt 設計反例。
+- **假設要先 cheap-validate 再 live-burn**：未來再加 prompt 規則前，先寫 offline reproducer（mock LLM 回 hardcoded JSON）驗證新規則的 schema-level 行為。
+- **Plateau 真因進一步聚焦**：step 7 確認不是 spec-sparsity 以外的因素能單獨突破天花板；step 8 確認也不是 contrast。剩下最強假設仍是「3 元素本身結構不足」、需用 (a) 5-7 element brief 重跑來實證。
+
+**下次 session 唯一候選（更新）：**
+- **(a) 換 Crello 5-7 element brief 重跑**：仍是最 falsifiable 的剩餘假設；本次 step 8 也排除了 contrast hypothesis，sparsity hypothesis 的相對權重更高。~$0.30/sample
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/14*
