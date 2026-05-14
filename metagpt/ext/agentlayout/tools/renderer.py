@@ -121,8 +121,31 @@ def image_to_base64(img: Image.Image, format: str = "PNG") -> str:
 # ============================================================
 
 
+def _hex_to_rgba(hex_color: str) -> Tuple[int, int, int, int]:
+    """Convert ``'#RRGGBB'`` -> RGBA tuple (alpha=255).
+
+    The Canvas schema validator guarantees a 6-digit hex; this is a defensive
+    fallback for hand-built specs that bypassed validation.
+    """
+    h = hex_color.lstrip("#")
+    if len(h) != 6:
+        return DEFAULT_BACKGROUND_COLOR
+    try:
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 255)
+    except ValueError:
+        return DEFAULT_BACKGROUND_COLOR
+
+
 def _make_canvas(spec: DesignSpec) -> Image.Image:
-    """Create the base canvas: load ``background_asset_ref`` or fill with white."""
+    """Create the base canvas.
+
+    Precedence:
+      1. ``background_asset_ref`` (if file exists and is loadable)
+      2. ``background_color`` (solid hex fill) — added 2026-05-14 to replace
+         the bare-white default that drove plateau-72 visual_coherence scores
+      3. ``DEFAULT_BACKGROUND_COLOR`` (legacy white for specs predating
+         ``background_color``)
+    """
     size = (spec.canvas.width, spec.canvas.height)
     bg_ref = spec.canvas.background_asset_ref
     if bg_ref and Path(bg_ref).exists():
@@ -132,7 +155,9 @@ def _make_canvas(spec: DesignSpec) -> Image.Image:
                 bg = bg.resize(size, Image.LANCZOS)
             return bg
         except (OSError, IOError):
-            pass  # corrupt file -> fall through to solid white
+            pass  # corrupt file -> fall through to color/white
+    if spec.canvas.background_color:
+        return Image.new("RGBA", size, _hex_to_rgba(spec.canvas.background_color))
     return Image.new("RGBA", size, DEFAULT_BACKGROUND_COLOR)
 
 

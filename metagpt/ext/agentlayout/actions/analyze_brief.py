@@ -65,7 +65,8 @@ FORMAT_EXAMPLE_JSON = """{
     "width": 1080,
     "height": 1920,
     "background_asset_ref": "bg.jpg",
-    "background_embedding_key": null
+    "background_embedding_key": null,
+    "background_color": null
   },
   "elements": [
     {
@@ -152,6 +153,34 @@ Previous feedback from Aesthetic Judge (if any): {feedback}
 - visual_type MUST be exactly "image" or "text".
 - Mark all inferred fields in inferred_fields with true.
 - If feedback is provided, adjust only the inferred fields, never override explicit user requirements.
+
+# Background color inference (canvas.background_color)
+ATTENTION: A 3-element design (product + title + logo) on a bare-white canvas
+plateaus at visual_coherence ~17/25 and layout_balance ~17/25 -- the bottom
+third stays empty and the layout looks "floating". A solid pleasant color
+fixes this without adding decorative elements.
+
+Rule of thumb:
+- If asset_list contains a background image asset, set canvas.background_asset_ref
+  to that asset and leave canvas.background_color null.
+- If no background image asset is supplied AND the user did NOT explicitly demand
+  a pure-white / blank background, set canvas.background_color to a pleasant
+  6-digit hex (e.g. "#F5E6D3", "#1B2B4A") matched to style_keywords. AVOID
+  emitting "#FFFFFF" by default -- pure white is the renderer fallback and
+  produces visually flat posters.
+- Mark "canvas.background_color" in inferred_fields with true when you set it
+  without explicit user input.
+
+Palette suggestions (choose one entry matching style_keywords; do NOT copy
+verbatim if the brief implies a different mood):
+  warm / autumn / festival / 中秋 / 溫暖    -> "#F5E6D3", "#FFE4B5", "#E8B873"
+  cool / minimal / tech / 簡約 / 科技       -> "#E8F1F8", "#D6E4F0", "#1B2B4A"
+  vibrant / promo / energetic / 活潑 / 促銷 -> "#FFE5B4", "#FFD7E3", "#FFC4A8"
+  dark / luxe / serif / 高級 / 黑金         -> "#1A1A2E", "#0F3460", "#16213E"
+  nature / fresh / organic / 自然 / 清新    -> "#E8F0E3", "#D6E5C4", "#A8C99A"
+- If the brief explicitly asks for white ("white background", "blank canvas",
+  "minimalist white"), you MAY emit "#FFFFFF" -- but then keep
+  inferred_fields["canvas.background_color"]=false because it was user-specified.
 
 # Format example
 {format_example}

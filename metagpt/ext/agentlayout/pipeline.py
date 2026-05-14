@@ -57,19 +57,34 @@ from metagpt.logs import logger
 
 
 def default_white_background(canvas: Canvas) -> BackgroundAnalysis:
-    """Pure-white BackgroundAnalysis stub used until Background Analyzer ships.
+    """BackgroundAnalysis stub derived from the Canvas itself.
 
     Returns an empty ``safe_zones`` (Layout Generator treats unknown regions as
-    permissible), a single-entry palette of ``#FFFFFF``, and the schema's
-    default dark text color. The ``canvas`` argument is kept for future use
-    when a real analyzer is wired in.
+    permissible) and a palette + text-color pair derived from
+    ``canvas.background_color`` when set, falling back to white otherwise.
+
+    The 2026-05-14 step 7 change made Analyst infer a non-white
+    ``background_color`` by default; keeping this stub palette consistent with
+    the rendered PNG prevents the Aesthetic Judge from seeing a tinted canvas
+    while reading ``dominant_palette=['#FFFFFF']``.
     """
-    del canvas
+    bg_hex = canvas.background_color or "#FFFFFF"
     return BackgroundAnalysis(
         safe_zones=[],
-        dominant_palette=["#FFFFFF"],
-        recommended_text_color="#111111",
+        dominant_palette=[bg_hex],
+        recommended_text_color=_text_color_for_background(bg_hex),
     )
+
+
+def _text_color_for_background(bg_hex: str) -> str:
+    """Pick a readable text color (dark on light, light on dark) by luminance."""
+    h = bg_hex.lstrip("#")
+    try:
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except ValueError:
+        return "#111111"
+    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+    return "#111111" if luminance >= 128 else "#F4F4F4"
 
 
 # ============================================================

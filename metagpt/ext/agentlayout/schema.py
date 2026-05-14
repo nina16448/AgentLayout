@@ -19,7 +19,9 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+import re
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ============================================================
@@ -173,7 +175,14 @@ class BackgroundAnalysis(BaseModel):
 
 
 class Canvas(BaseModel):
-    """Output canvas geometry plus background reference."""
+    """Output canvas geometry plus background reference.
+
+    Background precedence (consumed by the renderer):
+      1. ``background_asset_ref`` (image file, if present and loadable)
+      2. ``background_color`` (solid hex fill, when no image is supplied)
+      3. Renderer default (pure white) — kept only for legacy specs that
+         predate ``background_color`` (added 2026-05-14, step 7).
+    """
 
     width: int = Field(..., gt=0)
     height: int = Field(..., gt=0)
@@ -184,6 +193,25 @@ class Canvas(BaseModel):
         default=None,
         description="Filled by CLIP preprocessor; Analyst always outputs null.",
     )
+    background_color: Optional[str] = Field(
+        default=None,
+        description=(
+            "Solid 6-digit hex fill (e.g. '#F5E6D3') used by the renderer when "
+            "no background_asset_ref is supplied. Analyst infers a pleasant "
+            "palette-matching color; avoid pure white unless brief demands it."
+        ),
+    )
+
+    @field_validator("background_color")
+    @classmethod
+    def _validate_hex_color(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", v):
+            raise ValueError(
+                f"background_color must be a 6-digit hex string like '#F5E6D3', got {v!r}."
+            )
+        return v.upper()
 
 
 class Element(BaseModel):

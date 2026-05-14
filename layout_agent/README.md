@@ -2290,4 +2290,38 @@ pytest tests/metagpt/ext/agentlayout/ -m requires_llm --collect-only --no-cov
 
 ---
 
+### Analyst 預設 background_color + canvas-aware palette（2026-05-14 步驟 7）
+
+**動機：** 步驟 6 確認 plateau 結構性根因是「3 元素 + 純白底」的稀疏 spec。本步驟驗證候選方向 (2)：教 Analyst 在 user brief 沒指定背景時 emit 一個與 style_keywords 對齊的 pleasant hex（如 `#F5E6D3` warm / `#1B2B4A` cool），避免渲染出來的 PNG 是一片裸白底。
+
+**修補（5 處）：**
+1. `schema.py` `Canvas` 加 `background_color: Optional[str]` 欄位 + `field_validator("background_color")` 強制 6 位 hex（小寫自動正規化成大寫）。default `None` 保 backward compat。
+2. `tools/renderer.py` `_make_canvas` precedence 改為 (asset_ref) → (background_color) → 白；新增私有 `_hex_to_rgba` defensive helper。
+3. `pipeline.py` `default_white_background(canvas)` 從 stub 升級成 canvas-aware：`dominant_palette[0] = canvas.background_color or "#FFFFFF"`、`recommended_text_color` 走 luminance 自動挑（dark on light / light on dark）。這條對 Judge 重要——避免 PNG 渲染米色但 BackgroundAnalysis 還報白色的矛盾。
+4. `actions/analyze_brief.py` `FORMAT_EXAMPLE_JSON` 加 `"background_color": null` 欄位；`PROMPT_TEMPLATE` 加 25 行 ATTENTION 段落「Background color inference」：plateau motivation、`AVOID "#FFFFFF"` 明示禁令、5 個 keyword bucket × 3 hex 的 palette 建議（warm/cool/vibrant/dark/nature）、explicit-white escape hatch（user 真的要白才給白、且 `inferred_fields=false`）。
+5. `tests/metagpt/ext/agentlayout/test_analyst_prompt_template.py` 新檔、22 個 pinned-string 與 schema/pipeline/renderer 測試。
+
+**Pytest：** `pytest tests/metagpt/ext/agentlayout/ --no-cov -q` → **81 passed, 12 skipped in 2.83s**（步驟 6 = 59，+22 新測試、無退化）。
+
+**Live 驗證（第五輪、cost $0.28）：**
+- ✅ **Analyst 真的有遵守新規則**：emit `canvas.background_color = "#E8F1F8"`（cool/minimal/modern bucket，光冷藍）、`inferred_fields["canvas.background_color"]: true` 正確標注、completely zero `#FFFFFF` emit
+- ✅ Pipeline 健康：3 reject cycles、QC 零 crash、3/3 retry 都有走到 RetryGeneration×2 + RetryAnalyst×1
+- ⚠️ **分數 plateau 從 72 掉到 68**（req=18 hier=17 bal=17 coh=16，5/5 candidates 同分）
+- 📊 **但 68 == Crello GT baseline**（步驟 13 corner case 2 量到的 designer-GT 分數）
+
+**結果解讀：**
+> Step 7 機制全部生效（schema、renderer、pipeline、prompt 都串通），但分數**沒**反而**掉**了。原因應該是：背景變色後 vision rubric 對 title/logo 的色彩搭配要求變嚴（hardcoded `#111111` 文字 + `#E8F1F8` 藍底，contrast OK 但不 elegant），同時 sparsity 抱怨還在（feedback：「title_1 not prominent」「product and title too far apart」）。step 6 的根因診斷因此被進一步**強化驗證**：只改背景色而不改元素數量，Judge 看到的問題本質不變、甚至因為色彩 mismatch 更敏感。
+
+**Trade-off：**
+- ✅ 步驟 7 達到「pipeline 輸出與 Crello designer GT 分數齊平」（68 vs GT 68）——這是個強訊號可寫進論文
+- ✅ schema field + validator + 22 regression test pin 住 prompt，未來不會 silently revert
+- ❌ 沒有突破 plateau；再次證明 **3 元素 = 結構天花板**
+- 📌 未做：Generator prompt **沒**告知 background_color、文字 color 還是 hardcoded `#111111`。下個 step 8 候選：教 Generator 看 `canvas.background_color`+`recommended_text_color`、emit contrast-aware `color` 給 text element
+
+**下次 session 兩條候選（更新）：**
+1. **換 Crello 5-7 element brief 重跑** — 仍是最直接驗證 spec sparsity 假設的實驗；本次步驟 7 已**間接驗證** sparsity 是 root cause（變色不變元素數，分數沒上去）
+2. **Step 8 — Generator 接 `background_color` + `recommended_text_color`** — 教 Generator 從 BackgroundAnalysis 讀 palette/text color 並 emit contrast-aware element `color`，預期把 color_harmony / visual_coherence 拉回 17 以上
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/14*
