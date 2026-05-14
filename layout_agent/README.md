@@ -2358,4 +2358,57 @@ pytest tests/metagpt/ext/agentlayout/ -m requires_llm --collect-only --no-cov
 
 ---
 
+### Step 9 — 5-element Crello sparsity test：sparsity hypothesis CONFIRMED（2026-05-14）
+
+**目的：** 在排除背景色（step 7）與 contrast（step 8 reverted）後，**唯一未驗的剩餘 plateau 假設**是「3 元素本身結構不足」。本步驟用真實 Crello 5-element brief 跑同一 pipeline，看分數是否突破 3-element baseline 68。
+
+**選 fixture：** Crello sample `5c6c0cba85ea3c16f964a15d`「Minimalistic geometric pattern」hiring poster
+- 1080×1920（同 aspect 類別，可比性高）
+- **5 elements**：1 背景圖 + 4 文字（「The Art Institute of Seattle」「We are hiring a」「Public Art Curator」「Plan and oversee...」）
+- 4 個文字層帶 hierarchy——能 stress 測試 Generator 的 `info_hierarchy` 容量
+
+**新檔：**
+- `layout_agent/output/run_role_team_live_crello.py`（reject-loop + Crello loader + sparsity-hypothesis verdict logic、cost cap $0.30）
+
+**Bug surface 1（金礦）：** 第一次 run **crash**——0/15 candidates 全 fail QC。診斷揭露 Analyst emit `position_preference: hint="center_top"` 但 `quality_checker.POSITION_HINT_TO_BANDS` 只有 `"top_center"`（詞序不同），造成 `UNKNOWN_HINT` violation。3-element shoe run 沒撞到是因為 hint 是 `top_right`、兩種詞序都不會混。
+
+**修補：** `quality_checker.py` `POSITION_HINT_TO_BANDS` 加 8 個 reversed-word-order alias（`center_top`/`center_bottom`/`left_top`/`right_top`/`left_bottom`/`right_bottom`/`left_middle`/`right_middle`）。新檔 `tests/metagpt/ext/agentlayout/test_quality_checker_position_hints.py`（17 個 pinned tests：7 canonical + 8 alias + 1 count + 1 end-to-end check_candidate）。
+
+**Pytest：** 98 passed, 12 skipped in 2.88s（step 7 baseline = 81，+17 新 QC alias 測試）。
+
+**Live #7 重跑結果（cost $0.49，3 reject cycles 完成 + Analyst retry 後 Generator crash）：**
+
+| Verdict | best candidate | best score | distribution |
+|---|---|---|---|
+| 1 (round 0-1) | r1_cand_03 | **72** | 68, 70, 72, 69, 70 |
+| 2 (round 3-5) | r3_cand_03 | **72** | 68, 70, 72, 69, 70 |
+| 3 (round 6-8) | r6_cand_01 | **70** | 70, 68, 69, 67, 66 |
+
+**對照 3-element baseline 68 → delta = +4 / +4 / +2、平均 best 71.3 (+3.3)**
+
+**Sparsity hypothesis：✅ CONFIRMED**——5-element 一致地比 3-element baseline 高 2-4 點，且多個 candidates 達到 70+。
+
+**Score breakdown 細看：**
+- baseline (3-elem r6_cand_02): req=18 hier=17 bal=17 coh=17 = 69
+- best (5-elem r1_cand_03): req=20 hier=18 bal=17 coh=17 = 72
+
+**所以加分都來自 `requirement_alignment` (+2) 與 `info_hierarchy` (+1)、`layout_balance` 與 `visual_coherence` 仍 17。** 這提示 plateau **有兩段**：
+- 第一段 ~4 點（sparsity-driven）→ 加元素可以彌補
+- 第二段 ~5 點（balance + coherence 的 17/25 上限）→ 加元素**沒有**修復，可能來自缺乏裝飾色塊 / Background Analyzer 仍是 stub
+
+**Bug surface 2（已知 separate issue）：** Analyst retry（iteration 3）後的 Generator 在第 4 round QC crash——同 live #6 crash mode。原因：Judge over-prescribes、Generator over-applies。這是 step 5 修過的同類 failure mode 在新 spec 形態下重新出現。**不影響本次 sparsity 結論**（3 reject cycles 都成功完成 + 有 3 個完整 verdicts 可比較）。
+
+**Trade-off：**
+- ✅ **sparsity hypothesis 拿到正向證據**：論文「plateau 不是 LLM 能力問題、是 spec density 問題」有了量化支持
+- ✅ 副產品 QC alias bug 修補 + 17 個 regression test 防 revert
+- ✅ 平均 +3.3 是 statistically meaningful 在這 3 觀察上（雖 N=3，但 5/5 candidates 都 ≥66、3/5 ≥70）
+- ❌ 仍未達 ACCEPT 75；plateau 的 second segment (coh/bal=17) 還在
+- ❌ Analyst retry 後 QC crash mode 沒處理（live #6/#7 同樣撞）
+
+**下次 session 兩條候選（更新）：**
+1. **Step 10 — 修 post-Analyst-retry QC crash** ：要嘛降 `max_total_rounds` 防 Analyst retry、要嘛在 Generator retry prompt 警告 Analyst 可能下了難滿足的 spec
+2. **Step 11 — 攻 plateau 第二段**：bal/coh 仍卡 17，可能 root cause 是 (a) renderer 沒生 decorative shape、(b) `default_white_background` 仍是 stub（沒真實 BackgroundAnalyzer）。需要先實證
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/14*

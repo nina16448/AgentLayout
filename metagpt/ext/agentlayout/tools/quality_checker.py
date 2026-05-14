@@ -51,6 +51,19 @@ POSITION_HINT_TO_BANDS: Dict[str, Tuple[int, int]] = {
     "bottom": (1, 2),
     "bottom_center": (1, 2),
     "bottom_right": (2, 2),
+    # Aliases for reversed word order (2026-05-14 step 9: live Crello run
+    # surfaced Analyst emitting "center_top" / "center_bottom" instead of
+    # "top_center" / "bottom_center", causing UNKNOWN_HINT on every candidate.
+    # Tolerate both orderings so a single LLM word-order quirk does not crash
+    # the whole pipeline.)
+    "center_top": (1, 0),
+    "center_bottom": (1, 2),
+    "left_top": (0, 0),
+    "right_top": (2, 0),
+    "left_bottom": (0, 2),
+    "right_bottom": (2, 2),
+    "left_middle": (0, 1),
+    "right_middle": (2, 1),
 }
 
 SIZE_HINT_LOWER_BOUND: Dict[str, float] = {
