@@ -2484,4 +2484,51 @@ pytest tests/metagpt/ext/agentlayout/ -m requires_llm --collect-only --no-cov
 
 ---
 
+### Step 10c — QC `position_preference` band 10% per-edge tolerance（2026-05-16）
+
+**動機：** Step 10 的 5% no_overlap tolerance 解了 micro-overlap，但 Live #8 (1200×600) re-run 仍 0/15 hard fail。離線抽 LLM 真實 candidate 跑 QC 顯示新 fail mode：5/5 candidate 都因 `position_preference` 失敗 — text_1 中央 y=450 落在 band (1, 2) bottom，但 spec `center` 要求 (1, 1)。1200×600 上 center band y∈[200, 400] 只有 200px 高，三 image 占上排後 LLM 無處放 text。
+
+**離線診斷：** 新增 `layout_agent/output/debug_live8_step10_failmode.py`，從 live log regex 抽 candidate JSON、跑 in-tree QC 算 violation 分布，量化「真正的 fail mode 是什麼」。
+
+**修補（`metagpt/ext/agentlayout/tools/quality_checker.py`）：**
+1. 新常數 `POSITION_BAND_TOLERANCE: float = 0.10` + `POSITION_BAND_TOLERANCE_ABSOLUTE_FLOOR: int = 16`，附 9 行 docstring 紀錄 calibration 來由（live #8r 5/5 fail 證據 + 60px slack 反推）
+2. 新 helper `_band_bounds_with_tolerance(band, total) → (low, high)`：第三 band 邊緣 ± `max(10% canvas_dim, 16px)`
+3. 新 helper `_in_band_with_tolerance(coord, band, total) → bool`
+4. `_check_position_preference` 改用 tolerance check；violation `detail` 補上實際接受區間 `[lo, hi]` 與 tolerance 比例（給 Generator structured feedback 看）
+5. 保留 `_band_index` strict 版本給其他 caller / 測試使用
+
+**回歸測試（`test_quality_checker_position_hints.py` 加 7 函式）：**
+- `test_position_band_tolerance_constants_pinned` — pin 0.10 + 16 防被改回
+- `test_position_band_tolerance_unblocks_live8_layout` — 1200×600 上 cy=450 必 PASS（live #8 真實 case）
+- `test_position_band_tolerance_just_inside_boundary_passes` — cy=460 = 400 + 60px tolerance 邊界 inclusive
+- `test_position_band_tolerance_just_outside_boundary_fails` — cy=470 必 FAIL（防 tolerance 漂移）+ pin detail 字串
+- `test_position_band_tolerance_canonical_center_still_passes` — 嚴格 case 仍 PASS（regression 防）
+- `test_position_band_tolerance_top_left_still_rejects_far_misses` — 1200×600 上 c=(1000, 500) 對 top_left 必 FAIL（防 tolerance 變所有 band union）
+- `test_position_band_tolerance_floor_protects_tiny_canvas` — 100×100 上 cy=80 靠 16px floor 必 PASS
+
+**Pytest：** 111 passed, 12 skipped in 2.79s（= step 10 的 104 + 7 新 band tolerance）。
+
+**離線 reproducer 驗證：** Live #8r 真實 5 LLM candidate 在新 tolerance 下 **0/5 → 4/5 PASS**；剩下 1 個 fail 是 cand_02 `out_of_bounds`（image_3 top+height=900 > 600，QC 該擋）。
+
+**Live #8 重跑（$0.43、3 完整 verdicts、首次 1200×600 跑完 reject loop、exit 0）：**
+- Verdict 1 best=70 (r0_cand_01: req=20 hier=18 bal=16 coh=16)
+- Verdict 2 best=68 (r3 多個 candidates 同分)
+- Verdict 3 best=70 (r6_cand_01)
+- 平均 best **69.3 vs Crello GT baseline 68 = +1.3**
+- decision=reject（仍未達 75 ACCEPT_THRESHOLD），但 sparsity hypothesis **N=2 validated**（Live #7 1080×1920 hiring poster + Live #8 1200×600 dog pet citation）
+
+**Trade-off：**
+- ✅ 1200×600 robustness 限制完全打通；step 10 + 10c 兩步把同一 sample 從 hard fail 帶到完整 reject loop
+- ✅ Sparsity hypothesis 從 N=1 → N=2，論文證據強度提升一級
+- ✅ Plateau 第二段在不同 aspect ratio 上一致出現（#7 bal/coh=17、#8rc bal/coh=16），更強支持「結構性 not LLM-capability」
+- ⚠️ 10% per-edge tolerance + 16px floor 仍是 engineering 數字（live trace 反推），未從 user study 校準
+- ❌ Plateau 第二段 bal/coh=16-17 上限仍未解；step 11 攻擊
+
+**下次 session 候選方向（更新）：**
+1. **Step 10d — 重跑 Live #9** (537×240 small canvas) 看 step 10+10c 是否也解了 hard fail
+2. **Step 11 — 攻 plateau 第二段**：仍是主線目標
+3. **Step 10b — 修 post-Analyst-retry Generator QC crash**：未動
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/14*

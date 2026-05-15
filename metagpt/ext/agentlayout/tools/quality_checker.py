@@ -268,16 +268,23 @@ def _check_position_preference(
             continue
         cx = el.left + el.width / 2
         cy = el.top + el.height / 2
-        h_band = _band_index(cx, canvas.width)
-        v_band = _band_index(cy, canvas.height)
-        if (h_band, v_band) != (expected_h, expected_v):
+        h_ok = _in_band_with_tolerance(cx, expected_h, canvas.width)
+        v_ok = _in_band_with_tolerance(cy, expected_v, canvas.height)
+        if not (h_ok and v_ok):
+            h_band = _band_index(cx, canvas.width)
+            v_band = _band_index(cy, canvas.height)
+            h_lo, h_hi = _band_bounds_with_tolerance(expected_h, canvas.width)
+            v_lo, v_hi = _band_bounds_with_tolerance(expected_v, canvas.height)
             out.append(
                 Violation(
                     type=ViolationType.POSITION_PREFERENCE,
                     targets=[tid],
                     detail=(
                         f"Element '{tid}' center=({cx:.0f}, {cy:.0f}) is in band "
-                        f"({h_band}, {v_band}); '{hint}' requires ({expected_h}, {expected_v})."
+                        f"({h_band}, {v_band}); '{hint}' requires ({expected_h}, "
+                        f"{expected_v}) -- accepted x in [{h_lo:.0f}, {h_hi:.0f}], "
+                        f"y in [{v_lo:.0f}, {v_hi:.0f}] (tolerance "
+                        f"{POSITION_BAND_TOLERANCE:.0%})."
                     ),
                 )
             )
@@ -292,6 +299,45 @@ def _band_index(coord: float, total: int) -> int:
     if coord < 2 * third:
         return 1
     return 2
+
+
+POSITION_BAND_TOLERANCE: float = 0.10
+"""Per-edge tolerance applied when checking ``position_preference``.
+
+Calibrated 2026-05-16 step 10c: live-#8 (1200x600) re-run with the step 10
+no_overlap fix in place still hard-failed 5/5 candidates because the strict
+[H/3, 2H/3] center band is only 200 px tall on a 600 px canvas, leaving the
+LLM no room for ``text_1`` once 3 images sat in the upper third. We widen
+each band edge by ``POSITION_BAND_TOLERANCE * canvas_dim`` (with a 16 px
+absolute floor) so a centre-of-mass that misses by less than ~10% of the
+canvas dimension still counts as "in band". A 60-px slack on the 600-px
+canvas turns the live-#8 LLM placement (cy=450, 50 px past 400) from FAIL
+into PASS without making the rule meaningless on tall canvases.
+"""
+
+POSITION_BAND_TOLERANCE_ABSOLUTE_FLOOR: int = 16
+"""Minimum tolerance in pixels regardless of canvas size, so that on tiny
+fixtures (e.g. 100x100 unit-test canvases) the rule still has any slack."""
+
+
+def _band_bounds_with_tolerance(band: int, total: int) -> Tuple[float, float]:
+    """Return inclusive [low, high] coordinate range that counts as ``band``.
+
+    Edges are widened by ``max(POSITION_BAND_TOLERANCE * total, FLOOR)``. The
+    range is clamped to [0, total] so callers do not need to clip.
+    """
+    third = total / 3.0
+    tol = max(POSITION_BAND_TOLERANCE * total, POSITION_BAND_TOLERANCE_ABSOLUTE_FLOOR)
+    if band == 0:
+        return 0.0, min(total, third + tol)
+    if band == 1:
+        return max(0.0, third - tol), min(total, 2 * third + tol)
+    return max(0.0, 2 * third - tol), float(total)
+
+
+def _in_band_with_tolerance(coord: float, band: int, total: int) -> bool:
+    low, high = _band_bounds_with_tolerance(band, total)
+    return low <= coord <= high
 
 
 NO_OVERLAP_TOLERANCE: float = 0.05

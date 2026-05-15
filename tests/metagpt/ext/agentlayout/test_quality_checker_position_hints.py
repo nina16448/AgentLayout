@@ -289,3 +289,162 @@ def test_aabb_overlap_helper_still_reports_any_overlap():
     c = LayoutElement(id="c", left=200, top=0, width=100, height=100, z_index=3)
     assert _aabb_overlap(a, b) is True
     assert _aabb_overlap(a, c) is False
+
+
+# ============================================================
+# 5. position_preference band tolerance (step 10c, 2026-05-16)
+# ============================================================
+
+
+def test_position_band_tolerance_constants_pinned():
+    """Constants drive the calibration; pin them so accidental tightening
+    requires deliberate test edits and triggers code review."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        POSITION_BAND_TOLERANCE,
+        POSITION_BAND_TOLERANCE_ABSOLUTE_FLOOR,
+    )
+
+    assert POSITION_BAND_TOLERANCE == 0.10
+    assert POSITION_BAND_TOLERANCE_ABSOLUTE_FLOOR == 16
+
+
+def _position_spec(width: int, height: int, hint: str = "center"):
+    """Single-element spec with a single position_preference constraint, used
+    by the band-tolerance boundary tests below."""
+    from metagpt.ext.agentlayout.schema import (
+        Canvas,
+        DesignSpec,
+        Element,
+        HardConstraint,
+        HardConstraintRule,
+        SemanticType,
+        VisualType,
+    )
+
+    return DesignSpec(
+        canvas=Canvas(width=width, height=height),
+        elements=[
+            Element(
+                id="text_1",
+                semantic_type=SemanticType.TITLE,
+                visual_type=VisualType.TEXT,
+                content="hi",
+                importance=5,
+                semantic_relevance=0.5,
+            ),
+        ],
+        hard_constraints=[
+            HardConstraint(
+                rule=HardConstraintRule.POSITION_PREFERENCE,
+                targets=["text_1"],
+                params={"hint": hint},
+            )
+        ],
+        soft_constraints=[],
+        style_keywords=[],
+        language="en",
+        inferred_fields={},
+    )
+
+
+def _mk_text_candidate(left: int, top: int, width: int, height: int):
+    from metagpt.ext.agentlayout.schema import Candidate, LayoutElement
+
+    return Candidate(
+        candidate_id="t",
+        elements=[
+            LayoutElement(
+                id="text_1",
+                left=left,
+                top=top,
+                width=width,
+                height=height,
+                z_index=3,
+                font_family="sans-serif",
+                font_size=36,
+                color="#111111",
+            )
+        ],
+    )
+
+
+def test_position_band_tolerance_unblocks_live8_layout():
+    """Live #8 (1200x600, hint=center): the LLM repeatedly placed text_1 at
+    center y=450 (50px past the strict 400 boundary). With 10% tolerance the
+    band runs y in [140, 460], so y=450 must now PASS. This is the *exact*
+    case that motivated step 10c."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    spec = _position_spec(1200, 600, hint="center")
+    cand = _mk_text_candidate(left=100, top=350, width=1000, height=200)  # cy=450
+    result = check_candidate(cand, spec)
+    pp = [v for v in result.violations if v.type.value == "position_preference"]
+    assert pp == [], f"text_1 cy=450 within 10% tolerance must PASS: {pp}"
+
+
+def test_position_band_tolerance_just_inside_boundary_passes():
+    """Boundary-just-inside: y=460 = 2*third + tol on 600 canvas (60px). MUST
+    pass; otherwise the boundary inclusivity has silently regressed."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    spec = _position_spec(1200, 600, hint="center")
+    cand = _mk_text_candidate(left=100, top=360, width=1000, height=200)  # cy=460
+    result = check_candidate(cand, spec)
+    pp = [v for v in result.violations if v.type.value == "position_preference"]
+    assert pp == [], f"text_1 cy=460 (= 400 + 10% of 600) must PASS: {pp}"
+
+
+def test_position_band_tolerance_just_outside_boundary_fails():
+    """y=470 is 70px past the strict edge -> beyond the 60px tolerance ->
+    must FAIL. Otherwise tolerance would be unbounded."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    spec = _position_spec(1200, 600, hint="center")
+    cand = _mk_text_candidate(left=100, top=370, width=1000, height=200)  # cy=470
+    result = check_candidate(cand, spec)
+    pp = [v for v in result.violations if v.type.value == "position_preference"]
+    assert len(pp) == 1
+    detail = pp[0].detail
+    assert "tolerance 10%" in detail
+    assert "accepted" in detail and "[140" in detail and "460]" in detail
+
+
+def test_position_band_tolerance_canonical_center_still_passes():
+    """Regression: a candidate that *was* passing under the strict rule
+    (text dead-center, cy=300 on 600 canvas) must keep passing. Step 10c is
+    a strict relaxation; nothing that was OK before may break."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    spec = _position_spec(1200, 600, hint="center")
+    cand = _mk_text_candidate(left=400, top=240, width=400, height=120)  # cy=300
+    result = check_candidate(cand, spec)
+    pp = [v for v in result.violations if v.type.value == "position_preference"]
+    assert pp == [], f"dead-center placement must still PASS: {pp}"
+
+
+def test_position_band_tolerance_top_left_still_rejects_far_misses():
+    """Hint=top_left (band (0,0)) on 1200x600: a center at (1000, 500) is
+    nowhere near the upper-left third even with tolerance, must FAIL.
+    Defends against tolerance accidentally being applied as an additive
+    union of all bands."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    spec = _position_spec(1200, 600, hint="top_left")
+    cand = _mk_text_candidate(left=900, top=400, width=200, height=200)  # c=(1000, 500)
+    result = check_candidate(cand, spec)
+    pp = [v for v in result.violations if v.type.value == "position_preference"]
+    assert len(pp) == 1
+
+
+def test_position_band_tolerance_floor_protects_tiny_canvas():
+    """On a 100x100 fixture the 10% relative tolerance would be only 10px,
+    smaller than the 16px absolute floor. The floor must apply: with hint
+    'center' (band 1, strict y in [33, 66]) a candidate at cy=80 (= 66 + 14
+    < 16) must PASS thanks to the floor."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    spec = _position_spec(100, 100, hint="center")
+    cand = _mk_text_candidate(left=30, top=70, width=40, height=20)  # cy=80
+    result = check_candidate(cand, spec)
+    pp = [v for v in result.violations if v.type.value == "position_preference"]
+    assert pp == [], f"floor must let cy=80 (within 16px of strict edge 66.7): {pp}"
