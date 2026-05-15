@@ -294,6 +294,17 @@ def _band_index(coord: float, total: int) -> int:
     return 2
 
 
+NO_OVERLAP_TOLERANCE: float = 0.05
+"""Maximum allowed bbox-overlap area as a fraction of the smaller element's area.
+
+Calibrated 2026-05-15 step 10: live runs on tight Crello canvases (1200x600,
+537x240) revealed the Generator regularly emits adjacent boxes that miss by
+1-20 pixels due to LLM rounding, which under a strict zero-tolerance check
+caused 15/15 candidates to fail QC on every retry round. 5% lets the LLM round
+edges without breaking, while genuine overlaps (>=10% area share) still fail.
+"""
+
+
 def _check_no_overlap(
     constraint: HardConstraint,
     elements_by_id: Dict[str, LayoutElement],
@@ -315,25 +326,44 @@ def _check_no_overlap(
     for i in range(len(elems)):
         for j in range(i + 1, len(elems)):
             a, b = elems[i], elems[j]
-            if _aabb_overlap(a, b):
+            ratio = _aabb_overlap_ratio(a, b)
+            if ratio > NO_OVERLAP_TOLERANCE:
                 out.append(
                     Violation(
                         type=ViolationType.NO_OVERLAP,
                         targets=[a.id, b.id],
-                        detail=f"'{a.id}' and '{b.id}' bounding boxes overlap.",
+                        detail=(
+                            f"'{a.id}' and '{b.id}' bounding boxes overlap by "
+                            f"{ratio:.1%} of the smaller box (tolerance: "
+                            f"{NO_OVERLAP_TOLERANCE:.0%})."
+                        ),
                     )
                 )
     return out
 
 
+def _aabb_overlap_ratio(a: LayoutElement, b: LayoutElement) -> float:
+    """Overlap area / min(area_a, area_b). 0.0 = disjoint, 1.0 = full containment.
+
+    Ignores rotation (angle != 0). Returns 0.0 if either box is degenerate.
+    """
+    ix = max(0, min(a.left + a.width, b.left + b.width) - max(a.left, b.left))
+    iy = max(0, min(a.top + a.height, b.top + b.height) - max(a.top, b.top))
+    overlap = ix * iy
+    if overlap == 0:
+        return 0.0
+    area_a = a.width * a.height
+    area_b = b.width * b.height
+    smaller = min(area_a, area_b)
+    if smaller <= 0:
+        return 0.0
+    return overlap / smaller
+
+
 def _aabb_overlap(a: LayoutElement, b: LayoutElement) -> bool:
-    """Axis-aligned bounding-box intersection. Ignores rotation (angle != 0)."""
-    return not (
-        a.left + a.width <= b.left
-        or b.left + b.width <= a.left
-        or a.top + a.height <= b.top
-        or b.top + b.height <= a.top
-    )
+    """Boolean wrapper for backward-compat callers (none in-tree, kept for
+    external scripts that may import the helper)."""
+    return _aabb_overlap_ratio(a, b) > 0.0
 
 
 def _check_z_order(

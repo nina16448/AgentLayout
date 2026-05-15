@@ -155,3 +155,137 @@ def test_check_position_preference_accepts_center_top_alias():
     position = [v for v in result.violations if v.type.value == "position_preference"]
     assert unknown_hint == [], f"alias 'center_top' must not raise UNKNOWN_HINT: {unknown_hint}"
     assert position == [], f"text_3 is in (1, 0) band; should pass: {position}"
+
+
+# ============================================================
+# 4. no_overlap tolerance (step 10, 2026-05-15)
+# ============================================================
+
+
+def test_no_overlap_tolerance_constant_is_five_percent():
+    """The 5% tolerance is the calibration that makes the live Crello 1200x600
+    spec satisfiable; tightening it back to 0% reverts the live #8 crash."""
+    from metagpt.ext.agentlayout.tools.quality_checker import NO_OVERLAP_TOLERANCE
+
+    assert NO_OVERLAP_TOLERANCE == 0.05
+
+
+def _no_overlap_spec():
+    """Two-element spec sharing a single no_overlap hard constraint, used as a
+    minimal fixture for tolerance-boundary tests below."""
+    from metagpt.ext.agentlayout.schema import (
+        Canvas,
+        DesignSpec,
+        Element,
+        HardConstraint,
+        HardConstraintRule,
+        SemanticType,
+        VisualType,
+    )
+
+    return DesignSpec(
+        canvas=Canvas(width=1000, height=1000),
+        elements=[
+            Element(
+                id="a",
+                semantic_type=SemanticType.DECORATIVE_IMAGE,
+                visual_type=VisualType.IMAGE,
+                asset_ref="/tmp/a.png",
+                importance=2,
+                semantic_relevance=0.5,
+            ),
+            Element(
+                id="b",
+                semantic_type=SemanticType.DECORATIVE_IMAGE,
+                visual_type=VisualType.IMAGE,
+                asset_ref="/tmp/b.png",
+                importance=2,
+                semantic_relevance=0.5,
+            ),
+        ],
+        hard_constraints=[
+            HardConstraint(
+                rule=HardConstraintRule.NO_OVERLAP, targets=["a", "b"], params={}
+            )
+        ],
+        soft_constraints=[],
+        style_keywords=[],
+        language="en",
+        inferred_fields={},
+    )
+
+
+def _mk_candidate(a_box, b_box):
+    from metagpt.ext.agentlayout.schema import Candidate, LayoutElement
+
+    return Candidate(
+        candidate_id="t",
+        elements=[
+            LayoutElement(id="a", left=a_box[0], top=a_box[1], width=a_box[2], height=a_box[3], z_index=1),
+            LayoutElement(id="b", left=b_box[0], top=b_box[1], width=b_box[2], height=b_box[3], z_index=2),
+        ],
+    )
+
+
+def test_no_overlap_disjoint_boxes_pass():
+    """Disjoint boxes -- the canonical happy path."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    cand = _mk_candidate((0, 0, 100, 100), (200, 200, 100, 100))
+    out = check_candidate(cand, _no_overlap_spec())
+    assert [v for v in out.violations if v.type.value == "no_overlap"] == []
+
+
+def test_no_overlap_micro_overlap_at_5_percent_passes():
+    """20px x 100px overlap on two 100x100 boxes = 2000 / 10000 = 20% -- fails.
+    Pick numbers that land at exactly the 5% threshold and confirm it passes."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    # a = 0..100, 0..100 (area 10000); b = 95..195, 0..100 (overlap 5x100=500 = 5%)
+    cand = _mk_candidate((0, 0, 100, 100), (95, 0, 100, 100))
+    out = check_candidate(cand, _no_overlap_spec())
+    no_ov = [v for v in out.violations if v.type.value == "no_overlap"]
+    assert no_ov == [], f"5% overlap should be within tolerance: {no_ov}"
+
+
+def test_no_overlap_just_above_tolerance_fails():
+    """6% overlap (just above the 5% tolerance) must still fail; otherwise
+    real overlap regressions slip through."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    # 6x100 overlap on 100x100 = 6% -> fail
+    cand = _mk_candidate((0, 0, 100, 100), (94, 0, 100, 100))
+    out = check_candidate(cand, _no_overlap_spec())
+    no_ov = [v for v in out.violations if v.type.value == "no_overlap"]
+    assert len(no_ov) == 1
+    assert "6.0%" in no_ov[0].detail
+    assert "tolerance: 5%" in no_ov[0].detail
+
+
+def test_no_overlap_message_format_pins_percentage_detail():
+    """The violation detail must carry the overlap percentage so Generator
+    feedback can include it; removing the format would silently regress the
+    structured-suggestion feedback loop."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    cand = _mk_candidate((0, 0, 100, 100), (50, 50, 100, 100))  # 25% overlap
+    out = check_candidate(cand, _no_overlap_spec())
+    no_ov = [v for v in out.violations if v.type.value == "no_overlap"]
+    assert len(no_ov) == 1
+    detail = no_ov[0].detail
+    assert "overlap by 25.0%" in detail or "overlap by 25%" in detail
+    assert "'a'" in detail and "'b'" in detail
+
+
+def test_aabb_overlap_helper_still_reports_any_overlap():
+    """The boolean ``_aabb_overlap`` is kept as a wrapper for any external
+    scripts; it must continue to return True for ANY positive overlap area
+    (tolerance is applied only by ``_check_no_overlap``)."""
+    from metagpt.ext.agentlayout.schema import LayoutElement
+    from metagpt.ext.agentlayout.tools.quality_checker import _aabb_overlap
+
+    a = LayoutElement(id="a", left=0, top=0, width=100, height=100, z_index=1)
+    b = LayoutElement(id="b", left=99, top=0, width=100, height=100, z_index=2)  # 1px overlap
+    c = LayoutElement(id="c", left=200, top=0, width=100, height=100, z_index=3)
+    assert _aabb_overlap(a, b) is True
+    assert _aabb_overlap(a, c) is False

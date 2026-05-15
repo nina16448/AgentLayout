@@ -2447,4 +2447,41 @@ pytest tests/metagpt/ext/agentlayout/ -m requires_llm --collect-only --no-cov
 
 ---
 
+### Step 10 — QC `no_overlap` 5% area-ratio tolerance（2026-05-15）
+
+**目的：** 解決 step 9b 揭露的 Generator+QC robustness 限制——live #8 (1200×600) 與 #9 (537×240) 的 0/15 hard QC fail 是因為 strict zero-tolerance overlap check 把 LLM 邊緣 round 1–20 px 的 micro-overlap 也判為違規。
+
+**先離線重現問題：** 新增 `layout_agent/output/debug_live8_qc.py` 用 live #8 的 DesignSpec 跑 5 個手刻候選，2/5 過、3/5 fail，no_overlap 是首要 fail mode；確認 `_aabb_overlap` 用 `not (a.left + a.width <= b.left ...)` 是 strict ≤ 比較、touching edges 都算 overlap。
+
+**修補（`metagpt/ext/agentlayout/tools/quality_checker.py`）：**
+1. 新 module-level 常數 `NO_OVERLAP_TOLERANCE: float = 0.05`，附 8 行 docstring 紀錄 calibration 來由（live #8/#9 hard fail 證據）
+2. 新私有 helper `_aabb_overlap_ratio(a, b) → float`：回傳 `overlap_area / min(area_a, area_b)`，0.0 = disjoint、1.0 = full containment、退化箱回 0.0
+3. `_check_no_overlap` 從 boolean overlap 改為 `ratio > NO_OVERLAP_TOLERANCE` 才開 violation，violation `detail` 加上實際 overlap %（給 Generator 看 structured feedback 用）
+4. 保留 `_aabb_overlap()` boolean 版本當 wrapper（任何 in-tree caller 都不再用，但留給 external scripts/notebook 用）
+
+**回歸測試（6 個新函式追加在 `tests/metagpt/ext/agentlayout/test_quality_checker_position_hints.py`）：**
+- `test_no_overlap_tolerance_constant_is_five_percent` — pin 5% calibration 防被改回 0%
+- `test_no_overlap_disjoint_boxes_pass` — happy path
+- `test_no_overlap_micro_overlap_at_5_percent_passes` — 5×100/10000 = 5% 邊界 inclusive
+- `test_no_overlap_just_above_tolerance_fails` — 6% 必須仍 fail（防 tolerance 漂移）
+- `test_no_overlap_message_format_pins_percentage_detail` — pin violation detail 含 % 與 element id（給 Generator structured feedback loop 看）
+- `test_aabb_overlap_helper_still_reports_any_overlap` — boolean wrapper 行為 ANY 重疊 → True
+
+**Pytest：** 104 passed, 12 skipped in 2.73s（= step 9 的 98 + 6 新 tolerance test）。
+
+**Live #8 re-run 驗證：** 用 5% tolerance 後 1200×600 sample 跑完整 reject loop exit code 0；確認 fix 真的解了 hard fail。
+
+**Trade-off：**
+- ✅ Generator robustness 上限拉高一個 plateau，Live #8/#9 不再 hard crash
+- ✅ 6 個 regression test 把 5% tolerance 與 violation detail 格式 pin 死，未來 refactor 不會 silent regress
+- ⚠️ 5% 只是工程妥協數字（從 live trace 觀察的 LLM rounding 噪訊量級），不是從 user study 校準；論文寫 limitations 時應提
+- ❌ 仍未解 plateau 第二段（bal/coh=17 上限），那條留 step 11
+
+**下次 session 候選方向：**
+1. **Step 11 — 攻 plateau 第二段**：bal/coh 仍卡 17，可能 root cause 是 (a) renderer 沒生 decorative shape、(b) `default_white_background` 仍是 stub（沒真實 BackgroundAnalyzer）
+2. **Step 10b — 修 post-Analyst-retry Generator QC crash**：live #6/#7 同 pattern；先寫 offline reproducer
+3. **Crello sample mining**：找更多 spacious 5+ element sample 把 sparsity 結論從 N=1 推到 N≥5
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/14*
