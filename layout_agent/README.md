@@ -2637,4 +2637,23 @@ paper figure：`layout_agent/output/step11_winrate.png`。
 
 ---
 
-*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/18*
+### Step 12b — z_order content-aware QC 正規化 + 首個 content-aware 分數（2026-05-19）
+
+**動機：** Step 12 接上 BackgroundAnalyzer 後，首次跑**真正 content-aware** live（Crello `5efdd2dd`）即 hard-crash `RuntimeError: 0 candidates passed QC after 3 top-up round(s)`。離線 reproducer（`output/debug_step12_failmode.py`，零 LLM）確診：content-aware 模式下背景元素存在，Analyst 才會發 `z_order` 硬約束，且 emit 成語意形式 `params={"hint":"above_background"}`（`analyze_brief` 列 z_order 為支援規則卻無 params 範例、又明示 params 須為 semantic hint），而 `quality_checker._check_z_order` 歷來硬要 `params["above"]=<id>`，缺則對每個 candidate 無條件 `UNKNOWN_HINT` → 全滅。此 fail mode **只在 content-aware 才會出現**（pre-content-aware 無背景元素故 Analyst 從不發 z_order），是 step 12 接線暴露的 Analyst↔QC contract 缺口。
+
+**作法（QC 載重 + prompt 互補）：**
+- `quality_checker.py`：thread `spec` 進 `_check_z_order`（比照 `_check_position_preference`）；新增 `Z_ORDER_ABOVE_BACKGROUND_HINTS` frozenset + house-style docstring；`params["above"]` 顯式路徑**完全不變**（向後相容），無 `above` 時正規化 `hint`（含 dash/space/case folding），命中集合則以 `SemanticType.BACKGROUND_IMAGE` 解析背景 id；無背景元素或 spec-derived id 不在 candidate → **graceful skip**（vacuously satisfied，符合 step 12 resolve_background "never crash" 哲學，且 completeness 已獨立報 MISSING_ELEMENT 不雙報）；空/未知 hint 仍 `UNKNOWN_HINT`（不吞錯）。
+- `analyze_brief.py`：`FORMAT_EXAMPLE_JSON` 加 z_order 範例物件 + `PROMPT_TEMPLATE` 加一行 z_order hint 指引（互補硬化，非載重）。**踩到並修掉一個既有地雷**：`PROMPT_TEMPLATE` 走 `str.format()`，指引行內若放字面 `{...}` 會被當替換欄位 → 第一次重跑即 `KeyError: '"hint"'`；改寫為無大括號敘述，並加 regression test `test_build_prompt_str_format_is_safe_*` 實際呼叫 `_build_prompt` 當 canary（既有 prompt 測試只 pin 字串、跑不到 `.format()`）。
+
+**結果：**
+- 離線 reproducer：**0/5 → 3/5 PASS**，z_order 完全從 violation 分布消失；剩 2 個僅 `position_preference`（已知 scope-bound plateau，明確不在本次範圍）。
+- agentlayout 全離線套件 **135 passed / 12 skipped**（原 118 + 17 新 z_order 測試 + 1 prompt format canary，零回歸）。
+- **首個 content-aware live 評估**（`output/live_step12b_5efdd2dd.log`、$0.27、3 verdicts、iteration=3 含 RetryAnalyst、exit 0）：BackgroundAnalyzer 全程注入真實 3 safe zones；3/3 verdict best **total=72**（req=20 hier=18 **bal=17 coh=17**）；decision=reject。
+
+**誠實定調：** 72 僅記為**首個 content-aware baseline**，依專案結論不再對「勝 GT/設計師」做任何宣稱。關鍵負向觀察：bal/coh 仍卡 **17/17**——**content-aware 並未突破 plateau**，正向強化 step 11「plateau 第二段是 schema scope-bound 結構性限制，非 LLM capability、亦非任務不對齊」的結論；補背景圖把任務對齊缺口補上，但 Generator schema 無裝飾元素表達力的天花板照舊。先前 #1–#9 live 數據正式標註為 pre-content-aware。
+
+**Trade-off：** ✅ 解開 content-aware 唯一 hard blocker、向後相容零破壞、零成本離線確診（step 8 SOP）、prompt format 地雷連帶修掉並上 canary；✅ 取得對齊任務後第一個誠實 content-aware 數據點；❌ plateau bal/coh=17 天花板未動（已知且 by design 不在本步驟範圍）；❌ 仍 N=1 content-aware 樣本、變異數 saliency 非訓練式模型（沿用 step 12 caveat）。
+
+---
+
+*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/19*

@@ -43,6 +43,23 @@ def test_analyst_prompt_pins_plateau_motivation_and_avoid_white():
     assert '"#FFFFFF"' in PROMPT_TEMPLATE
 
 
+def test_build_prompt_str_format_is_safe_and_includes_zorder_guidance():
+    """Regression for step 12b: PROMPT_TEMPLATE is consumed via str.format(),
+    so any literal '{...}' in the template body (as opposed to the substituted
+    FORMAT_EXAMPLE_JSON value) raises KeyError at runtime. The first content-
+    aware live re-run crashed exactly this way (KeyError: '"hint"') because the
+    z_order guidance line embedded a raw JSON object. This test exercises the
+    real .format() path so an unescaped brace can never silently ship again,
+    and pins that the z_order guidance survived the rewrite."""
+    from metagpt.ext.agentlayout.actions.analyze_brief import AnalyzeBrief
+
+    prompt = AnalyzeBrief()._build_prompt(
+        "Create a 1008x1296 marketing graphic titled 'Demo'", [], None
+    )
+    assert "above_background" in prompt
+    assert "z_order" in prompt
+
+
 def test_analyst_prompt_pins_palette_suggestions_per_keyword_bucket():
     """Five palette buckets, each containing at least one canonical hex --
     drop a bucket and the LLM loses guidance for that mood."""

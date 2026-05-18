@@ -26,6 +26,7 @@ from metagpt.ext.agentlayout.schema import (
     HardConstraint,
     HardConstraintRule,
     LayoutElement,
+    SemanticType,
 )
 
 
@@ -231,7 +232,7 @@ def _check_hard_constraints(candidate: Candidate, spec: DesignSpec) -> List[Viol
         elif constraint.rule == HardConstraintRule.NO_OVERLAP:
             out.extend(_check_no_overlap(constraint, elements_by_id))
         elif constraint.rule == HardConstraintRule.Z_ORDER:
-            out.extend(_check_z_order(constraint, elements_by_id))
+            out.extend(_check_z_order(constraint, elements_by_id, spec))
         elif constraint.rule == HardConstraintRule.SIZE_PREFERENCE:
             out.extend(_check_size_preference(constraint, elements_by_id, spec))
     return out
@@ -412,28 +413,91 @@ def _aabb_overlap(a: LayoutElement, b: LayoutElement) -> bool:
     return _aabb_overlap_ratio(a, b) > 0.0
 
 
+Z_ORDER_ABOVE_BACKGROUND_HINTS = frozenset(
+    {
+        "above_background",
+        "above_bg",
+        "over_background",
+        "above_the_background",
+        "front_of_background",
+    }
+)
+"""Accepted semantic ``hint`` values meaning "stack above the background plate".
+
+Normalised 2026-05-19 step 12: the first real content-aware live run (Crello
+5efdd2dd, layout_agent/output/live_step12_5efdd2dd.log) hard-crashed
+``RuntimeError: 0 candidates passed QC after 3 top-up round(s)``. A background
+element only exists in content-aware mode, so only then does the Analyst emit a
+z_order constraint -- and it emits the *semantic* form
+params={"hint": "above_background"} (analyze_brief lists z_order as a rule but
+gives no params example and tells the LLM params must be semantic hints), while
+``_check_z_order`` historically required the *explicit*
+params={"above": <element_id>} form and raised UNKNOWN_HINT on every candidate
+when it was absent. We accept the observed token plus the natural LLM
+paraphrases and resolve the reference element via
+``SemanticType.BACKGROUND_IMAGE`` (the codebase's only background marker --
+LayoutElement carries no semantic_type, so spec is threaded in, mirroring
+``_check_position_preference``). Trade-off: a brand-new hint outside this set
+still yields UNKNOWN_HINT by design, so genuinely malformed constraints are not
+silently swallowed; absence of a background element is a graceful skip
+(vacuously satisfied), consistent with the step-12 ``resolve_background``
+"never crash" philosophy.
+"""
+
+
 def _check_z_order(
     constraint: HardConstraint,
     elements_by_id: Dict[str, LayoutElement],
+    spec: DesignSpec,
 ) -> List[Violation]:
     above_id = constraint.params.get("above")
+    explicit = bool(above_id)
     if not above_id:
-        return [
-            Violation(
-                type=ViolationType.UNKNOWN_HINT,
-                targets=list(constraint.targets),
-                detail="z_order constraint missing 'above' param.",
-            )
-        ]
+        # No explicit reference id -- accept the semantic ``hint`` form the
+        # Analyst emits in content-aware mode (see frozenset docstring above).
+        hint_raw = constraint.params.get("hint", "")
+        hint = str(hint_raw).strip().lower().replace("-", "_").replace(" ", "_")
+        if not hint:
+            return [
+                Violation(
+                    type=ViolationType.UNKNOWN_HINT,
+                    targets=list(constraint.targets),
+                    detail="z_order constraint missing both 'above' param and 'hint'.",
+                )
+            ]
+        if hint not in Z_ORDER_ABOVE_BACKGROUND_HINTS:
+            return [
+                Violation(
+                    type=ViolationType.UNKNOWN_HINT,
+                    targets=list(constraint.targets),
+                    detail=f"z_order hint '{hint_raw}' is not a known z-order relation.",
+                )
+            ]
+        bg = next(
+            (e for e in spec.elements if e.semantic_type == SemanticType.BACKGROUND_IMAGE),
+            None,
+        )
+        if bg is None:
+            # "Above the background" is vacuously satisfied when the spec has
+            # no background element -- skip rather than re-introduce the
+            # 0-pass crash on the no-background path.
+            return []
+        above_id = bg.id
     ref = elements_by_id.get(above_id)
     if ref is None:
-        return [
-            Violation(
-                type=ViolationType.UNKNOWN_TARGET,
-                targets=[above_id],
-                detail=f"z_order reference '{above_id}' not found in candidate.",
-            )
-        ]
+        if explicit:
+            # Author-supplied reference id -- a real authoring error, surface it.
+            return [
+                Violation(
+                    type=ViolationType.UNKNOWN_TARGET,
+                    targets=[above_id],
+                    detail=f"z_order reference '{above_id}' not found in candidate.",
+                )
+            ]
+        # Spec-derived background id absent from the candidate:
+        # _check_completeness independently reports MISSING_ELEMENT, so do not
+        # double-report; skip gracefully rather than crash QC.
+        return []
     out: List[Violation] = []
     for tid in constraint.targets:
         el = elements_by_id.get(tid)

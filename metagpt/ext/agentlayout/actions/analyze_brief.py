@@ -107,6 +107,11 @@ FORMAT_EXAMPLE_JSON = """{
       "rule": "size_preference",
       "targets": ["headline_1"],
       "params": {"hint": "prominent"}
+    },
+    {
+      "rule": "z_order",
+      "targets": ["headline_1"],
+      "params": {"hint": "above_background"}
     }
   ],
   "soft_constraints": [
@@ -136,6 +141,7 @@ Previous feedback from Aesthetic Judge (if any): {feedback}
 - Descriptions with clear geometric meaning -> hard_constraints (structured object)
   Supported rules: position_preference / no_overlap / z_order / size_preference
   ATTENTION: params values must be semantic hints (e.g. "top_right"), NOT pixel coordinates.
+  For z_order, the params hint must be the string "above_background" when an element must sit above the background image.
 - Style and feeling descriptions -> style_keywords list (free-form strings, e.g. "minimal", "modern")
 - Soft preferences -> soft_constraints
   ATTENTION: soft_constraints[*].rule MUST be EXACTLY one of these 5 values (case-sensitive):

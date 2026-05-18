@@ -448,3 +448,300 @@ def test_position_band_tolerance_floor_protects_tiny_canvas():
     result = check_candidate(cand, spec)
     pp = [v for v in result.violations if v.type.value == "position_preference"]
     assert pp == [], f"floor must let cy=80 (within 16px of strict edge 66.7): {pp}"
+
+
+# ============================================================
+# 5. z_order semantic-hint resolution (step 12, 2026-05-19)
+#
+# The first real content-aware live run (Crello 5efdd2dd) hard-crashed
+# "0 candidates passed QC after 3 top-up round(s)": a background element only
+# exists in content-aware mode, so only then does the Analyst emit a z_order
+# constraint -- as the semantic form params={"hint": "above_background"} --
+# while _check_z_order historically required params={"above": <id>} and raised
+# UNKNOWN_HINT on every candidate. The fix accepts the semantic hint, resolves
+# the reference via SemanticType.BACKGROUND_IMAGE (spec threaded in), and
+# skips gracefully when there is no background. These tests pin both the new
+# behaviour and strict back-compat with the explicit-param form.
+# ============================================================
+
+
+def _zorder_spec(hint=None, above=None, with_bg=True):
+    """Spec with a foreground TITLE 'fg_1' plus (optionally) a BACKGROUND_IMAGE
+    'bg_1', sharing one z_order hard constraint. Pass either ``hint`` (semantic
+    form) or ``above`` (legacy explicit form)."""
+    from metagpt.ext.agentlayout.schema import (
+        Canvas,
+        DesignSpec,
+        Element,
+        HardConstraint,
+        HardConstraintRule,
+        SemanticType,
+        VisualType,
+    )
+
+    elements = [
+        Element(
+            id="fg_1",
+            semantic_type=SemanticType.TITLE,
+            visual_type=VisualType.TEXT,
+            content="Hello",
+            importance=5,
+            semantic_relevance=0.9,
+        ),
+    ]
+    if with_bg:
+        elements.append(
+            Element(
+                id="bg_1",
+                semantic_type=SemanticType.BACKGROUND_IMAGE,
+                visual_type=VisualType.IMAGE,
+                asset_ref="/tmp/bg.png",
+                importance=1,
+                semantic_relevance=0.5,
+            )
+        )
+    params = {}
+    if hint is not None:
+        params["hint"] = hint
+    if above is not None:
+        params["above"] = above
+    return DesignSpec(
+        canvas=Canvas(width=600, height=600),
+        elements=elements,
+        hard_constraints=[
+            HardConstraint(
+                rule=HardConstraintRule.Z_ORDER, targets=["fg_1"], params=params
+            )
+        ],
+        soft_constraints=[],
+        style_keywords=[],
+        language="en",
+        inferred_fields={},
+    )
+
+
+def _mk_zorder_candidate(fg_z, bg_z=None):
+    """Candidate with fg_1 (and bg_1 when bg_z is given), all in-bounds so only
+    the z_order rule can fire."""
+    from metagpt.ext.agentlayout.schema import Candidate, LayoutElement
+
+    els = [LayoutElement(id="fg_1", left=100, top=100, width=200, height=80, z_index=fg_z)]
+    if bg_z is not None:
+        els.append(LayoutElement(id="bg_1", left=0, top=0, width=600, height=600, z_index=bg_z))
+    return Candidate(candidate_id="zt", elements=els)
+
+
+def test_z_order_accepted_hint_set_is_pinned():
+    """Pin the accepted-hint frozenset so silently dropping the canonical
+    'above_background' token (which would re-introduce the crash) is caught."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        Z_ORDER_ABOVE_BACKGROUND_HINTS,
+    )
+
+    assert "above_background" in Z_ORDER_ABOVE_BACKGROUND_HINTS
+    assert Z_ORDER_ABOVE_BACKGROUND_HINTS == frozenset(
+        {
+            "above_background",
+            "above_bg",
+            "over_background",
+            "above_the_background",
+            "front_of_background",
+        }
+    )
+
+
+def test_z_order_legacy_explicit_above_param_still_passes():
+    """Back-compat: the historical params={'above': <id>} form is unchanged."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    spec = _zorder_spec(above="bg_1")
+    cand = _mk_zorder_candidate(fg_z=2, bg_z=1)  # fg strictly above bg
+    out = check_candidate(cand, spec)
+    assert [v for v in out.violations if v.type.value in ("z_order", "unknown_hint")] == []
+
+
+def test_z_order_legacy_explicit_below_still_fails():
+    """Back-compat: explicit form still flags fg not strictly above ref."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    spec = _zorder_spec(above="bg_1")
+    cand = _mk_zorder_candidate(fg_z=1, bg_z=3)
+    zo = [v for v in check_candidate(cand, spec).violations if v.type.value == "z_order"]
+    assert len(zo) == 1
+
+
+def test_z_order_legacy_explicit_missing_reference_still_unknown_target():
+    """Author-supplied 'above' id absent from candidate is a real authoring
+    error and must still surface as UNKNOWN_TARGET (not a graceful skip)."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    spec = _zorder_spec(above="ghost", with_bg=False)
+    cand = _mk_zorder_candidate(fg_z=2)
+    ut = [v for v in check_candidate(cand, spec).violations if v.type.value == "unknown_target"]
+    assert len(ut) == 1
+    assert "ghost" in ut[0].detail
+
+
+def test_z_order_hint_above_background_resolves_and_passes():
+    """The live failure mode: hint 'above_background' resolves the reference
+    via SemanticType.BACKGROUND_IMAGE and passes when z ordering is correct."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    spec = _zorder_spec(hint="above_background")
+    cand = _mk_zorder_candidate(fg_z=5, bg_z=0)
+    out = check_candidate(cand, spec)
+    assert [v for v in out.violations if v.type.value in ("z_order", "unknown_hint")] == []
+
+
+def test_z_order_hint_foreground_below_background_fails():
+    """Hint path still enforces the real geometric rule: fg z_index <= bg
+    z_index is a Z_ORDER violation referencing the resolved bg id."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    spec = _zorder_spec(hint="above_background")
+    cand = _mk_zorder_candidate(fg_z=0, bg_z=3)
+    zo = [v for v in check_candidate(cand, spec).violations if v.type.value == "z_order"]
+    assert len(zo) == 1
+    assert "bg_1" in zo[0].detail
+
+
+def test_z_order_hint_no_background_element_skips_gracefully():
+    """'Above the background' is vacuously satisfied with no background element
+    -- must NOT emit a violation (that would re-create the 0-pass crash)."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    spec = _zorder_spec(hint="above_background", with_bg=False)
+    cand = _mk_zorder_candidate(fg_z=1)  # only fg_1, matches spec.elements
+    out = check_candidate(cand, spec)
+    assert out.passed, f"no-background z_order hint must skip cleanly: {out.violations}"
+
+
+def test_z_order_garbage_hint_still_unknown_hint():
+    """An unrecognised non-empty hint must still raise UNKNOWN_HINT so genuine
+    malformed constraints are not silently swallowed."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    spec = _zorder_spec(hint="to_the_left_a_bit", with_bg=False)
+    cand = _mk_zorder_candidate(fg_z=1)
+    uh = [v for v in check_candidate(cand, spec).violations if v.type.value == "unknown_hint"]
+    assert len(uh) == 1
+    assert "to_the_left_a_bit" in uh[0].detail
+
+
+def test_z_order_missing_both_above_and_hint_unknown_hint():
+    """params={} (neither 'above' nor 'hint') is a malformed constraint."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    spec = _zorder_spec(with_bg=False)  # params stays {}
+    cand = _mk_zorder_candidate(fg_z=1)
+    uh = [v for v in check_candidate(cand, spec).violations if v.type.value == "unknown_hint"]
+    assert len(uh) == 1
+    assert "missing both 'above' param and 'hint'" in uh[0].detail
+
+
+@pytest.mark.parametrize(
+    "hint",
+    [
+        "above_background",
+        "above_bg",
+        "over_background",
+        "above_the_background",
+        "front_of_background",
+        "Above Background",  # case + space normalisation
+        "above-bg",  # dash normalisation
+    ],
+)
+def test_z_order_hint_variants_all_resolve(hint):
+    """Every accepted token plus dash/space/case variants resolves to the bg
+    path (no UNKNOWN_HINT) and validates correct z ordering."""
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    spec = _zorder_spec(hint=hint)
+    cand = _mk_zorder_candidate(fg_z=9, bg_z=0)
+    out = check_candidate(cand, spec)
+    assert [v for v in out.violations if v.type.value in ("z_order", "unknown_hint")] == [], (
+        f"hint {hint!r} should resolve to background and pass: {out.violations}"
+    )
+
+
+def test_z_order_live_5efdd2dd_reproduction_unblocks():
+    """Crash canary: the exact live constraint
+    {'rule':'z_order','targets':['image_1','text_1'],'params':{'hint':'above_background'}}
+    on a 3-element content-aware spec must yield a passing candidate (the
+    original RuntimeError can never recur for this shape)."""
+    from metagpt.ext.agentlayout.schema import (
+        Candidate,
+        Canvas,
+        DesignSpec,
+        Element,
+        HardConstraint,
+        HardConstraintRule,
+        LayoutElement,
+        SemanticType,
+        VisualType,
+    )
+    from metagpt.ext.agentlayout.tools.quality_checker import check_candidate
+
+    spec = DesignSpec(
+        canvas=Canvas(width=1008, height=1296),
+        elements=[
+            Element(
+                id="bg_1",
+                semantic_type=SemanticType.BACKGROUND_IMAGE,
+                visual_type=VisualType.IMAGE,
+                asset_ref="/tmp/asset_00_image.png",
+                importance=1,
+                semantic_relevance=0.5,
+            ),
+            Element(
+                id="image_1",
+                semantic_type=SemanticType.DECORATIVE_IMAGE,
+                visual_type=VisualType.IMAGE,
+                asset_ref="/tmp/asset_01_image.png",
+                importance=3,
+                semantic_relevance=0.7,
+            ),
+            Element(
+                id="text_1",
+                semantic_type=SemanticType.TITLE,
+                visual_type=VisualType.TEXT,
+                content="LAUNDRY",
+                importance=5,
+                semantic_relevance=0.9,
+            ),
+        ],
+        hard_constraints=[
+            HardConstraint(
+                rule=HardConstraintRule.Z_ORDER,
+                targets=["image_1", "text_1"],
+                params={"hint": "above_background"},
+            ),
+        ],
+        soft_constraints=[],
+        style_keywords=[],
+        language="en",
+        inferred_fields={},
+    )
+    candidate = Candidate(
+        candidate_id="cand_01",
+        elements=[
+            LayoutElement(id="bg_1", left=0, top=0, width=1008, height=1296, z_index=1),
+            LayoutElement(id="image_1", left=100, top=100, width=808, height=500, z_index=2),
+            LayoutElement(
+                id="text_1",
+                left=336,
+                top=520,
+                width=336,
+                height=260,
+                z_index=3,
+                font_family="sans-serif",
+                font_size=48,
+                font_weight="bold",
+                color="#F4F4F4",
+                text_align="center",
+            ),
+        ],
+    )
+
+    result = check_candidate(candidate, spec)
+    assert result.passed, f"live 5efdd2dd z_order shape must no longer crash QC: {result.violations}"

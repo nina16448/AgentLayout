@@ -22,6 +22,7 @@
 | 8r  | 2026-05-16 | step 10 re-run (5% tolerance only)   | 同 #8                                                           | 1200×600    | 0.12       | 0        | —          | 0/15 hard fail     | RuntimeError    | step 10 解了 no_overlap，但 fail mode 漂到 `position_preference` band；揭發 step 10c 動機               |
 | 8rc | 2026-05-16 | step 10c (band 10% tolerance)        | 同 #8                                                           | 1200×600    | 0.43       | 3        | 70         | 70 → 68 → 70       | reject          | **跑完整 reject loop**；5-element 4-effective brief mean best 69.3 vs GT 68 → sparsity N=2 validated |
 | 9rd | 2026-05-18 | step 10d (10+10c on small canvas)    | 同 #9                                                           | 537×240     | 0.55       | 3 + ½    | 72         | 70 → 70 → 72 → 💥  | RuntimeError    | **step 10+10c 解開 small-canvas hard crash**；跑完整 reject loop（V3 best 72 req=20 hier=18 bal=17 coh=17）；mean best 70.67 vs GT 68 → robustness 修補在第二 aspect ratio generalize、sparsity N=3；殘留 💥 為已知 step 10b post-Analyst-retry crash 非 tolerance 問題 |
+| 12c | 2026-05-19 | step 12b（z_order hint 正規化，**content-aware ON**） | Crello `5efdd2dd` "Citation about Diversity of Skin Color"（3 elements，真實背景圖） | 1008×1296 | 0.27 | 3 | 72 | 72 → 72 → 72 | reject | **🌟 首個真正 content-aware live**：BackgroundAnalyzer 全 3 round 注入真實 3 safe zones（非 stub）；z_order `hint:above_background` QC 正規化解開 0/15 crash（並修掉 PROMPT_TEMPLATE `.format()` `{}` KeyError）；mean best 72，子分數 req=20 hier=18 **bal=17 coh=17**——content-aware **未突破 plateau**，與 step 11「bal/coh≈17 結構性 scope-bound」結論一致；**#1–#9 全為 pre-content-aware，本列起為 content-aware baseline** |
 
 註：
 - 「Verdicts」= Aesthetic Judge 完整 emit 的次數；「3 + ½」= 3 場完整 verdict 後 Analyst retry 觸發、Generator round crash
@@ -111,9 +112,10 @@
 | 7     | `output/role_live_crello_*.{json,png}` (`5c6c0cba` 後綴)                                                           |
 | 8     | `output/role_live_crello_*.{json,png}` (預設 `5954bda9` 早期 sample；driver 後升級 `--sample-id`)                  |
 | 9     | `output/role_live_crello_5d972ca9abc8ea6d1c54e002_*.{json,png}`                                                    |
+| 12c   | `output/live_step12b_5efdd2dd.log` + `output/role_live_crello_5efdd2dd499b85dcc75ba0bc_{trace,spec}.json` + `_last_reject.png`；離線根因 `output/debug_step12_failmode.py` |
 | 8r    | （driver 末次跑後同檔覆蓋；下次重跑可加 `_step10` 後綴避免覆蓋）                                                   |
 | 全部 commit 紀錄 | `git log --oneline -- metagpt/ext/agentlayout/`（dcf6c75f → 229b8e86 共約 8 個 step commit）            |
 
 ---
 
-**最後更新：2026-05-16**
+**最後更新：2026-05-19（加入 #12c 首個 content-aware live；#1–#9 標註為 pre-content-aware）**
