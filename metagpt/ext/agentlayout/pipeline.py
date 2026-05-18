@@ -47,6 +47,7 @@ from metagpt.ext.agentlayout.schema import (
     LayoutTree,
 )
 from metagpt.ext.agentlayout.tools.asset_analyzer import AssetAnalyzer
+from metagpt.ext.agentlayout.tools.background_analyzer import resolve_background
 from metagpt.ext.agentlayout.tools.quality_checker import CheckResult, filter_valid
 from metagpt.logs import logger
 
@@ -182,7 +183,10 @@ class LayoutPipeline:
         spec = await self.analyze.run(user_brief=user_brief, asset_list=asset_list)
         self.asset_analyzer.run(spec)
         tree = await self.plan.run(spec=spec)
-        bg_resolved = bg if bg is not None else default_white_background(spec.canvas)
+        # Content-aware: caller-supplied bg wins; otherwise run real U2Net
+        # safe-zone analysis when spec.canvas has a background image, else the
+        # historical solid-color stub (resolve_background handles both).
+        bg_resolved = bg if bg is not None else resolve_background(spec.canvas)
 
         state = IterationState()
         trace: List[TraceEntry] = []

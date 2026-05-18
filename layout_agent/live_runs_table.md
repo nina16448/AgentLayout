@@ -2,6 +2,8 @@
 
 整理 2026-05-09 起至 2026-05-15 共 **9 場 live LLM 跑 + 1 場 re-run** 的成本、分數軌跡與失敗模式，提供論文 results 與 limitations 章節原始資料。
 
+> **⚠️ 2026-05-18 誠實修正（讀本表前必看）**：本表多列「Best score / mean best X vs Crello GT 68 = +N」是 **pipeline 自家 Aesthetic Judge 單邊評 AgentLayout candidate**、再與另一 corner-case 量到的「設計師 GT≈68」相比——**非配對、Judge 校準不同，是測量假象，不可解讀為「AgentLayout 勝設計師」**。2026-05-18 step 11 的正規 **pairwise head-to-head Win Rate**（交換圖序 ×2、N=3）顯示：A realistic 設計師完勝 **3:0**（分差 27-37）、B layout-only 即使隔離渲染仍 **2:1** 設計師勝。即「Best score」欄僅供同 pipeline 內部 trend 比較，**不是 vs-designer 的有效對照**；vs-designer 結論以 `step11_winrate.png` / `step11_winrate_results.json` 為準。
+
 ---
 
 ## 1. 一覽表
@@ -19,6 +21,7 @@
 | 9   | 2026-05-15 | step 9b N=3 (no fix yet)             | Crello `5d972ca9` Russian "Travelling Tips" (4 effective elements) | 537×240   | 0.13       | 0        | —          | 0/15 hard fail     | RuntimeError    | 同 #8；tight canvas + position_preference + no_overlap 多元素組合不可解                                   |
 | 8r  | 2026-05-16 | step 10 re-run (5% tolerance only)   | 同 #8                                                           | 1200×600    | 0.12       | 0        | —          | 0/15 hard fail     | RuntimeError    | step 10 解了 no_overlap，但 fail mode 漂到 `position_preference` band；揭發 step 10c 動機               |
 | 8rc | 2026-05-16 | step 10c (band 10% tolerance)        | 同 #8                                                           | 1200×600    | 0.43       | 3        | 70         | 70 → 68 → 70       | reject          | **跑完整 reject loop**；5-element 4-effective brief mean best 69.3 vs GT 68 → sparsity N=2 validated |
+| 9rd | 2026-05-18 | step 10d (10+10c on small canvas)    | 同 #9                                                           | 537×240     | 0.55       | 3 + ½    | 72         | 70 → 70 → 72 → 💥  | RuntimeError    | **step 10+10c 解開 small-canvas hard crash**；跑完整 reject loop（V3 best 72 req=20 hier=18 bal=17 coh=17）；mean best 70.67 vs GT 68 → robustness 修補在第二 aspect ratio generalize、sparsity N=3；殘留 💥 為已知 step 10b post-Analyst-retry crash 非 tolerance 問題 |
 
 註：
 - 「Verdicts」= Aesthetic Judge 完整 emit 的次數；「3 + ½」= 3 場完整 verdict 後 Analyst retry 觸發、Generator round crash
@@ -61,7 +64,8 @@
 | step 9b    | #9              | 0.13        | 537×240 hard fail                                             |
 | step 10    | #8r             | 0.12        | 5% no_overlap tolerance；解 no_overlap 但 fail mode 漂移        |
 | step 10c   | #8rc            | 0.43        | 10% position-band tolerance；首次跑完 1200×600 reject loop      |
-| **累計**   |                 | **~3.00**   | 9 場 + 2 re-run；含一次失敗實驗（step 8）                      |
+| step 10d   | #9rd            | 0.55        | 537×240 small canvas 重跑；step 10+10c 解開 hard crash         |
+| **累計**   |                 | **~3.55**   | 9 場 + 3 re-run；含一次失敗實驗（step 8）                      |
 
 ---
 
@@ -73,10 +77,10 @@
 | Judge emit `metric=right/bottom`      | #2           | step 4 PROMPT_TEMPLATE metric whitelist                                   |
 | QC `size_preference` area-math leak   | #2 (殘留)    | step 5 PROMPT 加 width × height ≥ 0.10×canvas_area                        |
 | Plateau 第一段（spec sparsity）       | #3, #4, #5   | step 9 用 5-element brief 從 68 → 71.3                                    |
-| Plateau 第二段（bal/coh=16-17 上限）  | #3 起        | **未解** — step 11 候選；#8rc 上 bal/coh=16 略低於 #7 的 17                |
-| Post-Analyst-retry Generator crash    | #6, #7       | **未解** — step 10b 候選                                                   |
-| QC `no_overlap` strict-tolerance fail | #8, #9       | step 10 改 5% area-ratio tolerance（#8r 確認 no_overlap 不再 fail）         |
-| QC `position_preference` band 邊界硬   | #8r          | step 10c 改 10% per-edge tolerance（#8rc 首次跑完 reject loop）             |
+| Plateau 第二段（bal/coh=16-17 上限）  | #3 起        | **scope-bound limitation（step 11 結案）** — Generator schema 無裝飾元素表達力；by design 不做 graphic-design synthesis，非 bug、不解；#7/#8rc/#9rd 跨 aspect ratio 一致 |
+| Post-Analyst-retry Generator crash    | #6, #7, #9rd | **未解** — step 10b 候選；#9rd 確認 3 verdict 後仍於 rebuild round crash    |
+| QC `no_overlap` strict-tolerance fail | #8, #9       | step 10 改 5% area-ratio tolerance（#8r + #9rd 確認 no_overlap 不再 fail）  |
+| QC `position_preference` band 邊界硬   | #8r          | step 10c 改 10% per-edge tolerance（#8rc 1200×600 + #9rd 537×240 皆跑完）   |
 | QC alias `center_top` ≠ `top_center`  | #7（首次發現）| step 9 副產品：8 alias + 17 regression test                                |
 
 ---

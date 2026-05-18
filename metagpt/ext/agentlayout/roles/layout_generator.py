@@ -15,8 +15,9 @@ K_VALID-target top-up loop as ``LayoutPipeline._generate_with_topup``: each
 top-up batch's candidate IDs are prefixed ``r{i}_`` so they do not collide
 across calls.
 
-Background analysis is not yet a Role -- a white-fallback BackgroundAnalysis
-is constructed locally until BackgroundAnalyzerRole is added.
+Background analysis is a CV module (not a Role): ``resolve_background``
+runs U2Net saliency on ``canvas.background_asset_ref`` when present and
+falls back to the solid-color stub for image-less specs.
 """
 from __future__ import annotations
 
@@ -30,7 +31,7 @@ from metagpt.utils.common import any_to_str
 from metagpt.ext.agentlayout.actions.analyze_brief import AnalyzeBrief
 from metagpt.ext.agentlayout.actions.generate_layout import GenerateLayout
 from metagpt.ext.agentlayout.actions.plan_assets import PlanAssets
-from metagpt.ext.agentlayout.pipeline import default_white_background
+from metagpt.ext.agentlayout.tools.background_analyzer import resolve_background
 from metagpt.ext.agentlayout.roles.iteration_state import RetryGeneration, RetryPayload
 from metagpt.ext.agentlayout.schema import (
     AestheticFeedback,
@@ -149,7 +150,9 @@ class LayoutGeneratorRole(Role):
             self._retry_round = 0
 
         spec = self._find_by_cause(AnalyzeBrief, DesignSpec)
-        bg = default_white_background(spec.canvas)
+        # Content-aware: real U2Net safe-zone analysis when the spec carries a
+        # background image, else the historical solid-color stub.
+        bg = resolve_background(spec.canvas)
 
         prefix_offset = self._retry_round * self.max_topup_rounds
         kept, reports = await self._generate_with_topup(

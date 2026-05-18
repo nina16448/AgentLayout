@@ -2529,6 +2529,112 @@ pytest tests/metagpt/ext/agentlayout/ -m requires_llm --collect-only --no-cov
 2. **Step 11 — 攻 plateau 第二段**：仍是主線目標
 3. **Step 10b — 修 post-Analyst-retry Generator QC crash**：未動
 
+### Step 10d — Live #9 537×240 small canvas 重跑驗證（2026-05-18）
+
+**動機：** step 10（5% no_overlap area-ratio）+ step 10c（10% position-band per-edge）已在 Live #8 1200×600 horizontal 上把 hard crash 帶到完整 reject loop，但 small canvas（537×240）尚未驗證。本步驟確認 robustness 修補是否跨 aspect ratio generalize（NEXT_SESSION 下次優先 (1)）。
+
+**做法：** `python layout_agent/output/run_role_team_live_crello.py --sample-id 5d972ca9abc8ea6d1c54e002`（Live #9 同一 Crello 俄文 "Travelling Tips"、4 effective elements）。**無任何程式改動**，純跑 HEAD `d3dc7491` 的 QC tolerance；屬實驗 + 文件更新性質。
+
+**結果（exit 0、$0.554、3 verdicts）—— 對比 step 9b 同 sample 的 $0.13 立即 hard crash：**
+- Verdict 1 best=r0_cand_03 total=70
+- Verdict 2 best=r3_cand_01 total=70
+- Verdict 3 best=r6_cand_01 total=72（req=20 hier=18 bal=17 coh=17）
+- 平均 best **70.67 vs 3-element GT 68 = +2.67**（best 72 = +4）；decision=reject
+
+**論文價值：** sparsity robustness 修補在**第二種 aspect ratio（537×240 small）generalize 成功**——完整 pipeline 跑通的 Crello 樣本從 N=2（#7 1080×1920 portrait + #8rc 1200×600 horizontal）升 **N=3**（+#9rd 537×240 small）。step 10/10c 不再是 1200×600 單點 fix，而是跨 canvas 形狀的通用 robustness 改善。
+
+**殘留現象（非本步驟問題）：** log 結尾 `RuntimeError: 0 candidates passed QC after 3 top-up rounds`，發生在 `iteration=3 → RetryAnalyst` 之後的 rebuild round——這是已知的 **step 10b post-Analyst-retry Generator crash**（#6/#7 同 pattern），與 small-canvas tolerance 無關；主 reject loop 已完全打通。
+
+**Trade-off：**
+- ✅ robustness 修補跨 aspect ratio 驗證、論文 N=3、零程式改動
+- ✅ plateau 第二段 bal/coh=17 在 537×240 上一致出現，再強化「結構性 not LLM-capability」
+- ❌ plateau 第二段未動（step 11）；❌ post-Analyst-retry crash 未動（step 10b）
+
+**下次 session 候選方向（再更新）：**
+1. **Step 11 — 攻 plateau 第二段 bal/coh=16-17 上限**：最有論文價值、需動 pipeline（疑 BackgroundAnalyzer stub / 無裝飾元素）
+2. **Step 10b — 修 post-Analyst-retry Generator QC crash**：#6/#7/#9rd 同 pattern、純工程修補、先寫 offline reproducer
+
+### Step 11 — plateau 第二段根因診斷：確認為 scope-bound limitation（2026-05-18，負向結果）
+
+**動機：** plateau 分兩段——step 9 已解第一段（spec sparsity，5-element brief 把分數從 68 帶到 71~72，+3~4）；第二段是 `layout_balance` / `visual_coherence` 兩項子分數穩定卡在 16-17/25 上限，跨 aspect ratio 一致出現（#7 portrait、#8rc horizontal、#9rd small 皆 bal/coh≈17）。step 6/7/8 三次純 prompt 工程嘗試全部無法推動。本步驟做**離線根因診斷，不燒 live LLM**（依 step 8「先 cheap-validate 再 live-burn」教訓）。
+
+**離線診斷證據（純讀碼、零成本）：**
+
+1. **BackgroundAnalyzer 是 stub** — `pipeline.py:59-76` `default_white_background()` 回傳空 `safe_zones` + 單色 `dominant_palette`，無真實背景/構圖分析；`roles/layout_generator.py:18-19` 註解明寫 "Background analysis is not yet a Role -- a white-fallback BackgroundAnalysis is constructed locally until BackgroundAnalyzerRole is added"。
+2. **Generator schema 無裝飾表達力** — `schema.py:369-400` `LayoutElement` 欄位僅 `id/left/top/width/height/angle/z_index/font_*/color/text_align`；`Candidate.elements` 的 id **必須是 DesignSpec 既有 element**。Generator **結構上無法發出新的色塊、分隔線、背景紋理、視覺點綴**。
+3. **Renderer 只畫裸素材 + 純色底** — `tools/renderer.py:84-98` `render()` 僅迭代 `spec.elements` 畫前景 text/image，`_make_canvas` 填純色背景，**零裝飾中間層**。Judge 看到的永遠是「幾個素材擺在純色底上」。
+4. **Judge rubric 在此輸入下無可加分空間** — `actions/judge_aesthetic.py:170-175`：`layout_balance`=視覺重量分布、避免擁擠/空洞；`visual_coherence`=style/spacing/color 對齊 `dominant_palette`。當 palette 只有單一背景色、且無裝飾元素時，可評的視覺層次極少，分數數學上夾在 ~17。
+
+**根因定調（scope boundary，非 bug）：**
+
+AgentLayout 的研究定位是 **layout generation（安排既有素材）**，**by design 不做 graphic design generation（合成新視覺內容）**。輸入是 brief 給定的固定素材清單，Generator 的職責是排列/縮放/設定字體層級，而非生成背景裝飾。因此「裸素材 + 純色底」這種構圖的 `layout_balance` / `visual_coherence` 上限就被夾在 ~17/25——**這不是 LLM 評錯，也不是 prompt 沒調好（step 6/7/8 已實證），而是 schema 層缺少表達能力**。
+
+**決策：不嘗試突破。** 要打破此上限需引入 asset / decorative-element synthesis（generative 色塊、背景、分隔裝飾），這是大型架構改動（schema + renderer + Generator + QC + 測試全動），且本質是「平面設計生成」另一個研究問題，**超出本論文範疇**。定調為論文 **limitation + future work** 負向結果。
+
+**論文價值：** 與 step 6、step 8 同性質的高價值負向結果，反向強化核心論點「**plateau 是結構性的，不是 LLM 能力問題**」。給出清楚的 scope 分界——AgentLayout 解決的是「給定素材的版面安排」，不解決「視覺內容的創作」。Future work 明確：要進一步提升美感分數，需擴充為 design-synthesis pipeline。
+
+**Trade-off：**
+- ✅ 零成本（純讀碼診斷）、誠實、結案明確、補強 limitations 章節
+- ✅ 三個 aspect ratio（#7/#8rc/#9rd）bal/coh≈17 一致，為 scope-bound 提供跨樣本證據
+- ❌ 分數天花板照舊（已知且 by design 不解，非缺陷）
+
+**無程式改動**；僅更新本 README + NEXT_SESSION + live_runs_table 三文件。
+
+**下次 session 候選方向（收斂）：**
+1. **Step 10b — 修 post-Analyst-retry Generator QC crash**：#6/#7/#9rd 同 pattern、純工程修補、先寫 offline reproducer（plateau 第二段已結案為 limitation，不再列為可解目標）
+
+### Step 11 後續 — MLLM Pairwise Win Rate vs Crello 設計師（2026-05-18，誠實負向結果 + 紀錄修正）
+
+**動機：** 論文最大實質缺口是「沒跟 SOTA 比較」。trained-SOTA（FlexDM/AesthetiQ/PosterO）需 GPU + 權重，超出環境；改採 **AesthetiQ 標準 pairwise Win Rate 協定**，對手＝Crello 人類設計師（最強 reference、零額外模型、~$0.4）。
+
+**方法（`layout_agent/output/step11_winrate.py`，依 step 8 教訓先 `--dry-run` $0 驗證 12 張配對圖才 live）：**
+- 共用 pairwise judge：一次餵兩張圖、各打 4 維 0-100、宣告 winner；**每對交換圖序 ×2** 消除 LLM-as-judge position bias，多數決，平手用平均分
+- **實驗 A（realistic / headline）**：AgentLayout 最佳 render vs 設計師真實成品稿 `ground_truth_preview.jpg`（含完整背景裝飾）
+- **實驗 B（layout-only / ablation）**：同 renderer + 同 spec assets，只把 bbox 換成設計師位置，隔離渲染能力純比排版推理。GT candidate 用 spec↔meta 的 `asset_ref`/`content` 精確比對重建（**棄用快取的 `iou_result.json` id_map**——它是 05-10 舊 pipeline 的 spec ids，會 silently drop 全部文字元素，dry-run 時抓到此 bug 並修正）
+
+**結果（N=3，#7 / #8rc / #9rd）：**
+
+| 實驗 | Win Rate | 逐樣本 agent vs designer total |
+| --- | --- | --- |
+| A realistic | **設計師 3 : 0 AgentLayout** | #7 54–88、#8rc 59–86、#9rd 41–78（分差 27–37，兩次圖序皆一致，穩健）|
+| B layout-only | **設計師 2 : 1 AgentLayout** | #7 71–82、#8rc 58–82 設計師勝；#9rd 56–51 AgentLayout（judge 兩次圖序互打、噪訊邊緣勝）|
+
+paper figure：`layout_agent/output/step11_winrate.png`。
+
+**誠實紀錄修正（核心）：** 先前 `live_runs_table.md` / 本 README / NEXT_SESSION 多處記的「mean best 69–72 > Crello GT 68 = +2/+2/+4」，是 **pipeline 自家 Aesthetic Judge 單邊評 AgentLayout candidate**、再與另一 corner-case 量到的「設計師 GT≈68」相比——**非配對、Judge 校準不同，是測量假象，不可解讀為「AgentLayout 勝設計師」**。正規 pairwise head-to-head 下：A 設計師完勝、B 即使隔離渲染仍設計師勝。**結論修正為：AgentLayout 尚未達設計師水準**；先前 +N 僅可作同 pipeline 內部 trend 指標。
+
+**論文價值：** step 11 的 scope-bound 上限從「診斷」升級為**量化證據**；B ablation 進一步顯示即使控制渲染能力、排版推理本身仍略低於設計師（方法非完全失效但不能 claim 勝）。與 step 6/8 同為高價值誠實負向結果，並修正了專案先前一個被誤當正向的結論。
+
+**Caveat（論文需寫）：** N=3；單一 judge model；pairwise prompt ≠ pipeline Judge；B 的 AgentLayout 側含 Analyst 多生且 #9rd overflow 出血的 `title_1`（真實 Generator bug，合理拉低 B 分）——此 bug 連到 step 10b。
+
+**Trade-off：**
+- ✅ 補上論文最大缺口（SOTA-gap 量化）、誠實修正錯誤紀錄、零 metagpt/ 程式改動
+- ✅ dry-run 先行抓到並修正 stale id_map bug（step 8 SOP 再次生效）
+- ❌ N=3 偏小（future work：mine 更多 Crello sample 擴 N）；trained-SOTA 直接比較仍為 future work
+
 ---
 
-*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/14*
+### Step 12 — BackgroundAnalyzer 上線：補齊 content-aware 缺口（2026-05-18，核心架構修正）
+
+**動機（最關鍵的誠實發現）：** 全程式碼追查證實，本系統設計上宣稱的任務是 **content-aware layout generation**（吃既有背景圖 → 讀 saliency → 避開主體擺元素，與 PosterO/PKU PosterLayout 同任務），但實作上 `BackgroundAnalysis` 的**唯一 producer 是 `pipeline.py:59 default_white_background()` stub**（`safe_zones=[]`）。`schema.py:141` 註解「U2Net output」、`layout_generator.py` 註解「not yet a Role」皆為 placeholder，**全 codebase 無任何 saliency/rembg/safe_zone 真實實作，沒有任何 driver 餵過真實背景圖**。即：先前所有 live run 其實是在**空白純色畫布上做 brief-driven layout，不是 content-aware**——這才是「無法與 SOTA 比較」的真正根因（任務不對齊，非僅 GPU/指標問題），也解釋了 plateau 與 Win Rate 輸設計師。
+
+**作法（最小侵入、符合既定架構——CV 模組非 LLM Role）：**
+- 新增 `metagpt/ext/agentlayout/tools/background_analyzer.py`：`analyze_background(image_path, canvas)` 產生真實 `BackgroundAnalysis`；`resolve_background(canvas)` 為兩條 driver 的單一進入點（有可載入 `background_asset_ref` → 真分析，否則 fallback 舊 stub，任何錯誤皆優雅退回，live run 永不 crash）。
+- 接線僅兩處：`roles/layout_generator.py:152`、`pipeline.py:185` 的 `default_white_background` → `resolve_background`。Consumer（Generator/Judge prompt）早已接好，無須改動。
+- 演算法：**第一版用 rembg/U2Net 前景 matte**，cheap-validate（`layout_agent/output/verify_background_analyzer.py`，零 LLM、5 個 Crello 樣本疊圖）肉眼抓到 **rembg 在裝飾性/稀疏背景上反轉**（把黑色空白中央判為主體，safe zone 變無用細條）。**改為亮度局部變異數能量圖 ∪ rembg matte（>70% 反轉守衛）**，重驗：5efdd2dd 黑底空白中央正確變 conf=1.0 safe、避開四周塗鴉；白底樣本正確退化整張可用。
+
+**結果：**
+- 7 條離線單元測試（`tests/metagpt/ext/agentlayout/test_background_analyzer.py`）全 PASS；agentlayout 既有離線套件無回歸（15 passed / 6 skipped）。
+- 系統現在**真正執行 content-aware layout generation**：可區分「照片主體背景」「裝飾雜訊背景」「純白背景」並分別產生合理 safe zones。
+- 對論文：與 PosterO/AesthetiQ 的任務對齊缺口**已從根本補上**；下一步可在對齊任務前提下重跑 Win Rate / 引用其 published mIoU 定位。
+
+**Caveat（論文需寫）：** 變異數能量圖非學界標準 saliency 模型（如 BASNet）；`_ENERGY_TAU=0.18` 是 Crello 驗證集校準值非 user study；抽象全幅圖案樣本（5c6c0cba）saliency 仍噪訊、退化為 grid fallback。
+
+**Trade-off：**
+- ✅ 補上論文**最核心**的任務對齊缺口（不再是 brief-driven 假裝 content-aware）；零 LLM 成本驗證；step 8 SOP 再次抓到實作 bug（rembg 反轉）才上線
+- ✅ 最小侵入（新增 1 檔 + 改 2 行接線）、無 public API 破壞、無背景圖時行為與舊版完全一致
+- ❌ saliency 用變異數近似非訓練式模型；先前所有 live run 數據需標註為 pre-content-aware，content-aware 模式的 live 評估為下一步
+
+---
+
+*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/18*
