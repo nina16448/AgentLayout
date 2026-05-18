@@ -32,6 +32,29 @@
 
 ---
 
+## 1b. SOTA-positioning Win Rate — step 13 pilot（2026-05-19）
+
+AesthetiQ（CVPR 2025, arXiv 2503.00591）在 Crello **test**（1,971）報 pairwise MLLM
+win-rate vs GT：**AesthetiQ-8B 17.19%**、prior SOTA LayoutNUWA 5.58%（judge=VILA-7B）。
+`step13_sota_winrate.py` 用 **seed=42** 從 Crello test 抽 **N=20**（structural filter：
+2–5 elem、≥1 img、≥1 text；first 400 中 39 合格）跑完整 reject loop，protocol 同
+step11（pairwise、order-swap ×2、majority），judge=pipeline LLM(gpt-4o)。約 60 min、
+pipeline+judge 合計 ~$5–6。
+
+| 指標 | 數值 | 說明 |
+| --- | --- | --- |
+| completion rate | **20/20 = 100%** | step 10–12b robustness 修補在隨機 Crello test（filtered）generalize — 真正正向結果 |
+| Win rate A（vs 設計師真實成品 JPG） | **0%** | 對人類完稿全輸 → graphic-design-generation gap，呼應 step 11 / plateau scope-bound |
+| Win rate B（同 renderer，AesthetiQ-aligned，純排版幾何） | **80%** | 抽掉渲染只比 bbox 幾何時具競爭力 |
+
+**誠實定調（不可宣稱勝 SOTA）：**
+- GT 重建保真度經 $0 離線檢查 = **97.1%**（68/70 設計師元素，僅 2/20 各掉 1）→ B 高分**不是** GT 缺元素的測量假象（原假設被資料推翻）。
+- B=80% **仍不可與 AesthetiQ 17.19% 並列當勝績**，三個 caveat：(1) judge=gpt-4o≠VILA-7B（win-rate judge-dependent）；(2) **最強 confound：generator 與 judge 同為 gpt-4o（self-preference），AesthetiQ 刻意用獨立 judge 避此**；(3) filtered subset、N=20，AesthetiQ 用全 1,971 不過濾。
+- 可寫進論文的：**A=0% + B=80% 的對比**定位了能力邊界——排版幾何非弱點（B），弱點在渲染/裝飾（A），而後者是 by-design 不做、已記錄的 limitation。AesthetiQ 維持 **qualitative / indicative** 定位，不進勝負對照表。
+- **Future work（明確）**：用獨立（非 gpt-4o）judge 重判已存的 `step13_*` pair，消 self-preference confound，才有資格做數值對照。
+
+---
+
 ## 2. 分數結構洞察（從 #3 起穩定可比）
 
 從 step 5 起 QC crash 完全消除，可以穩定觀察 Aesthetic Judge 4 子分數的相對軌跡：
@@ -118,4 +141,4 @@
 
 ---
 
-**最後更新：2026-05-19（加入 #12c 首個 content-aware live；#1–#9 標註為 pre-content-aware）**
+**最後更新：2026-05-19（加入 §1b step13 SOTA-positioning Win Rate pilot：completion 100% / A 0% / B 80%，誠實定調不宣稱勝 AesthetiQ；#12c 首個 content-aware live；#1–#9 pre-content-aware）**

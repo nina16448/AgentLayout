@@ -2656,4 +2656,26 @@ paper figure：`layout_agent/output/step11_winrate.png`。
 
 ---
 
+### Step 13 — SOTA-positioning Win Rate pilot（2026-05-19）
+
+**動機：** 論文最大實質缺口是「跟 SOTA 比」。更正先前錯誤認知後查證：**PosterO / AesthetiQ 並非自己生成背景**（PosterO 在給定影像上排版；AesthetiQ 吃 elements→預測 bbox），其中 **AesthetiQ（CVPR 2025, arXiv 2503.00591）與 AgentLayout 同資料(Crello)同指標家族**——它在 Crello **test**（1,971）報 pairwise MLLM win-rate vs GT：**AesthetiQ-8B 17.19%、prior SOTA LayoutNUWA 5.58%（judge=VILA-7B）**。`step11_winrate.py` 早已是同 protocol 且更嚴謹（order-swap ×2），缺的只是規模。
+
+**作法：** 新增 `output/step13_sota_winrate.py`：seed=42 從 Crello **test** 抽 N=20（structural filter 2–5 elem/≥1 img/≥1 text；重用 `run_iou_eval.save_sample` + `step11_winrate` judging），每樣本跑完整 live reject loop（subprocess，crash→not-completed），Experiment A=vs 設計師真實成品 JPG、Experiment B=同 renderer 設計師 bbox（AesthetiQ-aligned）。約 60 min（20 序列 reject loop + CPU saliency，無並行）、~$5–6。
+
+**結果：**
+- **completion rate 20/20 = 100%**：step 10–12b robustness 修補在隨機 Crello test（filtered）generalize — 真正正向結果。
+- **Win rate A = 0%**：對設計師真實完稿全輸 → graphic-design-generation gap，呼應 step 11 / plateau scope-bound。
+- **Win rate B = 80%**：抽掉渲染、純比 bbox 幾何時具競爭力。
+
+**誠實定調（核心，不可宣稱勝 SOTA）：**
+- 攔阻假設「B 高分是 GT 缺元素假象」經 **$0 離線檢查被資料推翻**：GT 重建保真度 = **97.1%**（68/70 設計師元素）。
+- 但 B=80% **仍不可與 AesthetiQ 17.19% 並列當勝績**：(1) judge=gpt-4o≠VILA-7B（win-rate judge-dependent）；(2) **最強 confound：generator 與 judge 同為 gpt-4o（self-preference），AesthetiQ 刻意用獨立 judge 避此**；(3) filtered subset、N=20 vs AesthetiQ 全 1,971 不過濾。
+- 可寫進論文的論點：**A=0% 與 B=80% 的對比**定位了能力邊界——AgentLayout 的弱點**不在排版推理**（B 具競爭力），而在**渲染/裝飾**（A 全輸），後者是 by-design 不做、已記錄的 scope-bound limitation。SOTA 維持 **qualitative / indicative** 定位，**不進勝負對照表**。
+
+**Caveat / Future work：** 與 step 6/8/11 同性質的誠實負向/定位結果。明確 future work：用**獨立（非 gpt-4o）judge** 重判已存的 `step13_*` pair，消 self-preference confound，才有資格做數值對照；並擴大 N 與放寬 structural filter（AgentLayout 對 >5 elem / 缺圖或缺文樣本是 out-of-scope-by-construction，比 AesthetiQ 更受限，本身亦為 limitation）。
+
+**Trade-off：** ✅ 取得可positionable 的誠實 SOTA 定位 + 強化「弱點在渲染非排版」敘事；✅ completion 100% 證明 robustness 修補 generalize；✅ $0 自我檢查抓出並更正自己的攔阻假設（誠實科學）；❌ self-preference confound 未消，B 數值暫不可比；❌ N=20、filtered、單一 judge family。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/19*
