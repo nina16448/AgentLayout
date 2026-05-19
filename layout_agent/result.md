@@ -15,6 +15,7 @@
   - plateau 第二段 bal/coh≈17 經診斷確認為**結構性 scope-bound limitation**（非 LLM 能力問題）。
   - SOTA-positioning Win Rate pilot（N=20）：completion **100%**、Win rate A（vs 設計師真實成品）**0%**、B（同 renderer 純排版幾何）**80%**。
   - **獨立 judge 驗證（Step 14）**：用 Claude `claude-sonnet-4-6`（≠generator gpt-4o）重判同 20 樣本，A **0.0%**、B **80.0%**——**完全複製**，最強的 self-preference confound 實證排除。
+  - **標準幾何指標（Step 15）**：N=20 Layout-IoU completion 95%，mean IoU AgentLayout **0.0994** > random 0.0567，但 ≈ centered_stack 0.0931（誠實偏負：raw IoU 未顯著勝 trivial baseline）。
 - **誠實定調（最重要）**：**不宣稱勝設計師、不宣稱勝 SOTA（AesthetiQ）**。正規配對下設計師勝；B=80% 的 self-preference confound 已由 Step 14 獨立 judge 排除，但 judge≠VILA-7B、N=20≠1,971 兩 caveat 仍在，故 AesthetiQ 僅作 qualitative/indicative 對照、不進勝負表；可誠實宣稱「能力邊界 robust，跨兩獨立 judge 一致」。
 
 ---
@@ -160,6 +161,19 @@
   - **仍不可宣稱勝 AesthetiQ / 勝 SOTA**：剩兩 caveat 未消——(1) judge=Claude ≠ AesthetiQ 的 VILA-7B（win-rate 仍 judge-dependent）；(2) filtered N=20 ≠ 完整 Crello test 1,971。故維持 **indicative positioning，非 head-to-head**。
   - Claude-in-loop 的可重現性靠：materialized 圖 + 80 筆逐筆 raw JSON（含每筆 4 維分數與 reason）+ 與 step11 逐字相同的 prompt/聚合碼，第三方可重跑稽核。
 
+### Step 15 — 標準 Layout-IoU + baseline 對照（N=20，2026-05-19）
+
+- **動機**：result.md 先前只有「Judge 主觀子分 + pairwise win-rate」，缺版面生成領域的**標準客觀幾何指標**（LayoutNUWA/AesthetiQ/LayoutDM 皆報 IoU/overlap-type 指標）。磁碟唯一 IoU 產出 `eval_iou_baseline.json` 是 **5/10 pre-content-aware + 踩 stale-id_map bug**（text 元素被丟、mean IoU 0.09–0.14 不可信），**排除不用**。
+- **方法**：`step15_iou_eval.py` 在 **step13 同 20 ids**（set-consistent）上用 `BypassJudge`（首輪、無 reject loop、無 multimodal judge，省成本）跑現行 pipeline 取 layout，`layout_iou` vs 修正後 content/asset_ref id matching 的 GT；同場 `random_layout`（5 seeds）+ `centered_stack` baseline（皆 deterministic $0）。agent bbox 從未持久化故**必須實跑 pipeline**（~gpt-4o，非 $0）。
+- **數值**（`step15_iou_results.json`，僅 matched 元素計、無 missing-element penalty）：
+  - completion = **19/20 = 95.0%**（1 個 `591581c9` 撞已知 Generator+QC robustness ceiling crash，誠實計入）
+  - mean IoU **AgentLayout = 0.0994**、random = 0.0567、centered_stack = 0.0931
+  - 勝場：AgentLayout > random **14/19**；AgentLayout > centered_stack **僅 10/19**
+- **誠實定調**：
+  - ✅ **明顯勝 random**（mean 1.75×、14/19 樣本）——pipeline 確實在做有意義的版面推理，非亂放。
+  - ⚠️ **與 trivial centered_stack 幾乎無差異**（mean 僅 +7%、10/19≈擲硬幣）——**raw 幾何 IoU 上多-agent pipeline 未顯著優於決定性置中堆疊 heuristic**。這是**誠實偏負結果**，與 §3「不勝設計師、plateau scope-bound」narrative 一致、互相強化（排版推理具競爭力但非壓倒性）。
+  - absolute IoU ~0.10 偏低是 Crello layout-generation 常態（GT 非唯一解、多元素），重點在**相對 baseline** 與 win-rate 互補，非絕對值。**不可**用 IoU 宣稱勝 SOTA（同樣 indicative）。
+
 ---
 
 ## §3 核心誠實定調（consolidated — 論文 honesty 章節用）
@@ -175,6 +189,7 @@
 ### §3.3 可寫進論文的正向定位
 - A=0% + B=80% 的對比＝清楚的能力邊界：排版幾何非弱點，弱點在渲染/裝飾合成（by-design 不做、已記錄 limitation）。**此邊界跨 gpt-4o 與 Claude 兩個獨立 judge 一致（Step 14）→ 結論 robust，非單一 judge / self-preference artifact。**
 - step 10–12b robustness 修補在隨機 Crello test 100% completion——真正 generalize 證據。
+- 客觀幾何指標（Step 15 IoU）誠實互補：**明顯勝 random（1.75×、14/19）**佐證做有意義推理；但**未顯著勝 centered_stack**——誠實寫進論文反而強化「排版具競爭力非壓倒、弱點在裝飾合成」的一致定調，勿過度宣稱。
 
 ---
 
@@ -184,6 +199,7 @@
 | --- | --- | --- |
 | ~~`aesthetic_judge.py:79` 一致性 bug~~ | ✅ 已完成 | 2026-05-19 修復（import+呼叫改 `resolve_background`）；136 離線測試 0 失敗 + Step 12d post-fix live 重跑驗證。真 end-to-end content-aware = mean 70.67 / best 72，plateau 仍未破。 |
 | ~~獨立非 gpt-4o judge 重判~~ | ✅ 已完成（Step 14） | Claude `claude-sonnet-4-6` 獨立 judge 重判 20 樣本：A 0.0%、B 80.0%，完全複製 step 13 → self-preference confound 實證排除。零 pipeline 重跑。 |
+| ~~標準幾何指標（Layout-IoU + baseline）~~ | ✅ 已完成（Step 15） | N=20 BypassJudge：completion 95%、mean IoU AL 0.0994 > random 0.0567、≈ centered 0.0931。舊 `eval_iou_baseline.json`（5/10 pre-content-aware + stale-id_map bug）已排除不用。 |
 | 擴 N / 放寬 filter（現為最高 open 項） | 🔴 高 | 消剩餘 caveat 需擴 N（→ 趨近 1,971）；judge≠VILA-7B 仍在，head-to-head 需 VILA-7B（重）。content-aware 亦可增樣確認 72/plateau 一致。 |
 | decorative / asset synthesis | 🟢 研究級 | 突破 plateau 需改 schema 加裝飾元素表達力——屬另一個研究問題、大型架構改動，超出本論文範疇。 |
 | post-Analyst-retry Generator crash | 🟡 中 | step 10b 候選；#6/#7/#9rd 一致出現，3 verdict 後 rebuild round crash，與 tolerance 無關。 |
@@ -197,6 +213,7 @@
 | Live #1–#12c 一覽 / 子分數 / cost / failure mode | `layout_agent/live_runs_table.md` |
 | step 13 SOTA Win Rate 原始數據 | `layout_agent/output/step13_sota_winrate_results.json`、`step13_pilot_n20.log`、`step13_sota_winrate.py` |
 | step 14 獨立 judge 重判（消 self-preference） | `layout_agent/output/step14_independent_judge_results.json`、`step14_independent_judge_raw.json`（80 筆逐筆+reason）、`step14_independent_judge.py`、`step14_materialize_pairs.py`、`step14_pairs_manifest.json`、`step14_pairs/` |
+| step 15 標準 Layout-IoU + baseline 對照 | `layout_agent/output/step15_iou_results.json`、`step15_iou_eval.log`、`step15_iou_eval.py`（重用 `run_iou_eval.py` BypassJudge/matching + `evaluation/{iou,baselines}.py`） |
 | step 11 pairwise Win Rate 原始數據 | `layout_agent/output/step11_winrate_results.json`、`step11_winrate.png`、`step11_pair_*.png` |
 | step 12b content-aware live（pre-fix，備份） | `layout_agent/output/live_step12b_5efdd2dd_prefix.log`、`role_live_crello_5efdd2dd499b85dcc75ba0bc_{trace,spec}_step12b.json`、`_last_reject_step12b.png` |
 | step 12d content-aware live（post-fix，真 end-to-end） | `layout_agent/output/live_step12d_postfix_5efdd2dd.log`、`role_live_crello_5efdd2dd499b85dcc75ba0bc_{trace,spec}.json`、`_last_reject.png`（現存即 post-fix） |
