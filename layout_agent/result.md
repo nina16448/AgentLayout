@@ -16,6 +16,7 @@
   - SOTA-positioning Win Rate pilot（N=20）：completion **100%**、Win rate A（vs 設計師真實成品）**0%**、B（同 renderer 純排版幾何）**80%**。
   - **獨立 judge 驗證（Step 14）**：用 Claude `claude-sonnet-4-6`（≠generator gpt-4o）重判同 20 樣本，A **0.0%**、B **80.0%**——**完全複製**，最強的 self-preference confound 實證排除。
   - **標準幾何指標（Step 15）**：N=20 Layout-IoU completion 95%，mean IoU AgentLayout **0.0994** > random 0.0567，但 ≈ centered_stack 0.0931（誠實偏負：raw IoU 未顯著勝 trivial baseline）。
+  - **SOTA-context（Step 16）**：引用 AesthetiQ Table 1（VILA-7B/1,971）做 related-work 定位（AesthetiQ-8B 17.19%/IoU 42.83、LayoutNUWA 5.58%/25.74…）；我方 protocol 不同**僅 indicative、不併排名**。
 - **誠實定調（最重要）**：**不宣稱勝設計師、不宣稱勝 SOTA（AesthetiQ）**。正規配對下設計師勝；B=80% 的 self-preference confound 已由 Step 14 獨立 judge 排除，但 judge≠VILA-7B、N=20≠1,971 兩 caveat 仍在，故 AesthetiQ 僅作 qualitative/indicative 對照、不進勝負表；可誠實宣稱「能力邊界 robust，跨兩獨立 judge 一致」。
 
 ---
@@ -174,6 +175,30 @@
   - ⚠️ **與 trivial centered_stack 幾乎無差異**（mean 僅 +7%、10/19≈擲硬幣）——**raw 幾何 IoU 上多-agent pipeline 未顯著優於決定性置中堆疊 heuristic**。這是**誠實偏負結果**，與 §3「不勝設計師、plateau scope-bound」narrative 一致、互相強化（排版推理具競爭力但非壓倒性）。
   - absolute IoU ~0.10 偏低是 Crello layout-generation 常態（GT 非唯一解、多元素），重點在**相對 baseline** 與 win-rate 互補，非絕對值。**不可**用 IoU 宣稱勝 SOTA（同樣 indicative）。
 
+### Step 16 — SOTA-context 對照表（published numbers，**非 head-to-head**）
+
+- **動機**：碩論需要 SOTA 定位。無法重跑他人時的標準誠實做法＝引用他人論文在**共同 protocol** 下報的數字當 context，我方數字**分開列、明標不可比**。
+- **來源**：AesthetiQ（CVPR 2025, arXiv 2503.00591）Table 1，**judge=VILA-7B、Crello test 1,971、pairwise win-rate vs GT + Mean IoU**。所有下列方法**彼此可比**（同論文同 protocol）：
+
+  | Method | Mean IoU (%) | Judge Win-Rate (%) |
+  | --- | --- | --- |
+  | FlexDM | 12.71 | 0.93 |
+  | LACE | 23.18 | 3.51 |
+  | PosterLLaVa | 25.18 | 5.03 |
+  | LayoutNUWA（prior SOTA） | 25.74 | 5.58 |
+  | AesthetiQ-1B | 22.85 | 2.43 |
+  | AesthetiQ-2B | 28.19 | 6.13 |
+  | AesthetiQ-4B | 38.16 | 14.74 |
+  | **AesthetiQ-8B（SOTA）** | **42.83** | **17.19** |
+
+- **我方數字（Crello test，但 protocol 不同 → 僅 indicative，禁止併入上表排名）**：
+  - Win-rate B（純排版幾何 vs GT）：gpt-4o judge 80% ／ Claude 獨立 judge 80%（**N=20 filtered、judge≠VILA-7B**）
+  - Mean IoU：AgentLayout ≈ **9.94%**（**matched-only、無 missing penalty、N=19 completed、filtered**；AesthetiQ 表為全 1,971、其自訂 IoU 定義）
+- **誠實定調（口試關鍵）**：
+  - **不可宣稱勝任何上表方法**。三處不對齊：(1) judge（我 gpt-4o/Claude vs 表 VILA-7B，win-rate judge-dependent）；(2) 樣本（我 filtered N=20 vs 表 full 1,971）；(3) IoU 定義（我 matched-only vs 表自訂）。
+  - 可誠實陳述的**定性觀察**：我方 Mean IoU ~9.94% 與**最弱的 FlexDM（12.71%）同一低量級**，遠低於 SOTA 段（38–43%）——與 §3「排版具競爭力但不勝、弱點在裝飾合成」一致；win-rate B 高是因對手＝同 renderer 純幾何（非論文的 designer-GT 設定），**不等於**論文 win-rate 語意，故**不與 17.19% 並列**。
+  - 論文寫法：上表作 **Related-Work / SOTA-context**，我方結果另段以 **A/B + IoU + completion + 跨 judge robustness** 做**能力定位**，全程標 indicative。
+
 ---
 
 ## §3 核心誠實定調（consolidated — 論文 honesty 章節用）
@@ -181,6 +206,7 @@
 ### §3.1 不可宣稱勝設計師 / 勝 SOTA
 - step 11 正規 pairwise head-to-head：A 設計師完勝 3:0、B 設計師 2:1。先前「+2/+2/+4 勝 GT」是非配對單邊測量假象，**作廢**。
 - step 13 B=80% 原受三 caveat 限制；**Step 14 已用獨立 Claude judge 消除最強的 self-preference confound（A 0%↔0%、B 80%↔80% 完全複製）**。剩 judge≠VILA-7B、N=20≠1,971 兩 caveat 未消，故 AesthetiQ 17.19% 仍僅作 qualitative/indicative 對照、不進勝負表；但可誠實宣稱「SOTA-positioning 結果對獨立 judge robust，B 非自我偏好假象」。
+- **Step 16 SOTA-context 表**（AesthetiQ Table 1，VILA-7B/1,971）為 published-numbers **related-work 定位**，非 head-to-head；我方 IoU ~9.94% 屬最弱段量級、win-rate B 語意與其不同，**禁止併入其排名表**。
 
 ### §3.2 plateau bal/coh≈17 是結構性 scope-bound limitation
 - 非 LLM 能力問題。Generator schema 無裝飾元素表達力、renderer 零裝飾層、Judge rubric 在裸 asset + 單色底下數學上夾在 ~17。
@@ -218,4 +244,5 @@
 | step 12b content-aware live（pre-fix，備份） | `layout_agent/output/live_step12b_5efdd2dd_prefix.log`、`role_live_crello_5efdd2dd499b85dcc75ba0bc_{trace,spec}_step12b.json`、`_last_reject_step12b.png` |
 | step 12d content-aware live（post-fix，真 end-to-end） | `layout_agent/output/live_step12d_postfix_5efdd2dd.log`、`role_live_crello_5efdd2dd499b85dcc75ba0bc_{trace,spec}.json`、`_last_reject.png`（現存即 post-fix） |
 | 模組程式 | `metagpt/ext/agentlayout/`（gap 引用：`roles/aesthetic_judge.py:79`；對照：`pipeline.py:189`、`roles/layout_generator.py:155`） |
+| SOTA-context 數字出處 | AesthetiQ, CVPR 2025, arXiv 2503.00591 — Table 1（judge=VILA-7B、Crello test 1,971；FlexDM/LACE/PosterLLaVa/LayoutNUWA/AesthetiQ-1B…8B 之 Mean IoU% + Win-Rate%） |
 | commit 紀錄 | `git log --oneline -- metagpt/ext/agentlayout/`（step 12b = `a87b5034`、step 13 doc = `a2f85a58`） |
