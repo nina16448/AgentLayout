@@ -18,7 +18,7 @@ from metagpt.ext.agentlayout.actions.analyze_brief import AnalyzeBrief
 from metagpt.ext.agentlayout.actions.generate_layout import GenerateLayout
 from metagpt.ext.agentlayout.actions.judge_aesthetic import JudgeAesthetic
 from metagpt.ext.agentlayout.actions.plan_assets import PlanAssets
-from metagpt.ext.agentlayout.pipeline import default_white_background
+from metagpt.ext.agentlayout.tools.background_analyzer import resolve_background
 from metagpt.ext.agentlayout.schema import (
     CandidatesBatch,
     DesignSpec,
@@ -76,7 +76,7 @@ class AestheticJudgeRole(Role):
 
         spec = self._find_by_cause(AnalyzeBrief, DesignSpec)
         tree = self._find_by_cause(PlanAssets, LayoutTree)
-        bg = default_white_background(spec.canvas)
+        bg = resolve_background(spec.canvas)
 
         judge: JudgeAesthetic = self.actions[0]
         judgement = await judge.run(candidates=candidates, spec=spec, tree=tree, bg=bg)
