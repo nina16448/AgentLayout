@@ -210,8 +210,18 @@
   - 離線：`step17_repro_step10b.py` 修前 `kept=0/10`→RuntimeError、修後 degradation 回 5 fallback → CONTINUE；agentlayout 套件 **140 passed, 12 skipped**（136 baseline +4 新測試，零回歸）。
   - **Smoke（端到端，content-aware）**：原 crash 樣本 `5d972ca9` live 重跑（`BackgroundAnalyzer→3 safe zones` 確認真 content-aware），**全程 0 crash markers**；iteration=3 RetryAnalyst 後 Generator 產 5 valid（QC drop=0）——根因 prompt 修復**獨力生效**，degradation 防禦層未被觸發。reject、best 72 / baseline 68（plateau bal/coh≈17 一致，符合 §3.2）。cost $0.316。
   - **N=20 content-aware（隨機 Crello test，seed=42 同 step 13 批）**：`[1/20]…[20/20]` 全跑完、**step-10b crash markers = 0、degradation 觸發 = 0**——root-cause 修復在 20 個隨機 content-aware 樣本上**零 crash 零退化**，比 smoke 更強的 generalize 證據。
-- **誠實定調**：step 10b 從「已知未修 bug」結案為「根因 + 防禦雙修，跨 smoke + 20 隨機樣本驗證」。graceful degradation 是可寫進論文的 robustness property（hard/malformed spec 退化為 best-effort 非 crash）。**N=20 的 win-rate 數值未取得**：20 個 pipeline 全跑完後，事後 pairwise judging（gpt-4o）因 **OpenAI 帳戶 `429 insufficient_quota`（外部 billing 限制，非程式缺陷）** 中斷；20 個 post-fix content-aware render 已存於磁碟，judge-only 重跑即可補上（不需重跑 pipeline）。
-- **Trade-off**：✅ 唯一 open blocking 缺口結案、根因+防禦雙層、跨 smoke+20 樣本零 crash、unblock 大 N；✅ 確認 Analyst prompt enum 改動未觸發 degradation（root-cause 夠強）；❌ N=20 win-rate 數值待 OpenAI 額度恢復後 judge-only 重判；❌ QC 仍不做 relational-hint 真正語意驗證（記 future hardening）。
+- **post-fix content-aware win-rate（Claude 獨立 judge，judge-only 重跑，零 pipeline 重跑、零 OpenAI）**：N=20 事後 gpt-4o pairwise judging 原撞 OpenAI `429 insufficient_quota`（外部 billing，非程式）；改比照 Step 14 用 `step14_materialize_pairs.py`（從 20 個 post-fix render 重建 pairs）+ `step14_independent_judge.py`（`claude-sonnet-4-6` 獨立 judge、step11 PAIRWISE_PROMPT verbatim、order-swap ×2、majority）：
+
+  | | Win rate A（vs 設計師完稿） | Win rate B（同 renderer 純排版幾何） | N |
+  | --- | --- | --- | --- |
+  | **post-fix content-aware（Claude judge，Step 17）** | **0.0%** | **75.0%** | 20 |
+  | 原 Step 14（pre-step17 render，Claude judge） | 0.0% | 80.0% | 20 |
+  | 原 Step 13（gpt-4o judge） | 0.0% | 80.0% | 20 |
+
+  - **A=0.0% 完全複製**（跨 pre/post-fix render × gpt-4o/Claude 兩 judge 一致）→ §3.3 能力邊界結論 post-fix 穩固、非 render 版本 artifact。
+  - **B 80%→75%**（16/20→15/20，一個樣本翻轉，N=20 噪音內）：step 10b 修復 + Analyst prompt 封閉 enum 改動**既未灌水也未回歸** win-rate，結論穩定。
+- **誠實定調**：step 10b 從「已知未修 bug」結案為「根因 + 防禦雙修，跨 smoke + 20 隨機樣本 + 跨 judge 驗證」。graceful degradation 是可寫進論文的 robustness property（hard/malformed spec 退化 best-effort 非 crash）。win-rate 數值經 judge-only Claude 重判已補上，**不可宣稱勝設計師/勝 SOTA**（A=0%；B 語意與 AesthetiQ 不同，僅 indicative，沿用 §3.1）。
+- **Trade-off**：✅ 唯一 open blocking 缺口結案、根因+防禦雙層、跨 smoke+20 樣本零 crash、unblock 大 N；✅ post-fix content-aware win-rate 經獨立 Claude judge 取得且結論跨版本/跨 judge 穩固（A=0% 完全複製、B 同量級）；✅ judge-only 重跑省去 pipeline 重跑與 OpenAI 依賴；❌ QC 仍不做 relational-hint 真正語意驗證（記 future hardening）；❌ B 之 N=20≠1,971、judge≠VILA-7B caveat 未消（同 §3.1）。
 
 ---
 
@@ -219,7 +229,7 @@
 
 ### §3.1 不可宣稱勝設計師 / 勝 SOTA
 - step 11 正規 pairwise head-to-head：A 設計師完勝 3:0、B 設計師 2:1。先前「+2/+2/+4 勝 GT」是非配對單邊測量假象，**作廢**。
-- step 13 B=80% 原受三 caveat 限制；**Step 14 已用獨立 Claude judge 消除最強的 self-preference confound（A 0%↔0%、B 80%↔80% 完全複製）**。剩 judge≠VILA-7B、N=20≠1,971 兩 caveat 未消，故 AesthetiQ 17.19% 仍僅作 qualitative/indicative 對照、不進勝負表；但可誠實宣稱「SOTA-positioning 結果對獨立 judge robust，B 非自我偏好假象」。
+- step 13 B=80% 原受三 caveat 限制；**Step 14 已用獨立 Claude judge 消除最強的 self-preference confound（A 0%↔0%、B 80%↔80% 完全複製）**；**Step 17 進一步在 post-fix content-aware render 上用同 Claude judge judge-only 重判（A 0.0%、B 75.0%）→ A 完全複製、B 同量級（80→75 噪音內），跨 pre/post-fix render 再次穩固**。剩 judge≠VILA-7B、N=20≠1,971 兩 caveat 未消，故 AesthetiQ 17.19% 仍僅作 qualitative/indicative 對照、不進勝負表；但可誠實宣稱「SOTA-positioning 結果對獨立 judge + render 版本皆 robust，B 非自我偏好假象」。
 - **Step 16 SOTA-context 表**（AesthetiQ Table 1，VILA-7B/1,971）為 published-numbers **related-work 定位**，非 head-to-head；我方 IoU ~9.94% 屬最弱段量級、win-rate B 語意與其不同，**禁止併入其排名表**。
 
 ### §3.2 plateau bal/coh≈17 是結構性 scope-bound limitation
@@ -243,7 +253,7 @@
 | 擴 N / 放寬 filter（現為最高 open 項） | 🔴 高 | 消剩餘 caveat 需擴 N（→ 趨近 1,971）；judge≠VILA-7B 仍在，head-to-head 需 VILA-7B（重）。content-aware 亦可增樣確認 72/plateau 一致。 |
 | decorative / asset synthesis | 🟢 研究級 | 突破 plateau 需改 schema 加裝飾元素表達力——屬另一個研究問題、大型架構改動，超出本論文範疇。 |
 | ~~post-Analyst-retry Generator crash~~ | ✅ 已完成（Step 17） | 根因＝Analyst retry 路徑 emit relational hint `below_title`（不在 QC 白名單）→ 全 candidate UNKNOWN_HINT → RuntimeError。雙層修：`analyze_brief.py` prompt 封閉 9-region enum + `rank_candidates_by_violations` graceful degradation（兩 mirror）。離線 140 tests + smoke `5d972ca9` + N=20 隨機樣本**全 0 crash / 0 degradation**。 |
-| N=20 content-aware win-rate 數值 | 🟡 中 | Step 17 N=20 pipeline 20/20 跑完，但事後 gpt-4o pairwise judging 因 **OpenAI `429 insufficient_quota`（外部 billing）** 中斷未取得數值。20 個 post-fix render 已存磁碟，待額度恢復後 judge-only 重判（或比照 Step 14 用 Claude 獨立 judge），不需重跑 pipeline。 |
+| ~~N=20 content-aware win-rate 數值~~ | ✅ 已完成（Step 17） | gpt-4o judging 撞 OpenAI 429 後，改用 Step 14 Claude 獨立 judge judge-only 重判 20 個 post-fix render：A=0.0%、B=75.0%。A 完全複製、B 80→75（噪音內）→ crash 修復未灌水/回歸 win-rate。零 pipeline 重跑、零 OpenAI。 |
 
 ---
 
@@ -257,6 +267,7 @@
 | step 15 標準 Layout-IoU + baseline 對照 | `layout_agent/output/step15_iou_results.json`、`step15_iou_eval.log`、`step15_iou_eval.py`（重用 `run_iou_eval.py` BypassJudge/matching + `evaluation/{iou,baselines}.py`） |
 | step 11 pairwise Win Rate 原始數據 | `layout_agent/output/step11_winrate_results.json`、`step11_winrate.png`、`step11_pair_*.png` |
 | step 17 step 10b crash 修復 | `layout_agent/output/step17_repro_step10b.py`（離線確診）、`step17_smoke_5d972ca9.log`（smoke 端到端）、`step17_n20_postfix.log`（N=20 20/20 零 crash）、`role_live_crello_5d972ca9..._{trace,spec}.prefix_step10b.json`（pre-fix 證據備份）；程式：`metagpt/ext/agentlayout/{actions/analyze_brief.py,tools/quality_checker.py,roles/layout_generator.py,pipeline.py}` |
+| step 17 post-fix content-aware win-rate（Claude judge-only 重判） | `layout_agent/output/step14_independent_judge_results.json`（A 0.0% / B 75.0%）、`step14_independent_judge_raw.json`、`step17_rejudge_claude.log`、`step14_pairs_manifest.json` + `step14_pairs/`（從 post-fix render 重建）；原 Step 14 證據備份：`step14_*.orig_step14.json`、`step14_pairs.orig_step14/` |
 | step 12b content-aware live（pre-fix，備份） | `layout_agent/output/live_step12b_5efdd2dd_prefix.log`、`role_live_crello_5efdd2dd499b85dcc75ba0bc_{trace,spec}_step12b.json`、`_last_reject_step12b.png` |
 | step 12d content-aware live（post-fix，真 end-to-end） | `layout_agent/output/live_step12d_postfix_5efdd2dd.log`、`role_live_crello_5efdd2dd499b85dcc75ba0bc_{trace,spec}.json`、`_last_reject.png`（現存即 post-fix） |
 | 模組程式 | `metagpt/ext/agentlayout/`（gap 引用：`roles/aesthetic_judge.py:79`；對照：`pipeline.py:189`、`roles/layout_generator.py:155`） |
