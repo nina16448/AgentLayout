@@ -745,3 +745,134 @@ def test_z_order_live_5efdd2dd_reproduction_unblocks():
 
     result = check_candidate(candidate, spec)
     assert result.passed, f"live 5efdd2dd z_order shape must no longer crash QC: {result.violations}"
+
+
+# ============================================================
+# 9. Graceful degradation -- rank_candidates_by_violations (step 10b)
+# ============================================================
+
+
+def _make_report(cid: str, n_violations: int):
+    """Build a CheckResult with ``n_violations`` dummy UNKNOWN_HINT entries."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        CheckResult,
+        Violation,
+        ViolationType,
+    )
+
+    return CheckResult(
+        candidate_id=cid,
+        passed=n_violations == 0,
+        violations=[
+            Violation(type=ViolationType.UNKNOWN_HINT, targets=["x"], detail="d")
+            for _ in range(n_violations)
+        ],
+    )
+
+
+def test_rank_candidates_by_violations_orders_fewest_first():
+    """The degradation fallback must surface the least-broken layouts first
+    so the Aesthetic Judge scores the best available, not arbitrary ones."""
+    from metagpt.ext.agentlayout.schema import Candidate, LayoutElement
+    from metagpt.ext.agentlayout.tools.quality_checker import rank_candidates_by_violations
+
+    def _c(cid):
+        return Candidate(
+            candidate_id=cid,
+            elements=[LayoutElement(id="e", left=0, top=0, width=10, height=10, z_index=1)],
+        )
+
+    cands = [_c("a"), _c("b"), _c("c")]
+    reports = [_make_report("a", 3), _make_report("b", 1), _make_report("c", 2)]
+
+    ordered = rank_candidates_by_violations(cands, reports)
+    assert [c.candidate_id for c in ordered] == ["b", "c", "a"]
+
+
+def test_rank_candidates_by_violations_is_stable_on_ties():
+    """The step 10b crash signature: every candidate fails the *same* single
+    out-of-vocabulary hint, so violation counts tie at 1. Ranking must be
+    stable (insertion order preserved) and return a non-empty fallback so the
+    run continues instead of raising RuntimeError."""
+    from metagpt.ext.agentlayout.schema import Candidate, LayoutElement
+    from metagpt.ext.agentlayout.tools.quality_checker import rank_candidates_by_violations
+
+    ids = [f"r0_cand_{i}" for i in range(5)]
+    cands = [
+        Candidate(
+            candidate_id=i,
+            elements=[LayoutElement(id="e", left=0, top=0, width=10, height=10, z_index=1)],
+        )
+        for i in ids
+    ]
+    reports = [_make_report(i, 1) for i in ids]  # all tie at 1 (unknown_hint)
+
+    ordered = rank_candidates_by_violations(cands, reports)
+    assert [c.candidate_id for c in ordered] == ids  # stable, non-empty
+    assert ordered[:5], "degradation fallback must never be empty when candidates exist"
+
+
+def test_below_title_hint_crashes_filter_valid_but_degradation_survives():
+    """End-to-end step 10b reproduction: a spec carrying the relational
+    ``below_title`` hint makes filter_valid drop every candidate (UNKNOWN_HINT),
+    which previously raised RuntimeError and aborted the whole run. After the
+    fix, rank_candidates_by_violations still returns a usable fallback set."""
+    from metagpt.ext.agentlayout.schema import (
+        Candidate,
+        Canvas,
+        DesignSpec,
+        Element,
+        HardConstraint,
+        HardConstraintRule,
+        LayoutElement,
+        SemanticType,
+        VisualType,
+    )
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        filter_valid,
+        rank_candidates_by_violations,
+    )
+
+    spec = DesignSpec(
+        canvas=Canvas(width=537, height=240),
+        elements=[
+            Element(
+                id="subtitle_1",
+                semantic_type=SemanticType.SUBTITLE,
+                visual_type=VisualType.TEXT,
+                content="winter trips",
+                importance=3,
+                semantic_relevance=0.5,
+            ),
+        ],
+        hard_constraints=[
+            HardConstraint(
+                rule=HardConstraintRule.POSITION_PREFERENCE,
+                targets=["subtitle_1"],
+                params={"hint": "below_title"},  # the exact crash hint
+            ),
+        ],
+        soft_constraints=[],
+        style_keywords=[],
+        language="ru",
+        inferred_fields={},
+    )
+    cands = [
+        Candidate(
+            candidate_id=f"r0_cand_{i}",
+            elements=[
+                LayoutElement(
+                    id="subtitle_1", left=160, top=80 + i, width=217, height=40,
+                    z_index=2, font_family="sans-serif", font_size=14,
+                    font_weight="normal", color="#111111", text_align="center",
+                ),
+            ],
+        )
+        for i in range(5)
+    ]
+
+    kept, reports = filter_valid(cands, spec)
+    assert kept == [], "below_title must still be UNKNOWN_HINT (root-cause unchanged)"
+
+    degraded = rank_candidates_by_violations(cands, reports)
+    assert len(degraded) == 5, "degradation must keep the run alive (step 10b fix)"

@@ -48,7 +48,11 @@ from metagpt.ext.agentlayout.schema import (
 )
 from metagpt.ext.agentlayout.tools.asset_analyzer import AssetAnalyzer
 from metagpt.ext.agentlayout.tools.background_analyzer import resolve_background
-from metagpt.ext.agentlayout.tools.quality_checker import CheckResult, filter_valid
+from metagpt.ext.agentlayout.tools.quality_checker import (
+    CheckResult,
+    filter_valid,
+    rank_candidates_by_violations,
+)
 from metagpt.logs import logger
 
 
@@ -197,10 +201,14 @@ class LayoutPipeline:
             qc_dropped = sum(1 for r in reports if not r.passed)
 
             if len(kept) < self.config.min_candidates_to_judge:
+                # _generate_with_topup already degrades to least-violating
+                # candidates when QC rejects everything, so this only fires
+                # when generation produced fewer raw candidates than the
+                # judge minimum (LLM emitted near-empty batches).
                 raise PipelineError(
-                    f"Round {round_idx}: only {len(kept)} candidate(s) passed Quality "
-                    f"Checker after {self.config.max_topup_rounds} top-up round(s); "
-                    f"required >= {self.config.min_candidates_to_judge}."
+                    f"Round {round_idx}: only {len(kept)} candidate(s) available "
+                    f"after {self.config.max_topup_rounds} top-up round(s) and "
+                    f"degradation; required >= {self.config.min_candidates_to_judge}."
                 )
 
             judgement = await self.judge.run(
@@ -286,6 +294,7 @@ class LayoutPipeline:
     ) -> Tuple[List[Candidate], List[CheckResult]]:
         """Call GenerateLayout repeatedly until we have ``k_valid`` QC-passing candidates."""
         kept: List[Candidate] = []
+        pool: List[Candidate] = []  # every generated candidate, for degradation
         all_reports: List[CheckResult] = []
         seen_ids: Set[str] = set()
 
@@ -298,6 +307,7 @@ class LayoutPipeline:
             for cand in batch.candidates:
                 cand.candidate_id = f"r{topup_idx}_{cand.candidate_id}"
 
+            pool.extend(batch.candidates)
             new_kept, reports = filter_valid(batch.candidates, spec)
             all_reports.extend(reports)
             for cand in new_kept:
@@ -308,8 +318,22 @@ class LayoutPipeline:
             if len(kept) >= self.config.k_valid:
                 break
 
-        # Trim to exactly k_valid so Aesthetic Judge always sees a stable target size.
-        return kept[: self.config.k_valid], all_reports
+        if kept:
+            # Trim to exactly k_valid so Aesthetic Judge always sees a stable size.
+            return kept[: self.config.k_valid], all_reports
+
+        # Graceful degradation (step 10b fix): mirror of LayoutGeneratorRole.
+        # No candidate passed QC -- rather than raise PipelineError and abort
+        # the whole sample (which shrinks evaluable N), hand back the
+        # least-violating candidates so the Judge still scores them.
+        degraded = rank_candidates_by_violations(pool, all_reports)[: self.config.k_valid]
+        if degraded:
+            logger.warning(
+                f"LayoutPipeline: 0/{len(pool)} candidates passed QC after "
+                f"{self.config.max_topup_rounds} top-up round(s); degrading to "
+                f"{len(degraded)} least-violating candidate(s) so the run continues."
+            )
+        return degraded, all_reports
 
     @staticmethod
     def _find_candidate(candidates: List[Candidate], candidate_id: str) -> Candidate:

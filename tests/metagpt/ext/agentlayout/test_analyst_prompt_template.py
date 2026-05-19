@@ -60,6 +60,33 @@ def test_build_prompt_str_format_is_safe_and_includes_zorder_guidance():
     assert "z_order" in prompt
 
 
+def test_analyst_prompt_enumerates_closed_position_hint_vocabulary():
+    """Step 10b root-cause regression. Live #9rd crashed because the Analyst
+    rebuilt the spec on RetryAnalyst with ``position_preference hint
+    "below_title"`` -- a relational hint outside the QC 3x3 band whitelist --
+    so every candidate hit UNKNOWN_HINT, 0 passed QC, and the run aborted.
+    The prompt must enumerate the closed 9-region vocabulary and explicitly
+    forbid inventing relational hints, mirroring the soft_constraints /
+    semantic_type closed-enum pattern in the same template. Exercised through
+    the real .format() path so it can never silently regress."""
+    from metagpt.ext.agentlayout.actions.analyze_brief import AnalyzeBrief
+    from metagpt.ext.agentlayout.tools.quality_checker import POSITION_HINT_TO_BANDS
+
+    prompt = AnalyzeBrief()._build_prompt("Make a clean winter travel poster", [], None)
+
+    assert "position_preference params.hint MUST be EXACTLY one of these 9" in prompt
+    for region in (
+        "top_left", "top_center", "top_right",
+        "middle_left", "center", "middle_right",
+        "bottom_left", "bottom_center", "bottom_right",
+    ):
+        assert region in prompt, f"missing region {region!r} in prompt"
+        assert region in POSITION_HINT_TO_BANDS, f"{region!r} not QC-known"
+    # The exact relational hint that crashed live #9rd must be named as forbidden.
+    assert "below_title" in prompt
+    assert "Do NOT invent relational hints" in prompt
+
+
 def test_analyst_prompt_pins_palette_suggestions_per_keyword_bucket():
     """Five palette buckets, each containing at least one canonical hex --
     drop a bucket and the LLM loses guidance for that mood."""

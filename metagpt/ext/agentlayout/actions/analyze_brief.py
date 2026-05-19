@@ -141,6 +141,15 @@ Previous feedback from Aesthetic Judge (if any): {feedback}
 - Descriptions with clear geometric meaning -> hard_constraints (structured object)
   Supported rules: position_preference / no_overlap / z_order / size_preference
   ATTENTION: params values must be semantic hints (e.g. "top_right"), NOT pixel coordinates.
+  ATTENTION: position_preference params.hint MUST be EXACTLY one of these 9
+    region values (case-sensitive): top_left | top_center | top_right |
+    middle_left | center | middle_right | bottom_left | bottom_center |
+    bottom_right
+    Express a RELATIVE intent as the nearest region: "below the title" ->
+    "bottom_center" (or "center"); "to the left of the image" -> "middle_left".
+    Do NOT invent relational hints like "below_title" / "above_logo" /
+    "left_of_image" -- the Quality Checker only knows the 9 fixed regions and
+    will reject every candidate (hard pipeline failure) otherwise.
   For z_order, the params hint must be the string "above_background" when an element must sit above the background image.
 - Style and feeling descriptions -> style_keywords list (free-form strings, e.g. "minimal", "modern")
 - Soft preferences -> soft_constraints

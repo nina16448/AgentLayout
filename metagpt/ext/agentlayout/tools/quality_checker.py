@@ -157,6 +157,28 @@ def filter_valid(
     return kept, reports
 
 
+def rank_candidates_by_violations(
+    candidates: Iterable[Candidate],
+    reports: Iterable[CheckResult],
+) -> List[Candidate]:
+    """Order candidates fewest-violations-first (stable on ties).
+
+    Used for graceful degradation. When *no* candidate passes QC -- e.g. an
+    out-of-vocabulary ``position_preference`` hint that fails every candidate
+    identically (the step 10b post-RetryAnalyst crash), or a genuinely
+    over-constrained spec -- the pipeline must still hand the Aesthetic Judge
+    the least-broken layouts instead of hard-crashing the whole run. Crashing
+    silently shrinks the evaluable sample size; degrading keeps the reject
+    loop alive so feedback can still route the spec back to the Analyst.
+
+    Candidates with no matching report keep violation count 0 (they were never
+    checked) and sort first; ``sorted`` is stable so insertion order breaks
+    ties deterministically.
+    """
+    by_id = {r.candidate_id: len(r.violations) for r in reports}
+    return sorted(candidates, key=lambda c: by_id.get(c.candidate_id, 0))
+
+
 # ============================================================
 # Phase 1: Element Completeness
 # ============================================================

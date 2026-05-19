@@ -2678,4 +2678,22 @@ paper figure：`layout_agent/output/step11_winrate.png`。
 
 ---
 
+### Step 17 — 修 step 10b post-RetryAnalyst crash：根因 + graceful degradation（2026-05-19）
+
+**動機：** step 10b（#6/#7/#9rd 同 pattern）是唯一仍 open 的實質 blocking 缺口，也是 full-pipeline 可評估 N 上不去的原因（win-rate N=3、IoU completion 19/20 皆受此牽制）。先寫離線 reproducer 確診再改碼（step 5/8 SOP）。
+
+**離線確診（`output/step17_repro_step10b.py`，零 LLM）：** 從 `live9_step10d.log` 還原 RetryAnalyst 重建後的 DesignSpec + 10 個 LLM candidate 餵真 `quality_checker.filter_valid`：`kept=0/10`、`violation-type totals={'unknown_hint': 10}`。根因鐵證——Analyst 在 retry 路徑 emit `position_preference hint="below_title"`（**relational hint，不在 QC 3×3 band 白名單**；同 spec 的 `top_center`/`left`/`right` 全正常），10/10 candidate 各吃一個 `UNKNOWN_HINT` blocking violation → top-up 耗盡 → `RuntimeError` → 整個 run abort。與 step 9 `center_top` 同類，但 step 9 修的是 word-order alias，這次是 LLM 自由發明的關係式 hint（prompt 只給單一範例 `top_right`、從不列舉封閉詞彙）。
+
+**修補（兩層，比照同檔既有手法）：**
+1. **根因 — `actions/analyze_brief.py` PROMPT_TEMPLATE**：position_preference 段比照同檔 `soft_constraints` enum 與 `semantic_type` 的「列舉封閉值 + 明示禁止發明」手法，寫死 QC 的 9 個 canonical region（top_left…bottom_right）+ 明示「relational 意圖要 map 成最近 region，**Do NOT invent** below_title/above_logo/left_of_image」。只加 ~10 行、聚焦 position（唯一實證 crash 的 rule），不順手塞 size enum（守 step 8 attention-budget 教訓）。
+2. **防禦 — graceful degradation（泛化到任何 unknown-hint / over-constrained crash）**：`quality_checker.py` 新增純函式 `rank_candidates_by_violations`（fewest-violations-first、stable on ties）。`roles/layout_generator.py` 與 `pipeline.py` 兩個 mirror 的 `_generate_with_topup` 在 QC 全 fail 時，回傳「violation 最少」的 fallback 而非回空；`RuntimeError`/`PipelineError` 改為只在 LLM 真的吐 0 candidate（不可恢復）時觸發。crash 不再讓 N 靜默縮水——reject loop 存活、feedback 仍能路由回 Analyst（修復後的 prompt 會 emit 合法 band hint）。
+
+**驗證：** (1) 離線 `step17_repro_step10b.py`：修前 `kept=0/10`→RuntimeError；修後 degradation 回 5 fallback → CONTINUE。離線套件 **140 passed, 12 skipped**（136 baseline +4 新測試）、零回歸。(2) **Smoke 端到端**：原 crash 樣本 `5d972ca9` content-aware live 重跑（U2Net→3 safe zones）**0 crash markers**，iteration=3 RetryAnalyst 後 Generator 產 5 valid（QC drop=0），根因 prompt 修復獨力生效、degradation 未觸發；$0.316。(3) **N=20**：`[1/20]…[20/20]` 全跑完、step-10b crash markers=0、degradation 觸發=0（隨機 content-aware 樣本零 crash 零退化）。⚠️ N=20 事後 gpt-4o pairwise judging 因 **OpenAI `429 insufficient_quota`（外部 billing，非程式）** 中斷，win-rate 數值未取得；20 個 post-fix render 已存磁碟，待額度恢復 judge-only 重判即可。
+
+**論文價值：** step 10b 從「已知未修 bug」結案為「根因 + 防禦雙修」。graceful degradation 是可寫進論文的 robustness property（hard/malformed spec 退化為 best-effort 而非 crash），且直接 unblock 後續 content-aware 大 N 重跑——win-rate / IoU 不再受 crash 牽制而被迫小 N。
+
+**Trade-off：** ✅ 唯一 open blocking 缺口結案、根因+防禦雙層、零成本離線確診（step 8 SOP）、兩 mirror 對稱無分歧、泛化到所有 hard-spec crash mode；✅ smoke + N=20 隨機 content-aware 樣本端到端零 crash 零 degradation 驗證、unblock 大 N；❌ N=20 win-rate 數值因 OpenAI 額度耗盡未取得（外部 billing，非程式；render 已存待 judge-only 重判）；❌ QC 仍不做真正的 relational-hint 語意驗證（degrade 時該 constraint 未強制執行，記 future hardening）。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/19*

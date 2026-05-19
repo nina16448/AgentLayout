@@ -201,6 +201,20 @@
 
 ---
 
+### Step 17 — 修 step 10b post-RetryAnalyst crash：根因 + graceful degradation（2026-05-20）
+
+- **動機**：step 10b 是 §4 唯一仍 open 的實質 blocking 缺口，也是 full-pipeline 可評估 N 上不去的原因（win-rate N=3、IoU completion 19/20 皆受牽制）。先離線 reproducer 再改碼（step 5/8 SOP）。
+- **離線確診**（`step17_repro_step10b.py`，零 LLM）：從 `live9_step10d.log` 還原 RetryAnalyst 重建後的 spec + 10 個 LLM candidate 餵真 `filter_valid` → `kept=0/10`、`violation-type={'unknown_hint':10}`。**根因鐵證**：Analyst 在 retry 路徑 emit `position_preference hint="below_title"`（relational hint，不在 QC 3×3 band 白名單；同 spec 的 `top_center`/`left`/`right` 全正常）→ 10/10 candidate 各吃一個 `UNKNOWN_HINT` → top-up 耗盡 → `RuntimeError` → 整 run abort。與 step 9 `center_top` 同類，但這次是 LLM 自由發明的關係式 hint（prompt 只給單一範例、從不列舉封閉詞彙）。
+- **修補（兩層）**：(1) **根因** — `analyze_brief.py` PROMPT_TEMPLATE 比照同檔 `soft_constraints`/`semantic_type` 的封閉 enum 手法，列舉 QC 的 9 個 canonical region + 明示「relational 意圖 map 成最近 region，**Do NOT invent** below_title/above_logo」；(2) **防禦** — `quality_checker.rank_candidates_by_violations`（fewest-violations-first、stable）+ `layout_generator.py`/`pipeline.py` 兩 mirror 在 QC 全 fail 時回最少-violation fallback 而非回空，`RuntimeError`/`PipelineError` 只在 LLM 真吐 0 candidate 時觸發。
+- **驗證**：
+  - 離線：`step17_repro_step10b.py` 修前 `kept=0/10`→RuntimeError、修後 degradation 回 5 fallback → CONTINUE；agentlayout 套件 **140 passed, 12 skipped**（136 baseline +4 新測試，零回歸）。
+  - **Smoke（端到端，content-aware）**：原 crash 樣本 `5d972ca9` live 重跑（`BackgroundAnalyzer→3 safe zones` 確認真 content-aware），**全程 0 crash markers**；iteration=3 RetryAnalyst 後 Generator 產 5 valid（QC drop=0）——根因 prompt 修復**獨力生效**，degradation 防禦層未被觸發。reject、best 72 / baseline 68（plateau bal/coh≈17 一致，符合 §3.2）。cost $0.316。
+  - **N=20 content-aware（隨機 Crello test，seed=42 同 step 13 批）**：`[1/20]…[20/20]` 全跑完、**step-10b crash markers = 0、degradation 觸發 = 0**——root-cause 修復在 20 個隨機 content-aware 樣本上**零 crash 零退化**，比 smoke 更強的 generalize 證據。
+- **誠實定調**：step 10b 從「已知未修 bug」結案為「根因 + 防禦雙修，跨 smoke + 20 隨機樣本驗證」。graceful degradation 是可寫進論文的 robustness property（hard/malformed spec 退化為 best-effort 非 crash）。**N=20 的 win-rate 數值未取得**：20 個 pipeline 全跑完後，事後 pairwise judging（gpt-4o）因 **OpenAI 帳戶 `429 insufficient_quota`（外部 billing 限制，非程式缺陷）** 中斷；20 個 post-fix content-aware render 已存於磁碟，judge-only 重跑即可補上（不需重跑 pipeline）。
+- **Trade-off**：✅ 唯一 open blocking 缺口結案、根因+防禦雙層、跨 smoke+20 樣本零 crash、unblock 大 N；✅ 確認 Analyst prompt enum 改動未觸發 degradation（root-cause 夠強）；❌ N=20 win-rate 數值待 OpenAI 額度恢復後 judge-only 重判；❌ QC 仍不做 relational-hint 真正語意驗證（記 future hardening）。
+
+---
+
 ## §3 核心誠實定調（consolidated — 論文 honesty 章節用）
 
 ### §3.1 不可宣稱勝設計師 / 勝 SOTA
@@ -214,7 +228,7 @@
 
 ### §3.3 可寫進論文的正向定位
 - A=0% + B=80% 的對比＝清楚的能力邊界：排版幾何非弱點，弱點在渲染/裝飾合成（by-design 不做、已記錄 limitation）。**此邊界跨 gpt-4o 與 Claude 兩個獨立 judge 一致（Step 14）→ 結論 robust，非單一 judge / self-preference artifact。**
-- step 10–12b robustness 修補在隨機 Crello test 100% completion——真正 generalize 證據。
+- step 10–12b robustness 修補在隨機 Crello test 100% completion——真正 generalize 證據；**Step 17 再補強**：step 10b post-RetryAnalyst crash 根因+防禦雙修，N=20 隨機 content-aware 樣本 0 crash 0 degradation；graceful degradation（hard/malformed spec 退化 best-effort 非 crash）是可寫進論文的 robustness property。
 - 客觀幾何指標（Step 15 IoU）誠實互補：**明顯勝 random（1.75×、14/19）**佐證做有意義推理；但**未顯著勝 centered_stack**——誠實寫進論文反而強化「排版具競爭力非壓倒、弱點在裝飾合成」的一致定調，勿過度宣稱。
 
 ---
@@ -228,7 +242,8 @@
 | ~~標準幾何指標（Layout-IoU + baseline）~~ | ✅ 已完成（Step 15） | N=20 BypassJudge：completion 95%、mean IoU AL 0.0994 > random 0.0567、≈ centered 0.0931。舊 `eval_iou_baseline.json`（5/10 pre-content-aware + stale-id_map bug）已排除不用。 |
 | 擴 N / 放寬 filter（現為最高 open 項） | 🔴 高 | 消剩餘 caveat 需擴 N（→ 趨近 1,971）；judge≠VILA-7B 仍在，head-to-head 需 VILA-7B（重）。content-aware 亦可增樣確認 72/plateau 一致。 |
 | decorative / asset synthesis | 🟢 研究級 | 突破 plateau 需改 schema 加裝飾元素表達力——屬另一個研究問題、大型架構改動，超出本論文範疇。 |
-| post-Analyst-retry Generator crash | 🟡 中 | step 10b 候選；#6/#7/#9rd 一致出現，3 verdict 後 rebuild round crash，與 tolerance 無關。 |
+| ~~post-Analyst-retry Generator crash~~ | ✅ 已完成（Step 17） | 根因＝Analyst retry 路徑 emit relational hint `below_title`（不在 QC 白名單）→ 全 candidate UNKNOWN_HINT → RuntimeError。雙層修：`analyze_brief.py` prompt 封閉 9-region enum + `rank_candidates_by_violations` graceful degradation（兩 mirror）。離線 140 tests + smoke `5d972ca9` + N=20 隨機樣本**全 0 crash / 0 degradation**。 |
+| N=20 content-aware win-rate 數值 | 🟡 中 | Step 17 N=20 pipeline 20/20 跑完，但事後 gpt-4o pairwise judging 因 **OpenAI `429 insufficient_quota`（外部 billing）** 中斷未取得數值。20 個 post-fix render 已存磁碟，待額度恢復後 judge-only 重判（或比照 Step 14 用 Claude 獨立 judge），不需重跑 pipeline。 |
 
 ---
 
@@ -241,6 +256,7 @@
 | step 14 獨立 judge 重判（消 self-preference） | `layout_agent/output/step14_independent_judge_results.json`、`step14_independent_judge_raw.json`（80 筆逐筆+reason）、`step14_independent_judge.py`、`step14_materialize_pairs.py`、`step14_pairs_manifest.json`、`step14_pairs/` |
 | step 15 標準 Layout-IoU + baseline 對照 | `layout_agent/output/step15_iou_results.json`、`step15_iou_eval.log`、`step15_iou_eval.py`（重用 `run_iou_eval.py` BypassJudge/matching + `evaluation/{iou,baselines}.py`） |
 | step 11 pairwise Win Rate 原始數據 | `layout_agent/output/step11_winrate_results.json`、`step11_winrate.png`、`step11_pair_*.png` |
+| step 17 step 10b crash 修復 | `layout_agent/output/step17_repro_step10b.py`（離線確診）、`step17_smoke_5d972ca9.log`（smoke 端到端）、`step17_n20_postfix.log`（N=20 20/20 零 crash）、`role_live_crello_5d972ca9..._{trace,spec}.prefix_step10b.json`（pre-fix 證據備份）；程式：`metagpt/ext/agentlayout/{actions/analyze_brief.py,tools/quality_checker.py,roles/layout_generator.py,pipeline.py}` |
 | step 12b content-aware live（pre-fix，備份） | `layout_agent/output/live_step12b_5efdd2dd_prefix.log`、`role_live_crello_5efdd2dd499b85dcc75ba0bc_{trace,spec}_step12b.json`、`_last_reject_step12b.png` |
 | step 12d content-aware live（post-fix，真 end-to-end） | `layout_agent/output/live_step12d_postfix_5efdd2dd.log`、`role_live_crello_5efdd2dd499b85dcc75ba0bc_{trace,spec}.json`、`_last_reject.png`（現存即 post-fix） |
 | 模組程式 | `metagpt/ext/agentlayout/`（gap 引用：`roles/aesthetic_judge.py:79`；對照：`pipeline.py:189`、`roles/layout_generator.py:155`） |

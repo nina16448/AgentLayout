@@ -42,7 +42,11 @@ from metagpt.ext.agentlayout.schema import (
     K_VALID,
     LayoutTree,
 )
-from metagpt.ext.agentlayout.tools.quality_checker import CheckResult, filter_valid
+from metagpt.ext.agentlayout.tools.quality_checker import (
+    CheckResult,
+    filter_valid,
+    rank_candidates_by_violations,
+)
 
 
 class LayoutGeneratorRole(Role):
@@ -92,6 +96,7 @@ class LayoutGeneratorRole(Role):
     ) -> Tuple[List[Candidate], List[CheckResult]]:
         """Mirror of LayoutPipeline._generate_with_topup so Role mode behaves the same."""
         kept: List[Candidate] = []
+        pool: List[Candidate] = []  # every generated candidate, for degradation
         all_reports: List[CheckResult] = []
         seen_ids: Set[str] = set()
         gen: GenerateLayout = self.actions[0]
@@ -101,6 +106,7 @@ class LayoutGeneratorRole(Role):
             for cand in batch.candidates:
                 cand.candidate_id = f"r{prefix_offset + topup_idx}_{cand.candidate_id}"
 
+            pool.extend(batch.candidates)
             new_kept, reports = filter_valid(batch.candidates, spec)
             all_reports.extend(reports)
             for cand in new_kept:
@@ -111,7 +117,22 @@ class LayoutGeneratorRole(Role):
             if len(kept) >= self.k_valid:
                 break
 
-        return kept[: self.k_valid], all_reports
+        if kept:
+            return kept[: self.k_valid], all_reports
+
+        # Graceful degradation (step 10b fix): no candidate passed QC -- e.g.
+        # an out-of-vocabulary Analyst hint that fails every candidate
+        # identically. Hard-crashing here silently shrinks evaluable N; hand
+        # back the least-violating candidates so the Judge still scores and
+        # IterationState can still route feedback back to the Analyst.
+        degraded = rank_candidates_by_violations(pool, all_reports)[: self.k_valid]
+        if degraded:
+            logger.warning(
+                f"LayoutGeneratorRole: 0/{len(pool)} candidates passed QC after "
+                f"{self.max_topup_rounds} top-up round(s); degrading to "
+                f"{len(degraded)} least-violating candidate(s) so the run continues."
+            )
+        return degraded, all_reports
 
     async def _act(self) -> Message:
         # Prefer rc.news (this tick's freshly-observed messages); fall back to
@@ -159,10 +180,14 @@ class LayoutGeneratorRole(Role):
             spec, tree, bg, feedback, prefix_offset
         )
         if not kept:
+            # Only reachable when generation produced literally zero
+            # candidates (LLM emitted empty batches every top-up round).
+            # QC-strict specs no longer reach here -- _generate_with_topup
+            # degrades to least-violating candidates instead.
             raise RuntimeError(
-                f"LayoutGeneratorRole: 0 candidates passed QC after "
-                f"{self.max_topup_rounds} top-up round(s). "
-                f"QC reports: {len(reports)}"
+                f"LayoutGeneratorRole: generation produced 0 candidates after "
+                f"{self.max_topup_rounds} top-up round(s) "
+                f"(QC reports: {len(reports)}); nothing to degrade to."
             )
 
         batch = CandidatesBatch(candidates=kept)
