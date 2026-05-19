@@ -14,7 +14,8 @@
   - 首個真正 end-to-end content-aware live（step 12d / post-fix，judge 拿真實色盤）= **mean best 70.67、best 72**；子分數 req=20 hier=18 **bal=17 coh=17**——judge 內容感知化後 **plateau 仍未突破**（更強證明結構性，非 judge 是否 content-aware）。step 12b pre-fix mean 72 為對照。
   - plateau 第二段 bal/coh≈17 經診斷確認為**結構性 scope-bound limitation**（非 LLM 能力問題）。
   - SOTA-positioning Win Rate pilot（N=20）：completion **100%**、Win rate A（vs 設計師真實成品）**0%**、B（同 renderer 純排版幾何）**80%**。
-- **誠實定調（最重要）**：**不宣稱勝設計師、不宣稱勝 SOTA（AesthetiQ）**。正規配對下設計師勝；B=80% 受 self-preference confound 影響，AesthetiQ 僅做 qualitative/indicative 對照，不進勝負表。
+  - **獨立 judge 驗證（Step 14）**：用 Claude `claude-sonnet-4-6`（≠generator gpt-4o）重判同 20 樣本，A **0.0%**、B **80.0%**——**完全複製**，最強的 self-preference confound 實證排除。
+- **誠實定調（最重要）**：**不宣稱勝設計師、不宣稱勝 SOTA（AesthetiQ）**。正規配對下設計師勝；B=80% 的 self-preference confound 已由 Step 14 獨立 judge 排除，但 judge≠VILA-7B、N=20≠1,971 兩 caveat 仍在，故 AesthetiQ 僅作 qualitative/indicative 對照、不進勝負表；可誠實宣稱「能力邊界 robust，跨兩獨立 judge 一致」。
 
 ---
 
@@ -147,20 +148,32 @@
   - **B=80% 仍不可與 AesthetiQ 17.19% 並列當勝績**，三 caveat：(1) judge=gpt-4o≠VILA-7B（win-rate judge-dependent）；(2) **最強 confound：generator 與 judge 同為 gpt-4o（self-preference），AesthetiQ 刻意用獨立 judge 避此**；(3) filtered subset、N=20，AesthetiQ 用全 1,971 不過濾。
   - 可寫進論文的是 **A=0% + B=80% 的對比**：定位能力邊界——排版幾何非弱點（B），弱點在渲染/裝飾合成（A），後者 by-design 不做、已記錄為 limitation。AesthetiQ 維持 **qualitative / indicative** 定位，**不進勝負對照表**。
 
+### Step 14 — 獨立 judge 重判，消除 self-preference confound（2026-05-19）
+
+- **動機**：step 13 三 caveat 中**最強的是 self-preference**（generator 與 judge 同為 gpt-4o）。這是「B=80% 是否測量假象」的關鍵問號，也是 §4 先前最高 open 項。用**獨立於 gpt-4o 的 judge** 重判完全相同的 20 樣本配對即可單獨消除此 confound。
+- **方法**：`step14_materialize_pairs.py` 從磁碟既有 artifact 重建 20 樣本 ×3 圖（agent render 既存、GT render deterministic 重繪、designer JPG cached）——**零 pipeline 重跑、零 LLM 成本**。`step14_independent_judge.py` 用 **Anthropic SDK 直呼 `claude-sonnet-4-6`**（MetaGPT 內建 anthropic/gemini provider 是 text-only 會丟圖，故直呼 SDK 帶正確 base64 image block）當 judge，**`PAIRWISE_PROMPT` 與 `_verdict` 由 step11 逐字 import**、exp A/B、order-swap ×2、majority——除 judge 模型外與 step 13 protocol 完全相同。80 筆全自動、逐筆 raw JSON 可稽核。
+- **數值**（`step14_independent_judge_results.json`，N=20）：
+  - Win rate A（vs 設計師真實成品）= **0.0%**　（step 13 gpt-4o judge：0.0%）
+  - Win rate B（同 renderer 純排版幾何）= **80.0%**　（step 13 gpt-4o judge：80.0%）
+- **誠實定調（核心，這是可跟教授說的）**：
+  - **獨立 judge 完全複製 step 13 數字（A 0%↔0%、B 80%↔80%）→ 最強的 self-preference confound 被實證排除**：B=80% **不是** generator/judge 同模型的自我偏好假象，能力邊界（A 低 / B 具競爭力）跨**兩個不同 judge 模型一致**。這是 step 13 之上**實質增強**的證據，非重複。
+  - **仍不可宣稱勝 AesthetiQ / 勝 SOTA**：剩兩 caveat 未消——(1) judge=Claude ≠ AesthetiQ 的 VILA-7B（win-rate 仍 judge-dependent）；(2) filtered N=20 ≠ 完整 Crello test 1,971。故維持 **indicative positioning，非 head-to-head**。
+  - Claude-in-loop 的可重現性靠：materialized 圖 + 80 筆逐筆 raw JSON（含每筆 4 維分數與 reason）+ 與 step11 逐字相同的 prompt/聚合碼，第三方可重跑稽核。
+
 ---
 
 ## §3 核心誠實定調（consolidated — 論文 honesty 章節用）
 
 ### §3.1 不可宣稱勝設計師 / 勝 SOTA
 - step 11 正規 pairwise head-to-head：A 設計師完勝 3:0、B 設計師 2:1。先前「+2/+2/+4 勝 GT」是非配對單邊測量假象，**作廢**。
-- step 13 B=80% 受三 caveat 限制，**最強 confound 為 generator/judge 同 gpt-4o 的 self-preference**。AesthetiQ 17.19% 僅作 qualitative/indicative 對照，不進勝負表。
+- step 13 B=80% 原受三 caveat 限制；**Step 14 已用獨立 Claude judge 消除最強的 self-preference confound（A 0%↔0%、B 80%↔80% 完全複製）**。剩 judge≠VILA-7B、N=20≠1,971 兩 caveat 未消，故 AesthetiQ 17.19% 仍僅作 qualitative/indicative 對照、不進勝負表；但可誠實宣稱「SOTA-positioning 結果對獨立 judge robust，B 非自我偏好假象」。
 
 ### §3.2 plateau bal/coh≈17 是結構性 scope-bound limitation
 - 非 LLM 能力問題。Generator schema 無裝飾元素表達力、renderer 零裝飾層、Judge rubric 在裸 asset + 單色底下數學上夾在 ~17。
 - step 6 / step 8 / step 11 三組負向結果**反向強化**此核心論點：plateau 是 structural，not LLM-capability。
 
 ### §3.3 可寫進論文的正向定位
-- A=0% + B=80% 的對比＝清楚的能力邊界：排版幾何非弱點，弱點在渲染/裝飾合成（by-design 不做、已記錄 limitation）。
+- A=0% + B=80% 的對比＝清楚的能力邊界：排版幾何非弱點，弱點在渲染/裝飾合成（by-design 不做、已記錄 limitation）。**此邊界跨 gpt-4o 與 Claude 兩個獨立 judge 一致（Step 14）→ 結論 robust，非單一 judge / self-preference artifact。**
 - step 10–12b robustness 修補在隨機 Crello test 100% completion——真正 generalize 證據。
 
 ---
@@ -170,8 +183,8 @@
 | 項目 | 優先 | 說明 |
 | --- | --- | --- |
 | ~~`aesthetic_judge.py:79` 一致性 bug~~ | ✅ 已完成 | 2026-05-19 修復（import+呼叫改 `resolve_background`）；136 離線測試 0 失敗 + Step 12d post-fix live 重跑驗證。真 end-to-end content-aware = mean 70.67 / best 72，plateau 仍未破。 |
-| 獨立非 gpt-4o judge 重判 | 🔴 高（現為最高 open 項） | 用獨立 judge 重判已存 `step13_*` pair，消 self-preference confound，才有資格做數值對照。pair 圖已存，零 pipeline 重跑。 |
-| 擴 N / 放寬 filter | 🟡 中 | 擴 step 13 N、放寬 structural filter；content-aware 增樣確認 72/plateau 一致。 |
+| ~~獨立非 gpt-4o judge 重判~~ | ✅ 已完成（Step 14） | Claude `claude-sonnet-4-6` 獨立 judge 重判 20 樣本：A 0.0%、B 80.0%，完全複製 step 13 → self-preference confound 實證排除。零 pipeline 重跑。 |
+| 擴 N / 放寬 filter（現為最高 open 項） | 🔴 高 | 消剩餘 caveat 需擴 N（→ 趨近 1,971）；judge≠VILA-7B 仍在，head-to-head 需 VILA-7B（重）。content-aware 亦可增樣確認 72/plateau 一致。 |
 | decorative / asset synthesis | 🟢 研究級 | 突破 plateau 需改 schema 加裝飾元素表達力——屬另一個研究問題、大型架構改動，超出本論文範疇。 |
 | post-Analyst-retry Generator crash | 🟡 中 | step 10b 候選；#6/#7/#9rd 一致出現，3 verdict 後 rebuild round crash，與 tolerance 無關。 |
 
@@ -183,6 +196,7 @@
 | --- | --- |
 | Live #1–#12c 一覽 / 子分數 / cost / failure mode | `layout_agent/live_runs_table.md` |
 | step 13 SOTA Win Rate 原始數據 | `layout_agent/output/step13_sota_winrate_results.json`、`step13_pilot_n20.log`、`step13_sota_winrate.py` |
+| step 14 獨立 judge 重判（消 self-preference） | `layout_agent/output/step14_independent_judge_results.json`、`step14_independent_judge_raw.json`（80 筆逐筆+reason）、`step14_independent_judge.py`、`step14_materialize_pairs.py`、`step14_pairs_manifest.json`、`step14_pairs/` |
 | step 11 pairwise Win Rate 原始數據 | `layout_agent/output/step11_winrate_results.json`、`step11_winrate.png`、`step11_pair_*.png` |
 | step 12b content-aware live（pre-fix，備份） | `layout_agent/output/live_step12b_5efdd2dd_prefix.log`、`role_live_crello_5efdd2dd499b85dcc75ba0bc_{trace,spec}_step12b.json`、`_last_reject_step12b.png` |
 | step 12d content-aware live（post-fix，真 end-to-end） | `layout_agent/output/live_step12d_postfix_5efdd2dd.log`、`role_live_crello_5efdd2dd499b85dcc75ba0bc_{trace,spec}.json`、`_last_reject.png`（現存即 post-fix） |
