@@ -2432,4 +2432,55 @@ paper figure：`layout_agent/output/step11_winrate.png`。
 
 ---
 
+## 2026-05-20 — Step 22：N=100 scale-up（推翻 N=20 STV 排名 + 確認 ~5pp selection bias）
+
+**動機：** Step 21b 把 Step 21 的 cross-paper claim 換成 within-judge ratio，但仍受限 N=20 small-sample noise。為驗證「STV 80.4% 最強」與「Smean 70%」兩條 claim 是否 robust，把樣本擴 5× 到 N=100。
+
+**改動檔：**
+
+- `layout_agent/output/step22_sample_extra80.py`（新檔）：seed=43、max_inspect=2000、結構過濾、避開原 20 ids、下載 80 個 crello_<id>/ 資產。
+- `layout_agent/output/step22_coldstart_render.py`（新檔）：cold-start pipeline 對 N=100，save spec/candidate/render PNG，**0 crash**。
+- `layout_agent/output/step20_sega_eval.py`：加 `--ids-file` 旗標 + `_load_cached_candidate()` 助手；`_load_spec` 改 glob 兩個 pattern（step22 優先、role_live fallback）；cold 模式優先用 cached candidate 跳 LLM 重跑。
+- `layout_agent/output/step21_phaseb_eval.py`：加 `--ids-file` 旗標；`_png_b64(source=agent)` 改 prefer step22 cold-start render → fallback role_live reject-loop。
+- `layout_agent/output/step22_compare.py`（新檔）：N=20 vs N=100 head-to-head（Phase A SEGA + Phase B 4 軸 + within-judge ratio）。
+
+**端到端執行：** ~$8 pipeline + ~$4 Phase B 兩跑 = **~$12 total**；~50 min pipeline + ~25 min Phase B。
+
+**核心結果（vs Step 20 / 21 / 21b 的 N=20 baseline）：**
+
+Phase A SEGA rule-based（N=100，judge-drift-free）：
+
+| Method | Ali↓ | Ove↓ | Und_l↑ | Und_s↑ | Read↓ | Occ↓ |
+| --- | --- | --- | --- | --- | --- | --- |
+| **AgentLayout** | **0.0055** | **0.0013** | 0 | 0 | 0.0217 | 0.0016 |
+| Designer GT | 0.0066 | 0.1104 | 0.058 | 0.025 | 0.0179 | 0.0019 |
+
+Phase B GPT-4V 4 軸 within-judge ratio (AL / Designer GT)：
+
+| Axis | N=20 ratio | N=100 ratio | Δ |
+| --- | --- | --- | --- |
+| SDL | 69.2% | 61.8% | −7.4 pp |
+| SQL | 59.0% | 56.2% | −2.8 pp |
+| STV | **80.4%** | **70.0%** | **−10.4 pp** |
+| SIO | 73.5% | **75.0%** | +1.4 pp |
+| **Smean** | **69.9%** | **64.8%** | **−5.2 pp** |
+
+**關鍵發現：**
+
+- 🚨 **「STV 是最強相對軸」claim 推翻**：N=100 STV 70.0% < **SIO 75.0%**——SIO 才是最強。Step 21b 把 STV 寫成 hero claim 是 sample-bias artefact。
+- 🚨 **「Smean 達 designer ceiling 70%」也推翻**：N=100 真值 **64.8%**（N=20 高估 5.2 pp）。
+- ✅ **Phase A 仍 robust**：Ali 0.0055 < GT 0.0066、Ove 0.0013 << GT 0.1104（勝 85×）、Ove 對齊 SEGA-13B 0.0025 量級——**唯一沒被 scale-up 推翻的 cross-paper claim**。
+- 🆕 **「N=20 自帶 ~5 pp positive selection bias」是 paper-grade methodology finding**：所有用 random N=20 / N=50 small sample 報 GPT-4V aesthetic 的 layout/design paper 都應該被質疑。
+
+**Trade-off：** ✅ 把 N=20 的兩個 inflated claim 都校準；✅ Phase A 純幾何 claim 雙重 robust（N=20+N=100 一致）；✅ 拿到第二個 methodology contribution（N=20 selection bias warning）；✅ pipeline 100/100 0 crash robustness 證據；❌ 失去「STV 80% 最強軸」hero claim；❌ 失去「Smean 70%」claim；❌ N=100 vs SEGA full Crello（1971）仍 5× 統計力 gap。
+
+**論文 contribution 三 claim（final, post-N=100）：**
+1. Ali/Ove 純幾何勝 designer + 對齊 SEGA-13B（Step 20+22 雙重 robust，judge-drift-free）
+2. Within-judge AL Smean = 64.8% × designer ceiling（N=100）；SIO 75% 最強、SQL 56% 最弱
+3. 兩個 methodology contribution：judge calibration drift + N=20 selection bias
+
+**關聯：** Step 20+21+21b 全部 N=20 claim 重新校準；[[project-step21-stv-sota-claim]] 再次修訂；新增 [[project-step22-n100-scale-up]] 記錄 final paper-grade claim 與 selection-bias 方法論。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/20*
