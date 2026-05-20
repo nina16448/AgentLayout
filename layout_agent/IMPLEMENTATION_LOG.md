@@ -2393,4 +2393,43 @@ paper figure：`layout_agent/output/step11_winrate.png`。
 
 ---
 
+## 2026-05-20 — Step 21b：Judge-config 校準對照（推翻 Step 21 cross-paper claim）
+
+**動機：** Step 21 把 SEGA Table 3 數字直接跟 AL N=20 並排比，得出「STV 達 SEGA-13B 量級」的 paper-grade claim。但 SEGA paper 的 GPT-4V judge 與我們的 gpt-4o 不一定 calibration 對齊。為驗證，把 Crello designer 原圖（`crello_<id>/ground_truth_preview.jpg`）跑過完全相同的 judge config——若 designer GT Smean 接近 SEGA paper 的 SEGA-13B 6.320，則 cross-paper 可比；若顯著高，judge 漂移成立。
+
+**改動檔：**
+
+- `layout_agent/output/step21_phaseb_eval.py`：加 `--source {agent,designer-gt}` 旗標 + `--out` 預設依 source 切換輸出。`_png_b64` 與 `_process_sample` 接受 source 參數；scope/output 標記 source。
+
+**端到端執行：** `step21_phaseb_eval.py --source designer-gt` 跑 N=20、~3 min、~$0.40；輸出 `step21b_phaseb_designer_gt.json` 與 `step21b_phaseb_designer_gt.log`。
+
+**核心結果（all 在同一 judge config 下）：**
+
+| 來源 | SDL | SQL | STV | SIO | Smean |
+| --- | --- | --- | --- | --- | --- |
+| Designer GT（Crello 原圖，我們 judge） | 7.950 | 8.650 | 7.650 | 5.850 | **7.525** |
+| AgentLayout（cold-start，我們 judge） | 5.500 | 5.100 | 6.150 | 4.300 | **5.263** |
+| Δ (AL − Designer GT) | −2.450 | −3.550 | −1.500 | −1.550 | **−2.262** |
+| ratio (AL / Designer GT) | 69.2% | 59.0% | **80.4%** | 73.5% | 69.9% |
+| SEGA-13B（SEGA paper 自己的 judge） | 6.149 | 6.745 | 6.348 | 6.038 | 6.320 |
+
+**關鍵發現（推翻 Step 21）：**
+
+- 🚨 **Judge calibration drift 確認**：Designer GT 在我們 judge 拿 7.525，比 SEGA paper 自己 13B 模型在他們 judge 下的 6.320 還高 1.2 分。Cross-paper Smean 不可直比。
+- ❌ **「STV 達 SEGA-13B 量級」claim 無效**：原本 6.150 vs 6.348 = −0.198 是 cross-judge 假象；真正的 within-judge gap 是 6.150 vs designer GT 7.650 = **−1.500**。
+- ❌ **「Smean 勝 FlexDM」也無效**：FlexDM 4.950 / PosterLlama 5.542 / SEGA 系列 published numbers 都不能跨 judge 比。
+- ✅ **「STV 是相對最強軸」仍成立**：within-judge ratio STV 80.4% > SIO 73.5% > SDL 69.2% > SQL 59.0%，**STV gap 確實最小**，對應 BackgroundAnalyzer + contrast-aware text color 設計。
+- ✅ **意外發現：SIO 弱不全是 by-design scope**：designer GT 在 SIO 也只 5.85（最低）——Crello dataset 本身就不獎勵 Innovation，judge 對任何 Crello-style 海報都打不高。Step 21 把 SIO 弱完全歸咎 scope-bound 過度自責。
+- 🆕 **methodology contribution**：「GPT-4V judge calibration drifts across papers; cross-paper aesthetic-score comparison requires running same judge config on a shared reference (designer GT)」——所有後續 layout/design paper 應該標但都沒標的 caveat。
+
+**Trade-off：** ✅ 把 Step 21 inflated SOTA-level claim 降階為誠實 within-judge ratio；✅ 拿到一條 paper-grade methodology contribution（judge calibration drift warning）；✅ 修正 SIO 弱屬「dataset 特性 + 部分 by-design scope」雙重歸因；❌ 失去「達 SEGA-13B 量級」的 narrative hook，paper 強 claim 從「兩條軸 SOTA-level」降為「STV 80.4% ratio + judge-drift methodology」；❌ N=20 統計力仍有限。
+
+**Future work：**
+1. **N=100 scale-up**：把 within-judge ratio 的 ±5% noise gap 收掉；
+2. **若想救 cross-paper claim**：需要 baseline 作者開源 renders / layouts，全部在我們 judge 下重 score——short-term 不可能。
+
+**關聯：** Step 21 cross-paper 對照 → Step 21b within-judge 對照；[[project-step21-stv-sota-claim]] 大幅修訂（移除「達 SOTA」claim，保留「最強相對軸」claim）。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/20*
