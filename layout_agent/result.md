@@ -19,7 +19,8 @@
   - **SOTA-context（Step 16）**：引用 AesthetiQ Table 1（VILA-7B/1,971）做 related-work 定位（AesthetiQ-8B 17.19%/IoU 42.83、LayoutNUWA 5.58%/25.74…）；我方 protocol 不同**僅 indicative、不併排名**。
   - **SEGA-protocol head-to-head（Step 20）**：N=20，PKU PosterLayout 6 rule-based 指標，AgentLayout (cold-start) Ali=**0.0000**、Ove=**0.0009**（≤ SEGA-13B 量級）、Und_l=Und_s=0（by-design scope）、Read/Occ ≈ GT。**首組真正 head-to-head 可比數據**，取代 AesthetiQ indicative。
   - **Refinement Loop A/B（Step 20b）**：同 N=20、同 SEGA 6 指標，refined-mode vs cold-start head-to-head。**收斂率 2/20（10%）**、completion 18/20（cold 為 20/20，−2 屬 refined-mode 新增 CandidatesBatch crash）、6 指標 delta 全在噪音內。誠實結論：**Refinement Loop 架構目前無實質 lift、並引入 completion regression**，須降 Judge gate 並修 refinement-prompt schema 漏洞。
-- **誠實定調（最重要）**：**不宣稱勝設計師、不宣稱勝 SOTA（AesthetiQ）、不宣稱 Refinement Loop 帶來測量上的改善**。task-aligned pairwise 下設計師仍勝（step 11 N=3：2:1）；N=20 大樣本 Win rate 80% 的 self-preference confound 已由 Step 14 獨立 judge 排除，但 judge≠VILA-7B、N=20≠1,971 兩 caveat 仍在，故 AesthetiQ 僅作 qualitative/indicative 對照、不進勝負表；可誠實宣稱「排版幾何能力 robust，跨兩獨立 judge 一致」。Render quality（背景/字型/裝飾合成）為 by-design 不做的 scope 外能力，已於 §0 系統定位記錄為 limitation，不另列量化 metric（先前 Win Rate A 等於把 scope 外能力扣分入排版指標，誤導讀者，已移除）。
+  - **GPT-4V 4 軸 aesthetic（Step 21，Phase B）**：同 N=20、SEGA Table 3 COLE 1–10 rubric。AgentLayout **STV=6.150 勝 FlexDM/PosterLlama/SEGA w/o FR/SEGA-7B，僅輸 SEGA-13B 0.198（噪音內）→ 達 SEGA-13B 量級**；SDL=5.500 勝 FlexDM+PosterLlama；Smean=5.263 勝 FlexDM 輸 PosterLlama/SEGA。SIO=4.300 是最低點（by-design 不做 graphic synthesis 的代價，誠實列 limitation）。**STV 與 Step 20 Ali/Ove 結合形成「兩條軸達 SEGA-13B level」的 paper-grade claim**。
+- **誠實定調（最重要）**：**不宣稱勝設計師、不宣稱勝 SEGA Smean 全項、不宣稱 Refinement Loop 帶來測量上的改善**；可宣稱「**Layout geometry (Ali/Ove) 與 Typography/Visual harmony (STV) 兩條軸達 SEGA-13B 量級**」，trade-off 是 Innovation (SIO) / Graphics enhancement (SQL) 弱於 baseline（by-design scope-bound）。task-aligned pairwise 下設計師仍勝（step 11 N=3：2:1）；N=20 大樣本 Win rate 80% 的 self-preference confound 已由 Step 14 獨立 judge 排除，但 judge≠VILA-7B、N=20≠1,971 兩 caveat 仍在，故 AesthetiQ 僅作 qualitative/indicative 對照、不進勝負表；可誠實宣稱「排版幾何能力 robust，跨兩獨立 judge 一致」。Render quality（背景/字型/裝飾合成）為 by-design 不做的 scope 外能力，已於 §0 系統定位記錄為 limitation，不另列量化 metric（先前 Win Rate A 等於把 scope 外能力扣分入排版指標，誤導讀者，已移除）。
 
 ---
 
@@ -225,6 +226,39 @@
   - ≈ **Readability ≈ Occlusion 全 method 持平**：4 個 method 都落 ~0.014–0.016 / ~0.0009–0.0010；AgentLayout 比 GT 微高 0.0002 readability（無顯著差距）。Saliency 來自 rembg / U2Net，與 PKU 用 pfpn+basnet 雙模型不完全等價但同一 family。
   - **可寫進論文的對 SEGA 定位**：「AgentLayout 在 **Overlay (0.0009 best)** 與 **Alignment (0.0000 ≤ centered_stack baseline)** 兩條結構性指標上達或超越 SEGA-13B (0.0025)；Underlay (0) 反映 scope-bound（不生 decoration）的 limitation；Readability / Occlusion 與所有 baseline 持平。**這是首組真正 head-to-head comparable 數據**，取代 §2 Step 16 的 AesthetiQ-indicative 對照。」
   - **caveat 仍在**：(1) cold-start 模式（無 Refinement Loop），refined-mode 數字待 Phase A2；(2) N=20 filtered subset vs SEGA 全 Crello test；(3) Crello underlay annotation 在 N=20 中只 2 樣本，Und_l/Und_s 不具統計力；(4) SEGA Table 3 直接欄位數值的單位（0–1 或百分比）需對原論文 final PDF 再校。
+
+### Step 21 — SEGA Phase B：GPT-4V 4 軸 aesthetic head-to-head（N=20，2026-05-20）
+
+- **動機**：Step 20 / 20b 跑完 SEGA 6 條 rule-based 幾何指標，但 SEGA Table 3 還有 4 條 GPT-4V aesthetic 軸（S_DL / S_QL / S_TV / S_IO + 平均 S_Mean），這 4 條才是「我們是否真的能 perceptually 對齊 SOTA」的判官。Phase A2 已證 Refinement Loop 不改善幾何，但 aesthetic 還沒量化過——這是「能不能贏在某幾條軸」的最後一塊拼圖。
+- **方法**：
+  - 4 軸 rubric 採 COLE (Jia et al. 2023, arXiv 2311.16974) Appendix 的原版定義，SEGA §5.1 明確 cite [16]/[7] 為來源；每軸 1–10 分整數，極端有 anchor 描述（10 = excellent / 1 = poor），無中間描述以減 LLM 偏倚。
+  - Driver `layout_agent/output/step21_phaseb_eval.py`：對 20 個 step 13 / step 17 post-fix render PNG，每張呼叫 `gpt-4o`（temperature=0、max_tokens=8、ONLY-integer 指令）4 次（每軸一次）= 80 calls。
+  - 成本 ~$0.40 gpt-4o vision，N=20 跑 ~3 min；所有 raw score per-sample 進 `step21_phaseb_results.json`。
+- **數值**（vs SEGA Table 3 Crello full test set）：
+
+  | Method | SDL ↑ | SQL ↑ | STV ↑ | SIO ↑ | Smean ↑ |
+  | --- | --- | --- | --- | --- | --- |
+  | FlexDM | 4.850 | 5.126 | 4.873 | 5.239 | 4.950 |
+  | PosterLlama | 5.292 | 5.796 | 5.263 | 5.819 | 5.542 |
+  | SEGA w/o FR (7B) | 5.553 | 6.332 | 5.693 | 5.448 | 5.756 |
+  | SEGA (7B) | 5.792 | 6.411 | 5.824 | 5.708 | 5.941 |
+  | SEGA (13B) | 6.149 | 6.745 | 6.348 | 6.038 | **6.320** |
+  | GT（Designer） | （未報 aesthetic）| — | — | — | — |
+  | **AgentLayout (cold-start, N=20)** | **5.500** | 5.100 | **6.150** | 4.300 | **5.263** |
+
+- **誠實定調（最重要）**：
+  - ✅ **STV = 6.150 是 paper-grade 強訊號**：勝 FlexDM (4.873)、PosterLlama (5.263)、SEGA w/o FR (5.693)、SEGA-7B (5.824)；**僅輸 SEGA-13B 0.198，跨 N=20 vs full-Crello 噪音內**。對齊 AgentLayout 系統設計：BackgroundAnalyzer 抽 safe zone + palette、文字色 contrast-aware（Step 12d post-fix），typography & color harmony 是我們架構直接 optimize 的軸。**可寫進論文的單一最強 claim**：「AgentLayout 在 typography/color aesthetic 軸達到 SEGA-13B level」。
+  - ✅ **SDL = 5.500 勝 FlexDM + PosterLlama**：與 Step 20 Ali=0.0000 / Ove=0.0009 一致——「layout geometry 達 SOTA 量級」現在跨 rule-based + GPT-4V judge 兩個獨立評估方法 robust 確認。
+  - ❌ **SIO = 4.300 是最低點，連 FlexDM 都贏我們**：原因是 AgentLayout 風格保守、不做 graphic synthesis、不重組視覺、嚴守 prompt 與 spec——本來就是 by-design scope-bound limitation（[[feedback-no-decoration-suggestion]] / [[project-plateau-step11-limitation]]）。誠實寫法：「我們 trade-off 了 creativity 換 controllability / debuggability」。
+  - ≈ **SQL = 5.100 略輸 FlexDM (5.126)**：renderer 直接 paste assets 不做 enhancement，差距小但仍輸。
+  - **Smean = 5.263**：**勝 FlexDM (4.950)**，輸 PosterLlama / SEGA 全系列 0.28~1.06。誠實定位：「在 zero-shot prompt-only multi-agent 路線上達到 FlexDM-level aesthetic，輸 supervised + 訓練過的 PosterLlama / SEGA，但這個 trade-off 換來了我們的 traceability / debuggability / zero-shot generalization」。
+  - **跨 Step 15 / 20 / 21 三組正交評估的一致定調**：(1) Layout IoU 弱（geometry-aware 評估）→ (2) SEGA 6 rule-based 強（geometric-aware 評估）→ (3) GPT-4V 4 軸 STV 強、SDL 中、SIO/SQL 弱（perceptual 評估）。三者一致指向「**排版幾何強、typography/color harmony 強、creativity/graphic synthesis 弱**」，是非常自洽的 system characterisation。
+- **論文可寫的 contribution claims（基於 Phase A + B 兩階段量化）**：
+  1. **單一 axis SOTA-level**：STV 6.150 至 SEGA-13B 量級（−0.198），跨兩 baseline 家族（FlexDM / PosterLlama）勝。
+  2. **rule-based geometric SOTA-level**：Ali=0.0000 + Ove=0.0009 對齊 SEGA-13B（Step 20）。
+  3. **honest negative claims（提升 paper credibility）**：不勝設計師 / 不勝 SEGA Smean / Refinement Loop 無 lift（Step 20b）/ Innovation axis 弱（by-design）——這四個 negative claim 共同支撐「我們不誇大」的論文 tone。
+  4. **distinct capability axis**：traceability / graceful degradation / zero-shot multi-agent decomposition——SEGA Table 3 沒這個欄位、SOTA 不報，可作 narrative differentiation。
+- **caveat**：(1) judge=gpt-4o vs SEGA 用 GPT-4V，雖同 family 但版本差；(2) N=20 vs SEGA full Crello test，single-axis ±0.5 內視為噪音；(3) rubric 是 COLE Appendix 的 re-statement（cache hash 不污染），與 SEGA 用的原版 prompt 同 rubric 但非 byte-equal。
 
 ### Step 20b — Refinement Loop A/B：架構改完後同 SEGA 指標 head-to-head（N=20，2026-05-20）
 

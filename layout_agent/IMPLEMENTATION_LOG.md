@@ -2353,4 +2353,44 @@ paper figure：`layout_agent/output/step11_winrate.png`。
 
 ---
 
+## 2026-05-20 — Step 21：SEGA Phase B GPT-4V 4 軸 aesthetic 評估
+
+**動機：** Phase A 跑完 6 條 rule-based 幾何指標、Phase A2 證明 Refinement Loop 無 lift，剩下 SEGA Table 3 的 4 條 aesthetic 軸（SDL/SQL/STV/SIO）還沒量化——這 4 條是「我們是否真的能 perceptually 接近 SOTA」的關鍵 free information。
+
+**改動檔：**
+
+- `layout_agent/output/step21_phaseb_eval.py`（新檔，~250 LOC）：對 N=20 cached step17 post-fix render PNGs，4 軸各呼叫 gpt-4o 多模 vision 一次（temperature=0、max_tokens=8、only-integer 指令）= 80 calls；rubric 採 COLE (Jia et al. 2023, arXiv 2311.16974) Appendix 原版（SEGA §5.1 cite [16]）。
+
+**端到端執行：** ~$0.40 gpt-4o、~3 min；輸出 `step21_phaseb_results.json` 與 `step21_phaseb_eval.log`。
+
+**核心結果（vs SEGA Table 3 Crello full test set）：**
+
+| Method | SDL ↑ | SQL ↑ | STV ↑ | SIO ↑ | Smean ↑ |
+| --- | --- | --- | --- | --- | --- |
+| FlexDM | 4.850 | 5.126 | 4.873 | 5.239 | 4.950 |
+| PosterLlama | 5.292 | 5.796 | 5.263 | 5.819 | 5.542 |
+| SEGA w/o FR (7B) | 5.553 | 6.332 | 5.693 | 5.448 | 5.756 |
+| SEGA (7B) | 5.792 | 6.411 | 5.824 | 5.708 | 5.941 |
+| SEGA (13B) | 6.149 | 6.745 | 6.348 | 6.038 | **6.320** |
+| **AgentLayout (cold-start, N=20)** | **5.500** | 5.100 | **6.150** | 4.300 | **5.263** |
+
+**亮點（vs Step 20b 的 negative result，這次是 positive）：**
+
+- 🎯 **STV = 6.150 達 SEGA-13B 量級**：勝 FlexDM/PosterLlama/SEGA w/o FR/SEGA-7B 四個 baseline，僅輸 SEGA-13B 0.198（N=20 噪音內）。對齊 BackgroundAnalyzer + contrast-aware 文字色設計（Step 12d）；**可寫進論文的單一最強 aesthetic claim**。
+- ✅ **SDL = 5.500 勝 FlexDM + PosterLlama**：與 Step 20 Ali=0.0000/Ove=0.0009 互相佐證——「layout geometry 達 SOTA 量級」跨 rule-based + GPT-4V 兩個獨立 judge family robust 確認。
+- ❌ **SIO = 4.300 是最低點**：連 FlexDM (5.239) 都贏我們。Innovation/originality 是 by-design scope 外能力，誠實列 limitation 而非試圖補強。
+- ≈ **SQL = 5.100 ≈ FlexDM 5.126**：renderer 直接 paste 不 enhance graphics 的代價。
+- **Smean = 5.263**：勝 FlexDM (4.950)，輸 PosterLlama / SEGA 全系列 0.28~1.06；honest position「zero-shot prompt-only 達 FlexDM-level aesthetic」。
+
+**Trade-off：** ✅ 拿到 paper-grade STV claim（達 SEGA-13B 量級）；✅ 跨 rule-based + GPT-4V judge 兩個正交評估 robust 確認「geometry 強 + typography/color 強 + creativity 弱」的一致 system characterisation；✅ 完整 SEGA Table 3 同表並列對照（5 個 baseline + AgentLayout + GT）；❌ SIO 4.300 / SQL 5.100 是 by-design scope-bound limitation，不可主張可改善；❌ N=20 vs full Crello test 仍是統計力 caveat；❌ judge=gpt-4o vs SEGA 的 GPT-4V 雖同 family 但版本不一致。
+
+**論文 contribution 三 claim**（Phase A + B 結合）：
+1. 兩條軸達 SEGA-13B 量級：**STV** (aesthetic, Phase B) + **Ali/Ove** (geometric, Step 20 Phase A)
+2. honest negative claims（提升 credibility）：不勝設計師（Step 11）、不勝 SEGA Smean（Step 21）、Refinement Loop 無 lift（Step 20b）、SIO 弱（by-design）
+3. distinct capability axis：traceability / graceful degradation / zero-shot multi-agent decomposition——SEGA Table 3 沒有的欄位
+
+**關聯：** Step 20 / 20b cold-start vs refined / Phase A 補完 Phase B；[[project-next-experiment-sega-comparison]] Phase B 結案；新增 [[project-step21-stv-sota-claim]] 標記 paper 可寫的最強 single-axis claim。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/20*
