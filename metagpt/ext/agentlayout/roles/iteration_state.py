@@ -24,6 +24,8 @@ Termination conditions:
 """
 from __future__ import annotations
 
+from typing import Dict, Optional, Tuple
+
 from pydantic import BaseModel, Field
 
 from metagpt.actions import Action
@@ -39,6 +41,11 @@ from metagpt.ext.agentlayout.schema import (
     IterationState,
     JudgeDecision,
 )
+
+
+# Refinement Loop termination: pipeline stops when the Judge has accepted
+# this many times in a row (initial accept + one post-refinement accept).
+ACCEPT_CONSECUTIVE_STOP: int = 2
 
 
 # ============================================================
@@ -74,11 +81,33 @@ class RetryPayload(BaseModel):
 
     Carries the Aesthetic-Judge feedback that AnalystRole / LayoutGeneratorRole
     must consume on the retry pass, plus the iteration counter for tracing.
+
+    Refinement Loop (2026-05-20): when ``target`` is LAYOUT_GENERATOR, also
+    carries the previous best candidate's bbox dict and four sub-scores so the
+    Generator can run in refinement (anchored-edit) mode instead of cold-start.
     """
 
     feedback: AestheticFeedback
     iteration: int = Field(..., ge=1)
     target: FeedbackTarget
+    prev_best_layout: Optional[Dict[str, Tuple[float, float, float, float]]] = Field(
+        default=None,
+        description=(
+            "Previous round's best candidate bbox dict, populated by the Aesthetic "
+            "Judge via JudgeAesthetic._attach_best_candidate_layout(). Consumed "
+            "by LayoutGeneratorRole / GenerateLayout in refinement mode. None "
+            "when target=ANALYST or in legacy reject-only routing."
+        ),
+    )
+    prev_best_subscores: Optional[Dict[str, int]] = Field(
+        default=None,
+        description=(
+            "Previous round's best candidate four-dim subscores "
+            "{requirement_alignment, info_hierarchy, layout_balance, "
+            "visual_coherence} in 0-25. Generator uses the lowest-scoring dim "
+            "to prioritise its refinement edits."
+        ),
+    )
 
 
 # ============================================================
@@ -87,31 +116,34 @@ class RetryPayload(BaseModel):
 
 
 class IterationStateRole(Role):
-    """Owns ``IterationState`` and routes Aesthetic-Judge REJECTs.
+    """Owns ``IterationState`` and routes every Aesthetic-Judge verdict.
 
-    Watches ``JudgeAesthetic``. On every judgement Message:
+    Watches ``JudgeAesthetic``. On every judgement Message (Refinement Loop):
 
-    * If decision = ACCEPT -> log and stop.
-    * If decision = REJECT -> increment iteration counter, decide target via
-      ``IterationState.next_target()``, publish a Message tagged with the
-      appropriate sentinel Action so the target Role re-triggers.
-
-    Hard cap on retries is governed by ``max_total_rounds`` to mirror
-    ``PipelineConfig.max_total_rounds`` semantics in the orchestrator path.
+    * decision = ACCEPT and consecutive_accepts < ACCEPT_CONSECUTIVE_STOP and
+      iteration < max_total_rounds -> route to LayoutGenerator with
+      prev_best_layout so it runs a mandatory refinement pass.
+    * decision = ACCEPT and (consecutive_accepts >= ACCEPT_CONSECUTIVE_STOP or
+      iteration >= max_total_rounds) -> emit IterationStop, pipeline ends.
+    * decision = REJECT and iteration < max_total_rounds -> route to
+      LayoutGenerator (first N rounds) or Analyst (after N) via the existing
+      next_target() logic, carrying prev_best_layout when targeting Generator.
+    * decision = REJECT and iteration >= max_total_rounds -> emit IterationStop.
     """
 
     name: str = "IterationState"
     profile: str = "Iteration Router"
     goal: str = (
-        "Bookkeep AestheticJudgement decisions across rounds and route REJECT "
-        "feedback to either the Layout Generator (early rounds) or the Analyst "
-        "(after the generator-feedback budget is spent), mirroring "
-        "LayoutPipeline.run."
+        "Bookkeep AestheticJudgement decisions across rounds and route every "
+        "verdict (accept or reject) to either the Layout Generator (refinement "
+        "pass) or the Analyst (after the generator-feedback budget is spent), "
+        "mirroring LayoutPipeline.run's Refinement Loop."
     )
     constraints: str = (
-        "Emits a no-op Message on ACCEPT (no cause_by re-trigger). "
-        "On REJECT emits exactly one Message tagged with cause_by=RetryAnalyst "
-        "or RetryGeneration. Stops after max_total_rounds rejects."
+        "Refinement Loop: emits a RetryGeneration / RetryAnalyst Message on "
+        "every verdict (accept or reject) until either consecutive_accepts "
+        "reaches ACCEPT_CONSECUTIVE_STOP or iteration reaches max_total_rounds, "
+        "at which point an IterationStop Message terminates the loop."
     )
 
     # Default mirrors PipelineConfig.max_total_rounds in pipeline.py.
@@ -137,63 +169,110 @@ class IterationStateRole(Role):
                 f"(from JudgeAesthetic). Got: {type(judgement).__name__}"
             )
 
-        if judgement.decision == JudgeDecision.ACCEPT:
+        is_accept = judgement.decision == JudgeDecision.ACCEPT
+
+        # Bookkeeping. Refinement Loop counts every verdict, not just rejects.
+        self._state.iteration += 1
+        self._state.last_feedback = judgement.feedback
+        if is_accept:
+            self._state.consecutive_accepts += 1
+        else:
+            self._state.consecutive_accepts = 0
+            self._state.reject_count += 1
+
+        # Termination check #1: refinement actually converged (two accepts in a row).
+        if is_accept and self._state.consecutive_accepts >= ACCEPT_CONSECUTIVE_STOP:
             logger.info(
                 f"IterationStateRole: ACCEPT received "
                 f"(iteration={self._state.iteration}, "
-                f"best={judgement.best_candidate_id}). No re-trigger."
-            )
-            return Message(
-                content=f"Accepted at iteration {self._state.iteration}.",
-                role=self.profile,
-                cause_by=IterationStop,
-            )
-
-        # REJECT path -- mirror pipeline.py:215-250.
-        self._state.iteration += 1
-        self._state.last_feedback = judgement.feedback
-        self._state.feedback_target = self._state.next_target()
-        target = self._state.feedback_target
-        feedback: AestheticFeedback = judgement.feedback  # type: ignore[assignment]
-
-        if self._state.iteration > self.max_total_rounds:
-            logger.warning(
-                f"IterationStateRole: max_total_rounds={self.max_total_rounds} "
-                f"exhausted at iteration {self._state.iteration}. Stopping."
+                f"consecutive_accepts={self._state.consecutive_accepts}, "
+                f"best={judgement.best_candidate_id}). Refinement converged."
             )
             return Message(
                 content=(
-                    f"Max rounds ({self.max_total_rounds}) exhausted; "
-                    f"stopping after {self._state.iteration} reject(s)."
+                    f"Accepted at iteration {self._state.iteration} after "
+                    f"{self._state.consecutive_accepts} consecutive accepts."
                 ),
                 role=self.profile,
                 cause_by=IterationStop,
             )
 
-        retry_payload = RetryPayload(
-            feedback=feedback,
-            iteration=self._state.iteration,
-            target=target,
-        )
+        # Termination check #2: hard cap on total rounds.
+        if self._state.iteration > self.max_total_rounds:
+            logger.warning(
+                f"IterationStateRole: max_total_rounds={self.max_total_rounds} "
+                f"exhausted at iteration {self._state.iteration}. Stopping "
+                f"(last decision={judgement.decision.value})."
+            )
+            return Message(
+                content=(
+                    f"Max rounds ({self.max_total_rounds}) exhausted; "
+                    f"stopping after {self._state.iteration} verdict(s)."
+                ),
+                role=self.profile,
+                cause_by=IterationStop,
+            )
+
+        # Route the verdict. ACCEPT always routes to LAYOUT_GENERATOR (mandatory
+        # refinement pass). REJECT uses next_target() (Generator early, Analyst
+        # after N).
+        if is_accept:
+            target = FeedbackTarget.LAYOUT_GENERATOR
+        else:
+            target = self._state.next_target()
+        self._state.feedback_target = target
+        feedback: AestheticFeedback = judgement.feedback
 
         if target == FeedbackTarget.LAYOUT_GENERATOR:
             cause_cls: type[Action] = RetryGeneration
             target_name = "LayoutGenerator"
+            # Refinement Loop: carry prev_best_layout + subscores so the
+            # Generator runs in anchored-edit mode.
+            prev_layout = judgement.best_candidate_layout
+            prev_scores = self._extract_best_subscores(judgement)
         else:
             cause_cls = RetryAnalyst
             target_name = "Analyst"
+            # Analyst re-specs from scratch; bbox anchoring is not meaningful.
+            prev_layout = None
+            prev_scores = None
+
+        retry_payload = RetryPayload(
+            feedback=feedback,
+            iteration=self._state.iteration,
+            target=target,
+            prev_best_layout=prev_layout,
+            prev_best_subscores=prev_scores,
+        )
 
         logger.info(
-            f"IterationStateRole: REJECT iteration={self._state.iteration} -> "
-            f"routing to {target_name} (cause_by={cause_cls.__name__})."
+            f"IterationStateRole: {judgement.decision.value.upper()} "
+            f"iteration={self._state.iteration} -> routing to {target_name} "
+            f"(cause_by={cause_cls.__name__}, "
+            f"consecutive_accepts={self._state.consecutive_accepts})."
         )
         return Message(
             content=(
-                f"Reject iteration={self._state.iteration}; "
-                f"retry via {target_name}."
+                f"{judgement.decision.value.capitalize()} "
+                f"iteration={self._state.iteration}; refine via {target_name}."
             ),
             instruct_content=retry_payload,
             role=self.profile,
             cause_by=cause_cls,
             send_to={target_name},
         )
+
+    @staticmethod
+    def _extract_best_subscores(
+        judgement: AestheticJudgement,
+    ) -> Optional[Dict[str, int]]:
+        """Find the best candidate's four-dim subscores from the evaluations list."""
+        for ev in judgement.evaluations:
+            if ev.candidate_id == judgement.best_candidate_id:
+                return {
+                    "requirement_alignment": ev.scores.requirement_alignment,
+                    "info_hierarchy": ev.scores.info_hierarchy,
+                    "layout_balance": ev.scores.layout_balance,
+                    "visual_coherence": ev.scores.visual_coherence,
+                }
+        return None

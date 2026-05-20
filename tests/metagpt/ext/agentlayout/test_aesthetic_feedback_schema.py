@@ -234,26 +234,41 @@ def _ev(cid: str, total: int) -> Evaluation:
     )
 
 
-def test_accept_must_have_null_feedback():
-    """The model_validator on AestheticJudgement must still fire after schema upgrade."""
+def test_accept_with_feedback_is_required_refinement_loop():
+    """Refinement Loop (2026-05-20): ACCEPT must now carry feedback too
+    (polish-step suggestions for the mandatory next refinement round)."""
+    j = AestheticJudgement(
+        decision=JudgeDecision.ACCEPT,
+        best_candidate_id="cand_01",
+        evaluations=[_ev("cand_01", 88)],
+        feedback=AestheticFeedback(
+            common_issues="overall good, minor polish only",
+            suggestions=["bump price_1 +15%"],
+            structured_suggestions=[
+                Suggestion(
+                    kind=SuggestionKind.RESIZE,
+                    target_id="price_1",
+                    metric="width",
+                    op="increase_by",
+                    value=24,
+                )
+            ],
+        ),
+    )
+    assert j.decision == JudgeDecision.ACCEPT
+    assert j.feedback is not None
+    assert j.feedback.structured_suggestions[0].kind == SuggestionKind.RESIZE
+
+
+def test_accept_without_feedback_is_now_invalid():
+    """Refinement Loop (2026-05-20): feedback is required on both accept and
+    reject; an accept with feedback=None must fail validation."""
     with pytest.raises(ValidationError):
         AestheticJudgement(
             decision=JudgeDecision.ACCEPT,
             best_candidate_id="cand_01",
             evaluations=[_ev("cand_01", 88)],
-            feedback=AestheticFeedback(
-                common_issues="x",
-                suggestions=[],
-                structured_suggestions=[
-                    Suggestion(
-                        kind=SuggestionKind.RESIZE,
-                        target_id="x",
-                        metric="width",
-                        op=">=",
-                        value=100,
-                    )
-                ],
-            ),
+            feedback=None,
         )
 
 
@@ -319,12 +334,28 @@ def test_accept_threshold_strictly_above_gt_baseline():
 
 def test_accept_judgement_at_exactly_threshold_validates():
     """A candidate scoring exactly ACCEPT_THRESHOLD must be acceptable
-    (the comparison in the prompt is `>=`)."""
+    (the comparison in the prompt is `>=`).
+
+    Refinement Loop (2026-05-20): the polish-step `feedback` payload must
+    accompany every accept; we pass a minimal one to exercise the new contract.
+    """
     j = AestheticJudgement(
         decision=JudgeDecision.ACCEPT,
         best_candidate_id="cand_01",
         evaluations=[_ev("cand_01", ACCEPT_THRESHOLD)],
-        feedback=None,
+        feedback=AestheticFeedback(
+            common_issues="threshold polish",
+            suggestions=["minor +5% width on cand_01"],
+            structured_suggestions=[
+                Suggestion(
+                    kind=SuggestionKind.RESIZE,
+                    target_id="cand_01",
+                    metric="width",
+                    op="increase_by",
+                    value=8,
+                )
+            ],
+        ),
     )
     assert j.decision == JudgeDecision.ACCEPT
     assert j.evaluations[0].total == ACCEPT_THRESHOLD

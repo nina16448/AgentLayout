@@ -31,7 +31,7 @@ LLM does not collapse onto one of the two output shapes by mimicry.
 from __future__ import annotations
 
 import json
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from pydantic import ValidationError
 
@@ -91,7 +91,31 @@ FORMAT_EXAMPLE_ACCEPT = """{
       "weaknesses": "price_1 is slightly small and could be more legible."
     }
   ],
-  "feedback": null
+  "feedback": {
+    "common_issues": "Overall accepted, but price_1 readability is still slightly weak.",
+    "suggestions": [
+      "Slightly increase price_1 size by about 15% to strengthen legibility.",
+      "Keep all other elements within +/-5% drift to preserve the accepted composition."
+    ],
+    "structured_suggestions": [
+      {
+        "kind": "resize",
+        "target_id": "price_1",
+        "metric": "width",
+        "op": "increase_by",
+        "value": 24,
+        "rationale": "Small bump improves legibility without breaking the accepted balance."
+      },
+      {
+        "kind": "resize",
+        "target_id": "price_1",
+        "metric": "height",
+        "op": "increase_by",
+        "value": 8,
+        "rationale": "Pair the width bump with proportional height to preserve aspect."
+      }
+    ]
+  }
 }"""
 
 
@@ -174,11 +198,20 @@ C. layout_balance (0-25)
 D. visual_coherence (0-25)
    Do the style, spacing, and colors align with style_keywords and dominant_palette?
 
-# Structured suggestions (REQUIRED on reject)
-When the best candidate scores below 80 you must emit a `feedback` object that
-contains BOTH `suggestions` (free text, human-readable) AND
-`structured_suggestions` (machine-readable, verifiable). The downstream Layout
-Generator will only act on `structured_suggestions`; vague free text gets ignored.
+# Structured suggestions (REQUIRED on BOTH accept and reject)
+You MUST always emit a non-null `feedback` object containing
+`common_issues`, `suggestions` (free text), AND `structured_suggestions`
+(machine-readable, verifiable). The downstream Layout Generator will only act
+on `structured_suggestions`; vague free text gets ignored.
+
+The semantics differ by decision:
+  - decision="reject": list concrete fixes for the failing dimensions
+    (>= 1 structured suggestion, 2-5 recommended).
+  - decision="accept": list SMALL-STEP polish suggestions for the mandatory
+    refinement round that follows acceptance. These should be conservative
+    nudges (e.g. "+15% on one element's width") that preserve the accepted
+    composition; do NOT propose composition-level changes on accept.
+    Emit at least 1 structured suggestion; <= 2 is typical.
 
 Each structured suggestion is a JSON object with these fields:
 
@@ -219,18 +252,22 @@ Color example:    {{"kind":"color","target_id":"bg_1","metric":"color","op":"set
 
 # Format examples (output one JSON matching whichever case applies)
 
-Case A -- best score >= 75, accept:
+Case A -- best score >= 75, accept (feedback contains polish-step suggestions):
 {format_example_accept}
 
-Case B -- best score < 75, reject with feedback:
+Case B -- best score < 75, reject with corrective feedback:
 {format_example_reject}
 
 # Instruction
 ATTENTION: Evaluate ALL candidates listed above. Do not skip any.
 ATTENTION: strengths and weaknesses must reference specific element IDs.
-ATTENTION: If decision is "reject", feedback.structured_suggestions MUST contain
-           at least one entry and SHOULD contain 2 to 5 entries. Each entry must
-           reference an element id that exists in the Layout Tree.
+ATTENTION: feedback MUST always be present (never null) on BOTH accept and reject.
+           Reject: structured_suggestions lists corrective fixes (>= 1 entry,
+                   2-5 recommended) targeting failing dimensions.
+           Accept: structured_suggestions lists conservative polish nudges
+                   (>= 1 entry, <= 2 typical) that the mandatory next refinement
+                   round will apply on top of the accepted layout. Do NOT
+                   propose composition-level changes on accept.
 ATTENTION: For numeric kinds (resize / move / spacing / typography / zorder),
            the `value` field must be a number, NOT a string like "bigger".
 ATTENTION: `metric` MUST be from the per-kind whitelist above. NEVER emit
@@ -250,7 +287,6 @@ ATTENTION: Hard-constraint `size_preference` with hint "prominent" is enforced
                {{"kind":"resize","target_id":"title_1","metric":"height","op":">=","value":180}}
            600 * 180 = 108000 >= 96000, so QC will pass.
 ATTENTION: Prefer kind != "other"; aim for at most one "other" per response.
-ATTENTION: If decision is "accept", feedback must be null.
 ATTENTION: best_candidate_id must be the candidate with the highest total score.
 ATTENTION: Each evaluation's "total" must equal the sum of its four scores.
 Output a single JSON object, nothing else.
@@ -310,6 +346,7 @@ class JudgeAesthetic(Action):
             try:
                 judgement = self._parse_response(rsp)
                 self._validate_against_input(judgement, candidates)
+                self._attach_best_candidate_layout(judgement, candidates)
                 return judgement
             except (ValueError, ValidationError) as err:
                 last_err = err
@@ -321,6 +358,34 @@ class JudgeAesthetic(Action):
             f"JudgeAesthetic: could not produce a valid AestheticJudgement after "
             f"{MAX_RETRIES} attempts. Last error: {last_err}"
         )
+
+    @staticmethod
+    def _attach_best_candidate_layout(
+        judgement: AestheticJudgement,
+        candidates: List[Candidate],
+    ) -> None:
+        """Populate ``judgement.best_candidate_layout`` from input candidates.
+
+        Refinement Loop (2026-05-20): the downstream LayoutGenerator needs the
+        winning candidate's bbox dict to anchor the next refinement round.
+        We look it up here (verdict only carries best_candidate_id; the bbox
+        lives in the Candidate object that was the JudgeAesthetic input).
+        """
+        best = next(
+            (c for c in candidates if c.candidate_id == judgement.best_candidate_id),
+            None,
+        )
+        if best is None:  # _validate_against_input already raised if missing
+            return
+        bbox_dict: Dict[str, Tuple[float, float, float, float]] = {}
+        for el in best.elements:
+            bbox_dict[el.id] = (
+                float(el.left),
+                float(el.top),
+                float(el.width),
+                float(el.height),
+            )
+        judgement.best_candidate_layout = bbox_dict
 
     def _build_prompt(
         self,

@@ -14,14 +14,16 @@ Layout Generator 是整個 pipeline 最核心的 LLM Agent。它的工作是根�
 
 Layout Generator 有三種被呼叫的情況：
 
-### 情況一：第一次執行
-Pipeline 正常啟動，第一次生成版面候選。
+### 情況一：第一次執行（cold-start generation）
+Pipeline 正常啟動，第一次生成版面候選。此時 `prev_best_layout` 為空，Layout Generator 從零產出 5 個 distinctly different 候選。
 
 ### 情況二：Quality Checker 否決後補足
-Quality Checker 驗證後合格候選數量不足 K_valid，動態補足至達到目標數量。
+Quality Checker 驗證後合格候選數量不足 K_valid，動態補足至達到目標數量。同情況一的 prompt（不帶 prev_best_layout），不需把失敗的 candidate 傳回去。
 
-### 情況三：Aesthetic Judge 回饋後重新執行
-Aesthetic Judge 評審後覺得所有候選都不夠好，把改善建議傳回來，Layout Generator 根據建議重新生成。
+### 情況三：Refinement Loop（mandatory，每次 Judge 評分後一定觸發）
+Aesthetic Judge 評審完後（**無論 accept 或 reject 都會走這條路**），系統把上一輪的最佳 candidate 之 bbox + Judge 子分數 + feedback 一併傳回 Layout Generator，Layout Generator 對 `prev_best_layout` 做 **targeted refinement**（不是 from-scratch 重生），只動 feedback 點到的元素，其他元素保留在 ±10% 微調範圍內。
+
+> Refinement Loop 是 SEGA (ICCV 2025) coarse-to-fine 範式的本系統實作：Round 0 是 coarse（無 critique 的盲跑），Round 1+ 是 fine（看 critique 的 anchored search）。Refinement Loop 比舊 reject-only loop 的優點：(a) 每樣本至少跑一次 refinement，避免 cold-start 第一輪 layout 直接被當最終答案；(b) Generator 看得到上一輪 bbox，可以對 Judge feedback 做 element-targeted 編輯，而不是憑 brief 重猜。
 
 ---
 
@@ -47,6 +49,9 @@ Quality Checker 逐一驗證
 ### 補足時的 prompt
 Quality Checker 否決只是 LLM 的隨機失誤（hard_constraints 在 prompt 裡本來就已經說清楚了），補足時直接用同樣的 prompt 重新呼叫即可，不需要把失敗的版面傳回去。
 
+### Refinement 時的 prompt
+當 `prev_best_layout` 非空（情況三）時，PROMPT_TEMPLATE 會啟用 conditional 的 `# Previous Attempt` 區塊（見下方），讓 LLM 看到上一輪 bbox + 子分數 + feedback，並改以 **targeted edit** 的視角產出 5 個 refined candidates（仍滿足 5 candidate distinctness 要求，但都以 prev_best_layout 為錨點）。
+
 ---
 
 ## 輸入
@@ -58,7 +63,9 @@ Quality Checker 否決只是 LLM 的隨機失誤（hard_constraints 在 prompt �
 | safe_zones | 背景的可放置區域（bbox 清單） | Background Analyzer |
 | dominant_palette | 背景主色清單 | Background Analyzer |
 | recommended_text_color | 建議的文字顏色（依背景明暗度決定），Layout Generator 可覆蓋 | Background Analyzer |
-| feedback | Aesthetic Judge 的改善建議（第一次執行時為空） | Aesthetic Judge |
+| feedback | Aesthetic Judge 的改善建議（第一次執行時為空；ACCEPT/REJECT 兩情況皆有） | Aesthetic Judge |
+| prev_best_layout | 上一輪 Judge 選中的 best candidate bbox 字典 `{element_id: [left, top, width, height]}`（第一次執行為空，第二輪起非空） | Aesthetic Judge → Iteration Router |
+| prev_best_subscores | 上一輪 best candidate 的四維子分數 `{requirement_alignment, info_hierarchy, layout_balance, visual_coherence}`（0–25 各維度） | Aesthetic Judge |
 
 ---
 
@@ -121,6 +128,19 @@ Dominant palette: {dominant_palette}
 Recommended text color (default, override if needed): {recommended_text_color}
 Feedback from previous round (if any): {feedback}
 
+# Previous Attempt (only present when refinement loop is active)
+Previous best candidate bbox dict:
+{prev_best_layout}
+Previous best subscores (0–25 each, total /100):
+  requirement_alignment={req}  info_hierarchy={hier}
+  layout_balance={bal}         visual_coherence={coh}
+You are refining the previous attempt, NOT generating from scratch.
+- Edit ONLY the elements that the feedback explicitly criticizes.
+- Keep every other element's (left, top, width, height) within ±10% of its previous value.
+- The 5 candidates should explore distinct refinement directions
+  (e.g. adjust sizing / spacing / alignment / hierarchy), but all must remain
+  anchored to the previous layout — do not relocate elements to entirely new regions.
+
 # Layout Tree
 {layout_tree}
 
@@ -147,6 +167,10 @@ ATTENTION: Each candidate must take a distinctly different compositional approac
            Do not repeat similar layouts across candidates.
 ATTENTION: If feedback is provided, adjust your layouts according to the
            specific suggestions. Do not ignore the feedback.
+ATTENTION: If a "# Previous Attempt" block is present, you are in refinement mode.
+           All 5 candidates must be ANCHORED to the previous best layout
+           (±10% per-element drift unless the feedback explicitly demands
+           a larger change for that element id). Reuse element ids verbatim.
 Output carefully referenced "format example" in JSON format, nothing else.
 ```
 
@@ -163,7 +187,15 @@ Output carefully referenced "format example" in JSON format, nothing else.
 - `{safe_zones}`：背景哪些區域可以放元素
 - `{dominant_palette}`：背景主色，供 LLM 參考配色
 - `{recommended_text_color}`：Background Analyzer 根據背景明暗度建議的文字顏色，Layout Generator 可在特殊情況下自行覆蓋
-- `{feedback}`：Aesthetic Judge 上一輪的改善建議，第一次執行時為空
+- `{feedback}`：Aesthetic Judge 上一輪的改善建議，第一次執行時為空（ACCEPT 也會帶 feedback 進來，讓 refinement 對「已通過」的版面再做小幅優化）
+
+**`# Previous Attempt`（refinement loop 專用，conditional block）**
+只在情況三（Refinement Loop）出現。把上一輪 Judge 選中的 best candidate 的 bbox 字典 + 四維子分數塞進來，並用三句 instruction 鎖定 Generator 的行為：
+- **targeted edit**：只動 feedback 點到的元素，其他元素 ±10% 內微調，避免「整個 layout 重洗」造成 step 6 那種 72→70→69 漂移。
+- **anchored search**：5 個 candidate 不能跳到完全不同的版面區域，必須以 prev_best_layout 為錨點探索不同 refinement 方向（調大小 / 間距 / 對齊 / 層級）。
+- **stable ids**：強制沿用 spec.elements 既有 id，確保 Judge feedback 中提及的 element_id 在下一輪仍能找到對應 bbox（不能改 id 命名）。
+
+> 設計考量：此 block 故意放在 `# Context` 之後、`# Layout Tree` 之前，讓 LLM 先看到「設計目標 + 既有 bbox」再看語意層級樹——避免 layout tree 規則被當作「砍掉重練」的指令。token 預算上整個 block ≤ 20 元素 × 約 30 tokens = 600 tokens，遠低於 step 8 失敗時加的 14 行 ATTENTION 的 attention budget 衝擊。
 
 **`# Layout Tree`**
 Asset Planner 產出的語意層級樹。兩句話說明樹的意義：
@@ -184,6 +216,7 @@ Asset Planner 產出的語意層級樹。兩句話說明樹的意義：
 - 嚴守 hard_constraints
 - 5 個候選必須走不同的設計方向，不能重複相似的排版
 - 如果有 feedback，必須根據建議調整，不能忽略
+- **如果 `# Previous Attempt` block 存在（refinement 模式），所有 5 個 candidate 都必須錨定在 prev_best_layout（每元素 ±10% drift），feedback 明確要求大改的元素例外；element id 必須沿用，不可改名**
 
 **最後一行**
 直接輸出 JSON，不加任何說明文字，確保程式可以解析。

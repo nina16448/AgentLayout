@@ -29,7 +29,7 @@ The Action keeps validation 1 only; layers 2/3 belong to downstream modules.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from pydantic import ValidationError
 
@@ -119,6 +119,25 @@ Dominant palette: {dominant_palette}
 Recommended text color (default, override if needed): {recommended_text_color}
 Feedback from previous round (if any): {feedback}
 
+# Previous Attempt (only act on this block when it is NOT "None")
+{previous_attempt}
+
+When this block is non-empty you are in REFINEMENT MODE, not cold-start mode.
+Behaviour required in refinement mode:
+  - Anchor every candidate to the previous best layout. Each element's
+    (left, top, width, height) must stay within +/-10% of its previous value
+    unless a structured_suggestion in `feedback` explicitly demands a larger
+    change for that element id.
+  - Reuse element ids verbatim from `prev_best_layout` (which equals the spec
+    element ids). Do NOT rename or invent ids.
+  - The 5 candidates may still explore distinct refinement directions
+    (different elements emphasised, different drift orientations), but ALL
+    candidates must remain in the neighbourhood of prev_best_layout. Do not
+    treat refinement mode as an excuse to relocate elements to entirely new
+    regions.
+  - Use prev_best_subscores to prioritise which dimension to push:
+    the lowest-scoring sub-dimension is the one your edits should improve.
+
 # How to read `feedback` (only when it is not "None")
 The feedback object has two parts:
   - `suggestions`: free-text human notes; use them for *context* only.
@@ -198,6 +217,12 @@ ATTENTION: If feedback is provided, satisfy every structured_suggestion in at
            supplementary context. Do not ignore the structured list, but also
            do not over-apply: a ">=" constraint is a LOWER bound, not a target
            you must exceed by 2x.
+ATTENTION: If the "# Previous Attempt" block is non-empty (refinement mode),
+           every element's (left, top, width, height) must stay within +/-10%
+           of its previous value unless a structured_suggestion explicitly
+           demands a larger change for that element id. Element ids must be
+           reused verbatim. The 5 candidates must remain anchored to
+           prev_best_layout; do NOT relocate elements to entirely new regions.
 Output carefully referenced "format example" in JSON format, nothing else.
 """
 
@@ -227,15 +252,24 @@ class GenerateLayout(Action):
         tree: LayoutTree,
         bg: BackgroundAnalysis,
         feedback: Optional[AestheticFeedback] = None,
+        prev_best_layout: Optional[Dict[str, Tuple[float, float, float, float]]] = None,
+        prev_best_subscores: Optional[Dict[str, int]] = None,
     ) -> CandidatesBatch:
         """Build prompt, call LLM, parse and validate.
 
         Pre-condition: ``spec`` must be enriched (Asset Analyzer ran).
         Returns one batch of *raw* candidates -- the K_valid = 5 top-up loop
         is the pipeline driver's responsibility, not this Action's.
+
+        Refinement Loop (2026-05-20): when ``prev_best_layout`` is non-empty
+        the prompt activates the ``# Previous Attempt`` block, switching the
+        Generator from cold-start to anchored refinement mode (+/-10% drift
+        per element unless a structured_suggestion demands a larger edit).
         """
         spec.assert_enriched()
-        prompt = self._build_prompt(spec, tree, bg, feedback)
+        prompt = self._build_prompt(
+            spec, tree, bg, feedback, prev_best_layout, prev_best_subscores
+        )
 
         last_err: Optional[Exception] = None
         for attempt in range(1, MAX_RETRIES + 1):
@@ -259,8 +293,15 @@ class GenerateLayout(Action):
         tree: LayoutTree,
         bg: BackgroundAnalysis,
         feedback: Optional[AestheticFeedback],
+        prev_best_layout: Optional[Dict[str, Tuple[float, float, float, float]]] = None,
+        prev_best_subscores: Optional[Dict[str, int]] = None,
     ) -> str:
-        """Render PROMPT_TEMPLATE with all 7 substitutions."""
+        """Render PROMPT_TEMPLATE with all 8 substitutions.
+
+        ``previous_attempt`` is the new Refinement Loop block. It is "None"
+        on cold-start (Round 0) and a compact JSON-ish description in
+        refinement mode (Round 1+).
+        """
         spec_str = json.dumps(spec.model_dump(), indent=2, ensure_ascii=False)
         # Wrap tree as {"layout_tree": ...} so the LLM sees the same shape it
         # produced as Asset Planner output.
@@ -275,14 +316,53 @@ class GenerateLayout(Action):
             if feedback is None
             else json.dumps(feedback.model_dump(), indent=2, ensure_ascii=False)
         )
+        previous_attempt_str = self._format_previous_attempt(
+            prev_best_layout, prev_best_subscores
+        )
         return PROMPT_TEMPLATE.format(
             design_spec=spec_str,
             safe_zones=safe_zones_str,
             dominant_palette=palette_str,
             recommended_text_color=bg.recommended_text_color,
             feedback=feedback_str,
+            previous_attempt=previous_attempt_str,
             layout_tree=tree_str,
             format_example=FORMAT_EXAMPLE_JSON,
+        )
+
+    @staticmethod
+    def _format_previous_attempt(
+        prev_best_layout: Optional[Dict[str, Tuple[float, float, float, float]]],
+        prev_best_subscores: Optional[Dict[str, int]],
+    ) -> str:
+        """Render the `# Previous Attempt` block content.
+
+        Returns "None" on cold-start (no prev layout) so the conditional
+        instruction reading "only act on this block when it is NOT None" naturally
+        suppresses refinement mode. In refinement mode emits a compact dict per
+        element plus the four subscores.
+        """
+        if not prev_best_layout:
+            return "None"
+        bbox_lines = []
+        for elem_id, bbox in prev_best_layout.items():
+            left, top, width, height = bbox
+            bbox_lines.append(
+                f'  "{elem_id}": [{int(round(left))}, {int(round(top))}, '
+                f'{int(round(width))}, {int(round(height))}]'
+            )
+        bbox_block = "{\n" + ",\n".join(bbox_lines) + "\n}"
+        subscores = prev_best_subscores or {}
+        scores_line = (
+            f"requirement_alignment={subscores.get('requirement_alignment', '?')}  "
+            f"info_hierarchy={subscores.get('info_hierarchy', '?')}  "
+            f"layout_balance={subscores.get('layout_balance', '?')}  "
+            f"visual_coherence={subscores.get('visual_coherence', '?')}"
+        )
+        return (
+            "prev_best_layout (element_id -> [left, top, width, height], pixels):\n"
+            f"{bbox_block}\n"
+            f"prev_best_subscores (0-25 each):\n  {scores_line}"
         )
 
     @staticmethod

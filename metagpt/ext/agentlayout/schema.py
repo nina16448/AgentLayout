@@ -17,7 +17,7 @@ standalone scripts. Sections follow the dataflow order documented in
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import re
 
@@ -529,23 +529,35 @@ class AestheticFeedback(BaseModel):
 
 
 class AestheticJudgement(BaseModel):
-    """Aesthetic Judge full output, consumed by the pipeline driver."""
+    """Aesthetic Judge full output, consumed by the pipeline driver.
+
+    Refinement Loop (2026-05-20): feedback is now REQUIRED on both accept and
+    reject paths. On accept the suggestions are small-step polish ideas
+    consumed by the mandatory one-more refinement round. The
+    ``best_candidate_layout`` carries the winning candidate's bbox dict so the
+    next refinement round can anchor its edits without re-deriving from id.
+    """
 
     decision: JudgeDecision
     best_candidate_id: str
     evaluations: List[Evaluation]
-    feedback: Optional[AestheticFeedback] = Field(
-        default=None,
-        description="Required when decision=reject; must be null when decision=accept.",
+    feedback: AestheticFeedback = Field(
+        ...,
+        description=(
+            "Required on BOTH accept and reject. On reject it lists concrete "
+            "fixes for failing dimensions; on accept it lists small-step polish "
+            "suggestions for the next mandatory refinement round."
+        ),
     )
-
-    @model_validator(mode="after")
-    def _feedback_matches_decision(self) -> "AestheticJudgement":
-        if self.decision == JudgeDecision.ACCEPT and self.feedback is not None:
-            raise ValueError("feedback must be null when decision='accept'.")
-        if self.decision == JudgeDecision.REJECT and self.feedback is None:
-            raise ValueError("feedback must be provided when decision='reject'.")
-        return self
+    best_candidate_layout: Optional[Dict[str, Tuple[float, float, float, float]]] = Field(
+        default=None,
+        description=(
+            "bbox dict {element_id: (left, top, width, height)} of the chosen "
+            "best candidate. Populated by JudgeAesthetic.run() after parsing the "
+            "verdict by looking up the input Candidates. None for legacy JSON "
+            "that pre-dates the Refinement Loop architecture."
+        ),
+    )
 
 
 # ============================================================
@@ -588,16 +600,43 @@ class IterationState(BaseModel):
     iteration: int = Field(
         default=0,
         ge=0,
-        description="Number of Aesthetic Judge rejects accumulated so far.",
+        description=(
+            "Number of completed Aesthetic Judge rounds (any verdict). "
+            "Refinement Loop (2026-05-20): incremented on BOTH accept and reject "
+            "because every verdict triggers a mandatory next refinement pass."
+        ),
+    )
+    consecutive_accepts: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Refinement Loop termination counter. Incremented on each consecutive "
+            "ACCEPT verdict, reset to 0 on REJECT. Pipeline stops when this hits 2 "
+            "(coarse accept + post-refinement accept => the refinement actually held)."
+        ),
+    )
+    reject_count: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Cumulative REJECT verdicts (independent of accept-driven refinement "
+            "iterations). Drives next_target() routing: first GENERATOR_FEEDBACK_ROUNDS "
+            "rejects go to LAYOUT_GENERATOR, subsequent rejects escalate to ANALYST. "
+            "Refinement passes triggered by ACCEPT do NOT consume this budget."
+        ),
     )
     feedback_target: Optional[FeedbackTarget] = None
     last_feedback: Optional[AestheticFeedback] = None
 
     def next_target(self) -> FeedbackTarget:
-        """Decide which agent receives feedback after the most recent reject.
+        """Decide which agent receives feedback after the most recent verdict.
 
-        Caller must increment ``iteration`` before calling.
+        Refinement Loop (2026-05-20): accept verdicts route to LAYOUT_GENERATOR
+        unconditionally (mandatory one-more refinement). Reject verdicts route to
+        LAYOUT_GENERATOR for the first GENERATOR_FEEDBACK_ROUNDS rejects, then
+        ANALYST. Caller must increment ``reject_count`` on each REJECT before
+        calling.
         """
-        if self.iteration <= GENERATOR_FEEDBACK_ROUNDS:
+        if self.reject_count <= GENERATOR_FEEDBACK_ROUNDS:
             return FeedbackTarget.LAYOUT_GENERATOR
         return FeedbackTarget.ANALYST

@@ -45,7 +45,11 @@ from metagpt.ext.agentlayout.schema import (
 
 
 def _judgement(decision: JudgeDecision, cand_id: str = "r0_cand_01") -> AestheticJudgement:
-    """Schema invariant: total == sum(scores). REJECT 4x17=68, ACCEPT 4x20=80."""
+    """Schema invariant: total == sum(scores). REJECT 4x17=68, ACCEPT 4x20=80.
+
+    Refinement Loop (2026-05-20): ACCEPT must also carry feedback (polish-step
+    suggestions consumed by the mandatory next refinement round).
+    """
     if decision == JudgeDecision.ACCEPT:
         scores = JudgeScores(
             requirement_alignment=20,
@@ -54,7 +58,10 @@ def _judgement(decision: JudgeDecision, cand_id: str = "r0_cand_01") -> Aestheti
             visual_coherence=20,
         )
         total = 80
-        feedback = None
+        feedback = AestheticFeedback(
+            common_issues="overall good; minor polish",
+            suggestions=["nudge headline_1 +5% width"],
+        )
     else:
         scores = JudgeScores(
             requirement_alignment=17,
@@ -153,34 +160,60 @@ async def test_duplicate_judgement_increments_counter_twice():
 
 
 # ============================================================
-# Corner case 3 — ACCEPT does not increment counter
+# Corner case 3 — Refinement Loop: ACCEPT triggers a mandatory refinement
 # ============================================================
 
 
 @pytest.mark.asyncio
-async def test_accept_does_not_increment_counter():
-    """REJECT, ACCEPT, REJECT, ACCEPT -> iteration snapshot [0,1,1,2,2]."""
-    role = IterationStateRole(max_total_rounds=5)
+async def test_accept_routes_to_refinement_until_two_consecutive():
+    """Refinement Loop (2026-05-20): every verdict increments iteration and
+    routes back to LayoutGenerator until either consecutive_accepts >= 2 or
+    iteration > max_total_rounds.
+
+    Scenario: REJECT, ACCEPT, REJECT, ACCEPT, ACCEPT -> iteration [0..5];
+    chain ends with IterationStop only after the second consecutive accept.
+    """
+    role = IterationStateRole(max_total_rounds=10)
     snapshots = [role.state.iteration]
+    consecutive_snaps = [role.state.consecutive_accepts]
     chain: list = []
 
     for decision in (
-        JudgeDecision.REJECT,
-        JudgeDecision.ACCEPT,
-        JudgeDecision.REJECT,
-        JudgeDecision.ACCEPT,
+        JudgeDecision.REJECT,   # iter 1, ca 0 -> RetryGeneration
+        JudgeDecision.ACCEPT,   # iter 2, ca 1 -> RetryGeneration (refinement)
+        JudgeDecision.REJECT,   # iter 3, ca 0 -> RetryGeneration
+        JudgeDecision.ACCEPT,   # iter 4, ca 1 -> RetryGeneration (refinement)
+        JudgeDecision.ACCEPT,   # iter 5, ca 2 -> IterationStop (converged)
     ):
         msg = await _feed(role, _judgement(decision))
         chain.append(_cause(msg))
         snapshots.append(role.state.iteration)
+        consecutive_snaps.append(role.state.consecutive_accepts)
 
-    assert snapshots == [0, 1, 1, 2, 2], f"got {snapshots}"
+    assert snapshots == [0, 1, 2, 3, 4, 5], f"got {snapshots}"
+    assert consecutive_snaps == [0, 0, 1, 0, 1, 2], f"got {consecutive_snaps}"
     assert chain == [
         "RetryGeneration",
-        "IterationStop",
+        "RetryGeneration",
+        "RetryGeneration",
         "RetryGeneration",
         "IterationStop",
     ], f"got {chain}"
+
+
+@pytest.mark.asyncio
+async def test_two_consecutive_accepts_terminate_immediately():
+    """Refinement Loop convergence: 2 accepts in a row -> IterationStop on
+    the second verdict (mandatory polish round confirmed the layout)."""
+    role = IterationStateRole(max_total_rounds=5)
+
+    out1 = await _feed(role, _judgement(JudgeDecision.ACCEPT))
+    out2 = await _feed(role, _judgement(JudgeDecision.ACCEPT))
+
+    assert out1.cause_by == any_to_str(RetryGeneration), f"got {_cause(out1)}"
+    assert out2.cause_by == any_to_str(IterationStop), f"got {_cause(out2)}"
+    assert role.state.iteration == 2
+    assert role.state.consecutive_accepts == 2
 
 
 # ============================================================
@@ -190,7 +223,12 @@ async def test_accept_does_not_increment_counter():
 
 @pytest.mark.asyncio
 async def test_mvp_3rejects_then_accept_routes_correctly():
-    """3 rejects (Gen, Gen, Analyst per GENERATOR_FEEDBACK_ROUNDS=2) then ACCEPT."""
+    """3 rejects (Gen, Gen, Analyst per GENERATOR_FEEDBACK_ROUNDS=2) then ACCEPT.
+
+    Refinement Loop (2026-05-20): the ACCEPT no longer terminates the loop —
+    it instead emits a RetryGeneration carrying prev_best_layout so the
+    Generator runs a mandatory polish pass.
+    """
     role = IterationStateRole(max_total_rounds=5)
 
     out1 = await _feed(role, _judgement(JudgeDecision.REJECT))
@@ -201,12 +239,12 @@ async def test_mvp_3rejects_then_accept_routes_correctly():
     assert out1.cause_by == any_to_str(RetryGeneration)
     assert out2.cause_by == any_to_str(RetryGeneration)
     assert out3.cause_by == any_to_str(RetryAnalyst), f"got {_cause(out3)}"
-    assert out4.cause_by not in (
-        any_to_str(RetryGeneration),
-        any_to_str(RetryAnalyst),
-    ), f"got {_cause(out4)}"
+    # New Refinement Loop: accept routes to Generator (not IterationStop) for
+    # the mandatory polish round.
+    assert out4.cause_by == any_to_str(RetryGeneration), f"got {_cause(out4)}"
     assert all(
-        isinstance(m.instruct_content, RetryPayload) for m in (out1, out2, out3)
+        isinstance(m.instruct_content, RetryPayload)
+        for m in (out1, out2, out3, out4)
     )
-    assert out4.instruct_content is None
-    assert role.state.iteration == 3
+    assert role.state.iteration == 4
+    assert role.state.consecutive_accepts == 1

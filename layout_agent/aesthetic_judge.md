@@ -41,7 +41,7 @@ Aesthetic Judge 是整個 pipeline 的最後一個 LLM Agent。它的工作是�
 
 ## 輸出
 
-### 情況一：最高分 ≥ 80（達標）
+### 情況一：最高分 ≥ 80（達標，但仍輸出 refinement feedback）
 
 ```json
 {
@@ -73,9 +73,16 @@ Aesthetic Judge 是整個 pipeline 的最後一個 LLM Agent。它的工作是�
       "weaknesses": "價格標籤稍微偏小，辨識度略低。"
     }
   ],
-  "feedback": null
+  "feedback": {
+    "common_issues": "整體達標，但 price_1 視覺辨識度仍略低，可再強化。",
+    "suggestions": [
+      "微幅放大 price_1（約 +15% 寬高），維持其他元素 ±5% 內不動"
+    ]
+  }
 }
 ```
+
+> 注意：採用 Refinement Loop 架構後，ACCEPT 時 feedback **不再是 null**，而是輸出「small-step polish 建議」供下一輪 refinement 使用。Iteration Router 看到 ACCEPT 也會強制再跑一次 Layout Generator（帶 prev_best_layout + 這份 feedback），refinement 後再評一次，若仍 accept 或達到 max_total_rounds 才終止。
 
 ### 情況二：最高分 < 80（不達標）
 
@@ -110,19 +117,27 @@ Aesthetic Judge 是整個 pipeline 的最後一個 LLM Agent。它的工作是�
 
 ---
 
-## 系統層面的回饋路由
+## 系統層面的回饋路由（Refinement Loop 架構）
 
-Aesthetic Judge 輸出通用的改進建議，不指定給誰。系統根據輪數決定：
+Aesthetic Judge 輸出通用的改進建議，不指定給誰。系統根據 `decision` + 輪數決定：
 
 ```
-Aesthetic Judge 輸出 decision: "reject"
+Aesthetic Judge 輸出 verdict（accept 或 reject）
     ↓
-第 1、2 輪 → 將 feedback 傳給 Layout Generator 重新生成
+無論 decision 為何，都強制把 best_candidate 的 bbox 字典 + 子分數 + feedback
+打包成 RetryPayload 送回 Layout Generator（Refinement Loop）
     ↓
-第 3 輪以上仍不達標 → 將 feedback 傳給 Analyst 重新規劃 Design Spec
+第 1、2 輪 → Layout Generator 做 targeted refinement，再進 Judge
+第 3 輪以上仍 reject → 改送 Analyst 重新規劃 Design Spec
+    ↓
+終止條件（任一觸發即停）：
+  (a) Judge 連續兩輪 accept（accept → refine → 仍 accept）
+  (b) iteration > max_total_rounds（預設 5）
 ```
 
-> Aesthetic Judge 的建議對兩個 Agent 都有參考價值——Layout Generator 可以調整座標，Analyst 可以反思 importance、constraints 或 style_keywords 是否設定有誤。
+> Aesthetic Judge 的建議對兩個 Agent 都有參考價值——Layout Generator 可以根據 prev_best_layout 做 targeted edit，Analyst 可以反思 importance、constraints 或 style_keywords 是否設定有誤。
+
+> 為甚麼 ACCEPT 也要再 refine 一次：cold-start 第一輪 LayoutGenerator 沒看過任何 Judge critique，是「盲跑」結果，即使分數 ≥ 80 仍是 unrefined output；強制一輪 refinement 讓 best candidate 至少經歷一次 critique-aware 編輯，與 SEGA (ICCV 2025) coarse-to-fine 範式對齊。終止條件 (a) 確保 refinement 真有效（兩次都 accept 才停），避免 over-polishing 把分數越改越低（step 6 教訓：72→70→69 漂移）。
 
 ---
 
@@ -161,10 +176,13 @@ D. visual_coherence (0–25)
 # Instruction
 ATTENTION: Evaluate ALL candidates. Do not skip any.
 ATTENTION: strengths and weaknesses must reference specific element IDs.
-ATTENTION: If decision is "reject", feedback.suggestions must be specific and actionable —
-           reference element IDs, mention which dimension failed,
-           and suggest concrete improvements.
-ATTENTION: If decision is "accept", feedback must be null.
+ATTENTION: feedback must always be present (NEVER null) — even when decision is "accept".
+           If decision is "reject", suggestions list concrete fixes for the failing dimensions.
+           If decision is "accept", suggestions list small-step polish ideas
+           (e.g. "+15% on price_1", "tighten spacing between headline_1 and product_img_1").
+ATTENTION: feedback.suggestions must be specific and actionable —
+           reference element IDs, mention which dimension is being polished/fixed,
+           and suggest concrete drift directions (size/position/spacing).
 ATTENTION: best_candidate_id must be the candidate with the highest total score.
 Output carefully referenced "format example" in JSON format, nothing else.
 ```
@@ -193,8 +211,9 @@ Output carefully referenced "format example" in JSON format, nothing else.
 **`# Instruction` 的 ATTENTION 行**
 - 所有候選都要評，不能跳過
 - 優點缺點必須指出具體元素 id
-- 不達標時，建議必須具體且可操作：指出元素、說明哪個維度失分、給出改善方向
-- 達標時，feedback 必須是 null
+- **feedback 在 accept / reject 兩種情況都必須有**（不可為 null）：
+  - reject：suggestions 列具體修補方向（指元素 id + 失分維度 + 改善方向）
+  - accept：suggestions 列 small-step polish 建議（如 `price_1 +15%`、`tighten spacing`）
 - best_candidate_id 必須是分數最高的那個
 
 **最後一行**

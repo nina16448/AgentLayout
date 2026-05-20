@@ -26,7 +26,7 @@ accepts a manually-constructed ``BackgroundAnalysis`` (or falls back to
 """
 from __future__ import annotations
 
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -46,6 +46,7 @@ from metagpt.ext.agentlayout.schema import (
     K_VALID,
     LayoutTree,
 )
+from metagpt.ext.agentlayout.roles.iteration_state import ACCEPT_CONSECUTIVE_STOP
 from metagpt.ext.agentlayout.tools.asset_analyzer import AssetAnalyzer
 from metagpt.ext.agentlayout.tools.background_analyzer import resolve_background
 from metagpt.ext.agentlayout.tools.quality_checker import (
@@ -194,10 +195,22 @@ class LayoutPipeline:
 
         state = IterationState()
         trace: List[TraceEntry] = []
-        gen_feedback: Optional[AestheticFeedback] = None  # latest reject feedback for the generator
+        gen_feedback: Optional[AestheticFeedback] = None  # latest feedback for the generator
+        # Refinement Loop bookkeeping: carried across rounds so the next
+        # generator call runs in anchored-edit mode.
+        gen_prev_layout: Optional[Dict[str, Tuple[float, float, float, float]]] = None
+        gen_prev_scores: Optional[Dict[str, int]] = None
+        last_accept_result: Optional[PipelineResult] = None  # set when Judge accepts
 
         for round_idx in range(self.config.max_total_rounds):
-            kept, reports = await self._generate_with_topup(spec, tree, bg_resolved, gen_feedback)
+            kept, reports = await self._generate_with_topup(
+                spec,
+                tree,
+                bg_resolved,
+                gen_feedback,
+                prev_best_layout=gen_prev_layout,
+                prev_best_subscores=gen_prev_scores,
+            )
             qc_dropped = sum(1 for r in reports if not r.passed)
 
             if len(kept) < self.config.min_candidates_to_judge:
@@ -214,23 +227,38 @@ class LayoutPipeline:
             judgement = await self.judge.run(
                 candidates=kept, spec=spec, tree=tree, bg=bg_resolved
             )
+            # Refinement Loop iteration counts every verdict, not just rejects.
+            state.iteration += 1
+            state.last_feedback = judgement.feedback
+            is_accept = judgement.decision == JudgeDecision.ACCEPT
+            if is_accept:
+                state.consecutive_accepts += 1
+            else:
+                state.consecutive_accepts = 0
+                state.reject_count += 1
 
-            if judgement.decision == JudgeDecision.ACCEPT:
-                trace.append(
-                    TraceEntry(
-                        round_idx=round_idx,
-                        decision="accept",
-                        feedback_target=None,
-                        candidate_count=len(kept),
-                        qc_filtered_count=qc_dropped,
-                    )
+            decision_label = "accept" if is_accept else "reject"
+
+            # Route the verdict. ACCEPT goes to LAYOUT_GENERATOR unconditionally
+            # (mandatory refinement). REJECT uses next_target().
+            if is_accept:
+                state.feedback_target = FeedbackTarget.LAYOUT_GENERATOR
+            else:
+                state.feedback_target = state.next_target()
+
+            trace.append(
+                TraceEntry(
+                    round_idx=round_idx,
+                    decision=decision_label,
+                    feedback_target=state.feedback_target.value,
+                    candidate_count=len(kept),
+                    qc_filtered_count=qc_dropped,
                 )
+            )
+
+            if is_accept:
                 accepted = self._find_candidate(kept, judgement.best_candidate_id)
-                logger.info(
-                    f"LayoutPipeline accepted at round {round_idx} "
-                    f"(best={judgement.best_candidate_id}, total={len(trace)} round(s))"
-                )
-                return PipelineResult(
+                last_accept_result = PipelineResult(
                     accepted_candidate=accepted,
                     judgement=judgement,
                     spec=spec,
@@ -238,31 +266,35 @@ class LayoutPipeline:
                     iteration_state=state,
                     trace=trace,
                 )
-
-            # REJECT path: increment first, then ask state for routing.
-            state.iteration += 1
-            state.last_feedback = judgement.feedback
-            state.feedback_target = state.next_target()
-
-            trace.append(
-                TraceEntry(
-                    round_idx=round_idx,
-                    decision="reject",
-                    feedback_target=state.feedback_target.value,
-                    candidate_count=len(kept),
-                    qc_filtered_count=qc_dropped,
+                # Terminate when refinement has actually held (two accepts
+                # in a row) so we do not waste rounds on a converged layout.
+                if state.consecutive_accepts >= ACCEPT_CONSECUTIVE_STOP:
+                    logger.info(
+                        f"LayoutPipeline accepted at round {round_idx} "
+                        f"(best={judgement.best_candidate_id}, "
+                        f"consecutive_accepts={state.consecutive_accepts}). "
+                        "Refinement converged."
+                    )
+                    return last_accept_result
+                logger.info(
+                    f"LayoutPipeline ACCEPT at round {round_idx} "
+                    f"(best={judgement.best_candidate_id}); running mandatory "
+                    "refinement pass."
                 )
-            )
 
             if state.feedback_target == FeedbackTarget.LAYOUT_GENERATOR:
-                # Spec + tree stay; next round's generator gets the feedback.
+                # Spec + tree stay; next round's generator gets the feedback
+                # plus the previous best layout for anchored refinement.
                 gen_feedback = judgement.feedback
+                gen_prev_layout = judgement.best_candidate_layout
+                gen_prev_scores = self._best_subscores(judgement)
                 logger.info(
-                    f"LayoutPipeline reject -> Layout Generator (iteration={state.iteration})"
+                    f"LayoutPipeline {decision_label} -> Layout Generator "
+                    f"(iteration={state.iteration}, mode=refinement)"
                 )
             else:
                 # ANALYST: regenerate spec from scratch with feedback,
-                # re-enrich, re-plan, and clear the generator-side feedback.
+                # re-enrich, re-plan, and clear ALL refinement carry-over.
                 logger.info(
                     f"LayoutPipeline reject -> Analyst (iteration={state.iteration}); "
                     "rebuilding spec + tree."
@@ -275,11 +307,36 @@ class LayoutPipeline:
                 self.asset_analyzer.run(spec)
                 tree = await self.plan.run(spec=spec)
                 gen_feedback = None
+                gen_prev_layout = None
+                gen_prev_scores = None
 
+        # Loop ended without two consecutive accepts. If at least one accept
+        # was observed, return that result (the refinement followup never
+        # converged but the initial verdict was still positive). Otherwise raise.
+        if last_accept_result is not None:
+            logger.warning(
+                f"LayoutPipeline: refinement did not converge within "
+                f"{self.config.max_total_rounds} rounds; returning the most "
+                "recent accept verdict."
+            )
+            return last_accept_result
         raise PipelineError(
             f"Max rounds ({self.config.max_total_rounds}) exhausted without accept. "
             f"Iterations recorded: {state.iteration}."
         )
+
+    @staticmethod
+    def _best_subscores(judgement: AestheticJudgement) -> Optional[Dict[str, int]]:
+        """Extract 4-dim subscores of the best candidate from the verdict."""
+        for ev in judgement.evaluations:
+            if ev.candidate_id == judgement.best_candidate_id:
+                return {
+                    "requirement_alignment": ev.scores.requirement_alignment,
+                    "info_hierarchy": ev.scores.info_hierarchy,
+                    "layout_balance": ev.scores.layout_balance,
+                    "visual_coherence": ev.scores.visual_coherence,
+                }
+        return None
 
     # --------------------------------------------------------
     # Internals
@@ -291,15 +348,29 @@ class LayoutPipeline:
         tree: LayoutTree,
         bg: BackgroundAnalysis,
         feedback: Optional[AestheticFeedback],
+        prev_best_layout: Optional[Dict[str, Tuple[float, float, float, float]]] = None,
+        prev_best_subscores: Optional[Dict[str, int]] = None,
     ) -> Tuple[List[Candidate], List[CheckResult]]:
-        """Call GenerateLayout repeatedly until we have ``k_valid`` QC-passing candidates."""
+        """Call GenerateLayout repeatedly until we have ``k_valid`` QC-passing candidates.
+
+        Refinement Loop (2026-05-20): when ``prev_best_layout`` is non-empty the
+        Action runs in anchored-edit mode (+/-10% drift per element) instead of
+        cold-start. Top-up retries within the same round reuse the same prior.
+        """
         kept: List[Candidate] = []
         pool: List[Candidate] = []  # every generated candidate, for degradation
         all_reports: List[CheckResult] = []
         seen_ids: Set[str] = set()
 
         for topup_idx in range(self.config.max_topup_rounds):
-            batch = await self.generate.run(spec=spec, tree=tree, bg=bg, feedback=feedback)
+            batch = await self.generate.run(
+                spec=spec,
+                tree=tree,
+                bg=bg,
+                feedback=feedback,
+                prev_best_layout=prev_best_layout,
+                prev_best_subscores=prev_best_subscores,
+            )
 
             # Re-prefix candidate ids so concurrent top-up batches do not collide.
             # The LLM tends to emit cand_1..cand_5 each call; without prefixing,

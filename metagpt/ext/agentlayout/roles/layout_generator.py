@@ -21,7 +21,7 @@ falls back to the solid-color stub for image-less specs.
 """
 from __future__ import annotations
 
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from metagpt.logs import logger
 from metagpt.roles import Role
@@ -93,8 +93,16 @@ class LayoutGeneratorRole(Role):
         bg: BackgroundAnalysis,
         feedback: Optional[AestheticFeedback],
         prefix_offset: int,
+        prev_best_layout: Optional[Dict[str, Tuple[float, float, float, float]]] = None,
+        prev_best_subscores: Optional[Dict[str, int]] = None,
     ) -> Tuple[List[Candidate], List[CheckResult]]:
-        """Mirror of LayoutPipeline._generate_with_topup so Role mode behaves the same."""
+        """Mirror of LayoutPipeline._generate_with_topup so Role mode behaves the same.
+
+        Refinement Loop (2026-05-20): when ``prev_best_layout`` is non-empty the
+        Action runs in anchored-edit mode (+/-10% drift per element). Top-up
+        retries reuse the same prev_best_layout so all candidates in the round
+        stay anchored to the same prior.
+        """
         kept: List[Candidate] = []
         pool: List[Candidate] = []  # every generated candidate, for degradation
         all_reports: List[CheckResult] = []
@@ -102,7 +110,14 @@ class LayoutGeneratorRole(Role):
         gen: GenerateLayout = self.actions[0]
 
         for topup_idx in range(self.max_topup_rounds):
-            batch = await gen.run(spec=spec, tree=tree, bg=bg, feedback=feedback)
+            batch = await gen.run(
+                spec=spec,
+                tree=tree,
+                bg=bg,
+                feedback=feedback,
+                prev_best_layout=prev_best_layout,
+                prev_best_subscores=prev_best_subscores,
+            )
             for cand in batch.candidates:
                 cand.candidate_id = f"r{prefix_offset + topup_idx}_{cand.candidate_id}"
 
@@ -143,6 +158,8 @@ class LayoutGeneratorRole(Role):
             latest = self.rc.history[-1]
         is_retry = latest.cause_by == any_to_str(RetryGeneration)
         feedback: Optional[AestheticFeedback] = None
+        prev_best_layout: Optional[Dict[str, Tuple[float, float, float, float]]] = None
+        prev_best_subscores: Optional[Dict[str, int]] = None
 
         if is_retry:
             payload = latest.instruct_content
@@ -152,11 +169,15 @@ class LayoutGeneratorRole(Role):
                     f"Message. Got: {type(payload).__name__ if payload else 'None'}"
                 )
             feedback = payload.feedback
+            prev_best_layout = payload.prev_best_layout
+            prev_best_subscores = payload.prev_best_subscores
             tree = self._find_by_cause(PlanAssets, LayoutTree)
             self._retry_round += 1
+            mode = "refinement" if prev_best_layout else "cold-retry"
             logger.info(
-                f"LayoutGeneratorRole: retry pass (iteration={payload.iteration}); "
-                "regenerating with Aesthetic feedback (tree from env history)."
+                f"LayoutGeneratorRole: retry pass (iteration={payload.iteration}, "
+                f"mode={mode}); regenerating with Aesthetic feedback "
+                "(tree from env history)."
             )
         else:
             tree = latest.instruct_content
@@ -177,7 +198,13 @@ class LayoutGeneratorRole(Role):
 
         prefix_offset = self._retry_round * self.max_topup_rounds
         kept, reports = await self._generate_with_topup(
-            spec, tree, bg, feedback, prefix_offset
+            spec,
+            tree,
+            bg,
+            feedback,
+            prefix_offset,
+            prev_best_layout=prev_best_layout,
+            prev_best_subscores=prev_best_subscores,
         )
         if not kept:
             # Only reachable when generation produced literally zero
