@@ -2483,4 +2483,53 @@ Phase B GPT-4V 4 軸 within-judge ratio (AL / Designer GT)：
 
 ---
 
-*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/20*
+---
+
+## 2026-05-25 — SEGA-aligned 實驗規格 + 三項校準修復
+
+**動機：** N=20 / N=100 跑出來的 SEGA 比較結果有三個 calibration drift（rembg+Sobel proxy saliency、Phase B COLE 軸映射錯、Phase B 用 4 次獨立 API call），跟 SEGA paper 的指標定義不一致。為了讓未來實驗能直接跟 SEGA 比，先寫一份 unified spec 再修 pipeline。
+
+**新增檔案：**
+
+1. **`layout_agent/experiment.md`** — SEGA-aligned 完整指標規格
+   - Phase A 6 指標（Ali / Ove / Und_l / Und_s / Occ / Rea）公式與來源（PKU PosterLayout CVPR 2023）
+   - Phase B 4 軸美學（S_DL / S_QL / S_TV / S_IO）+ COLE 原版 Quality Assurance Prompt 全文
+   - 未來所有實驗都照這份規格跑，舊結果作廢
+
+2. **`metagpt/ext/agentlayout/evaluation/saliency_basnet_isnet.py`** — BASNet + ISNet 兩階段 saliency pipeline
+   - 用 HuggingFace `creative-graphic-design/BASNet` + `rembg` 內建的 ISNet ONNX
+   - 取代之前 step20 用的 rembg alpha + Sobel gradient fallback（不是真 saliency）
+   - 修正 N=2 smoke test 通過、ISNet ONNX 自動下載快取
+
+**修改檔案：**
+
+3. **`layout_agent/output/step20_sega_eval.py:_saliency_from_bg`** — 接上 BASNet+ISNet，移除 Sobel proxy
+4. **`layout_agent/output/step21_phaseb_eval.py`** — 整支重寫：
+   - 改成 COLE 規範的 single-call JSON 評分（一次 API call 拿 4 軸，不是 4 次獨立 call）
+   - 修正 S_QL 軸名（之前對到錯誤的內部欄位）
+   - 增加 `--ids-file` flag 支援不同 N 配置
+
+**驗證：** Phase A N=2 smoke 通過、Phase B N=2 smoke 通過（COLE JSON 解析成功）。
+
+**下一步：** 拿掉 MAX_ELEMENTS 上限（見下一條），再從 Crello 全 test split 重新抽 N≈1,897 跑 final paper-grade evaluation。
+
+---
+
+## 2026-05-25 — MAX_ELEMENTS 上限拿掉（對齊 SEGA 全 Crello test split）
+
+**變更：** `layout_agent/output/run_iou_eval.py:MAX_ELEMENTS` 從 `5` 改為 `float("inf")`，連帶更新 `step13_sota_winrate.py` / `step22_sample_extra80.py` 的 docstring + print 訊息（避免印出 `inf` 怪訊息，加 `"inf" if MAX_ELEMENTS == float("inf") else str(MAX_ELEMENTS)` 格式化）。
+
+**動機：** SEGA paper 用 Crello test split 全集（~1,971）；我們之前的 5-element 上限把 qualifying pool 砍到 210。pipeline 本身（LayoutGen / Analyst / Renderer）**沒有** hardcode 元素數上限——這個 5 純粹是 sampling-time 過濾器，可以無痛拔除。
+
+**影響：**
+- 下游 importer（step22、step13）的 `2 <= ne <= MAX_ELEMENTS` 比較式對 `float("inf")` 完全合法，相容
+- 元素數下限 `2` 仍保留（避免單元素 layout 退化）
+- 仍要求 `>=1 image AND >=1 text`（pipeline 的 schema 假設）
+
+**驗證：** `conda run -n meta python -c "..."` 跑過 MAX_ELEMENTS=inf 的邊界檢查（5/20/1 三個 case 行為符合預期）。
+
+**下一步：** 重新抽樣 Crello test split 全集，量出新 qualifying pool 大小（預期接近 1,971，因為 Crello 絕大多數樣本都同時含 image+text），再啟動 N≈1,971 跑。
+
+---
+
+*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/25*
