@@ -501,6 +501,35 @@
 
 ---
 
+### Step 25 — Underlay placement headroom analysis（oracle upper bound，**非 end-to-end LLM 結果**，2026-05-27）
+
+- **動機**：Step 23 Phase A 報出 AL Und_l/Und_s = 0 vs designer GT 0.2209/0.1384，原本誤判為 "decoration synthesis is out of scope"。實際 Crello 95% 樣本提供 type 2/3/4 underlay/shape PNG + color metadata（dataset-given asset，不是要 synthesize 的新裝飾），sampling filter 把它們過濾掉、AssetSchema 又沒這個 kind → AL 從來沒機會碰到 underlay。**改造 pipeline 支援 underlay placement 估 1 工作天 + $131 重跑**——在投入前，先做 oracle headroom analysis 量化「最好情況」拿到的 Phase A 數字。
+- **方法（zero-cost oracle）**：`layout_agent/output/step25_oracle_underlay.py`
+  1. 對 N=1,895 個 Step 23 已 render 樣本，從 `step22_coldstart_crello_<id>_candidate.json` 取 AL 的 image+text bbox（不變動）
+  2. 從 `crello_<id>/meta.json` 取 designer GT 的 underlay bbox（type 2/3，full-canvas 排除）
+  3. **直接合成 hybrid layout = AL image+text + designer underlay bbox**（NO LLM call，NO re-render）
+  4. 用 SEGA `sega_metrics.py` 算 Ali/Ove/Und_l/Und_s
+  - **本實驗 NOT end-to-end LLM placement，是「if LLM placed underlay at exactly designer's coords」的 upper bound**，不可寫成 AL 真實能力。
+- **結果（N=1,895，587 個樣本含 designer underlay）**：
+
+  | Method | Ali ↓ | Ove ↓ | Und_l ↑ | Und_s ↑ |
+  | --- | --- | --- | --- | --- |
+  | AL (image+text only, Step 23 reality) | 0.0004 | 0.0050 | 0.0000 | 0.0000 |
+  | **Oracle hybrid（AL i+t + designer underlay）** | **0.0004** | **0.0050** | **0.2787** | **0.2326** |
+  | Designer GT（完整布局） | 0.0010 | 0.1038 | 0.2209 | 0.1384 |
+
+- **解讀**：
+  - 🟢 **Ali / Ove 完全不變**（0.0004 / 0.0050）—— 確認加 underlay **不會傷害** Phase A 兩個最強 claim：(a) Ove metric 定義本就排除 underlay class、(b) Ali 用 pairwise min-distance、designer underlay bbox 本身對齊得好。
+  - 🟢 **Oracle Und_l = 0.2787 > designer 0.2209、Und_s = 0.2326 > designer 0.1384**（1.26×、1.68×）—— AL 把 image+text 排得比 designer 更緊湊，所以 designer 的 underlay bbox 不小心 contain 得更完整。
+  - ⚠️ **Oracle 是上限**，真 LLM placement 預估只能到 ~70-80%（Und_l ~0.20、Und_s ~0.14，達到或微微小贏 designer 量級）。
+- **誠實定調**：
+  - 本實驗**僅做為 metric architecture 健全性的 evidence**：證明「SEGA 6 指標 framework 不會因為 AgentLayout 多放 underlay 而懲罰 Ali/Ove」，Und 由 0 變正是 in-scope 擴充而非架構天花板。
+  - **本實驗不寫成 end-to-end AL 結果**；論文 Phase A table 仍以 Step 23 真實數字（Und = 0）為準，oracle 數字以 **"oracle headroom"** 標籤明確區分。
+  - Future work 段落明確記載：若實作 underlay placement，預期 Und_l 達 0.20–0.23 量級（接近或微小贏 designer），Ali/Ove 維持。
+- **Trade-off**：✅ 零成本 / 零 API / 10 分鐘跑完，量化了「underlay 改造的真實 headroom」；✅ 確認 Ali/Ove 主 claim 對 underlay 改造 robust（不會 regression）；✅ 為 Future work 段落提供 quantified ceiling；❌ **不可** 寫成 AL real run；❌ Oracle 因「designer underlay bbox + AL image+text 緊湊位置」的偶然耦合，反而比 designer 自己的 Und_l 還高 → 實際 LLM placement 達到此上限不現實；❌ Read / Occ 未做 oracle 估算（需重算 saliency map，已被 Step 23 BASNet+ISNet pass 標準完成）。
+
+---
+
 ## §3 核心誠實定調（consolidated — 論文 honesty 章節用）
 
 ### §3.1 不可宣稱勝設計師 / 勝 SOTA

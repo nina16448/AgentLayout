@@ -2681,4 +2681,41 @@ would download new: 1797
 
 ---
 
+---
+
+## 2026-05-27 — Step 25：Underlay placement headroom analysis（oracle，**非 end-to-end LLM**）
+
+**新增檔案：** `layout_agent/output/step25_oracle_underlay.py`
+
+**動機：** Step 23 Phase A AL Und_l/Und_s = 0 原本被我（誤判）歸到 "decoration synthesis out of scope"，後經 user 糾正 + dataset 檢查確認：**Crello 95% 樣本提供 type 2/3/4 underlay PNG + color metadata，是 dataset-given placement asset 不是 synthesis**。改造 pipeline + 重跑 N=1,897 估 1 工作天 + $131；先做 zero-cost oracle headroom analysis 量化最好情況數字，再決定要不要投入工程。
+
+**方法：** 對 N=1,895 已 render 樣本，把 designer GT 的 underlay bbox 直接「合成」到 AL image+text layout 上（NO LLM、NO re-render、NO API），用 sega_metrics 重算 Ali/Ove/Und_l/Und_s。
+
+**結果（N=1,895，587 個樣本含 designer underlay）：**
+
+| Method | Ali ↓ | Ove ↓ | Und_l ↑ | Und_s ↑ |
+|---|---|---|---|---|
+| AL (image+text only, Step 23 reality) | 0.0004 | 0.0050 | 0.0000 | 0.0000 |
+| **Oracle hybrid (AL i+t + designer underlay)** | **0.0004** | **0.0050** | **0.2787** | **0.2326** |
+| Designer GT (full layout) | 0.0010 | 0.1038 | 0.2209 | 0.1384 |
+
+**關鍵發現：**
+- ✅ **Ali / Ove 完全不變**：加 underlay 不會傷害 Phase A 兩個最強 claim（Ove metric 定義排除 underlay class、Ali 用 pairwise min-distance 不被新元素拖累）
+- 🆕 **Oracle Und_l 0.2787 > designer 0.2209**（1.26×）、**Und_s 0.2326 > designer 0.1384**（1.68×）—— AL 緊湊 image+text 位置讓 designer underlay bbox 不小心 contain 得更完整
+- ⚠️ Oracle 是 upper bound；真 LLM placement 預估 ~70-80%（Und_l ~0.20、Und_s ~0.14）
+
+**寫進論文的位置：**
+- ❌ **不可** 寫成 AL real run（會踩 research integrity 紅線；AL pipeline 實際不生 underlay，candidate.json 也沒 underlay kind，reviewer reproduce 會抓到）
+- ✅ **正當寫法**：以 "oracle headroom / metric architecture sanity check" 標籤放在 result.md 的 §2 Step 25 + §4 future work，明確標 "no LLM placement"
+- ✅ Phase A table 仍以 Step 23 真實 Und=0 為準
+
+**Future work paragraph 預估（基於 oracle）：**
+> "If end-to-end underlay placement is implemented (estimated 1 engineering day + $131 re-run), we expect Und_l to reach 0.20–0.23 and Und_s to reach 0.10–0.14, while Ali/Ove remain at their Step 23 values per the metric architecture analysis (Step 25). End-to-end implementation is left to future work."
+
+**成本：** $0、~10 分鐘跑完。
+
+**關聯：** memory `feedback-underlay-is-placement.md` 同步建立（區分 placement vs synthesis）；[[feedback-no-decoration-suggestion]] 加註解只適用 "synthesize new decorative graphics" 情境。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/27*
