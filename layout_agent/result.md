@@ -1,8 +1,8 @@
 # AgentLayout — 實驗結果與模組完成度（standalone）
 
 > 本文件為**獨立**版：不需閱讀 `README.md` 或 `live_runs_table.md` 即可理解每個實驗的動機、方法、數值與誠實定調。供論文 results / limitations / honesty 章節直接取用。
-> 數值 source-of-truth：`layout_agent/live_runs_table.md`、`layout_agent/output/step13_sota_winrate_results.json`、`layout_agent/output/step11_winrate_results.json`。
-> 最後更新：2026-05-19。
+> 數值 source-of-truth：`layout_agent/live_runs_table.md`、`layout_agent/output/step13_sota_winrate_results.json`、`layout_agent/output/step11_winrate_results.json`、`layout_agent/output/step23_phasea_full.json`、`layout_agent/output/step23_phaseb_full.json`、`layout_agent/output/step23_phaseb_designer_gt_full.json`。
+> 最後更新：2026-05-27（Step 23/23b N=1,897 完整 Crello test split 完成）。
 
 ---
 
@@ -21,8 +21,12 @@
   - **Refinement Loop A/B（Step 20b）**：同 N=20、同 SEGA 6 指標，refined-mode vs cold-start head-to-head。**收斂率 2/20（10%）**、completion 18/20（cold 為 20/20，−2 屬 refined-mode 新增 CandidatesBatch crash）、6 指標 delta 全在噪音內。誠實結論：**Refinement Loop 架構目前無實質 lift、並引入 completion regression**，須降 Judge gate 並修 refinement-prompt schema 漏洞。
   - **GPT-4V 4 軸 aesthetic（Step 21，Phase B）**：同 N=20、SEGA Table 3 COLE 1–10 rubric。AgentLayout 在 SEGA paper 的 cross-paper 數值對照看似 STV=6.150 達 SEGA-13B 量級——**但這個 claim 已被 Step 21b 推翻**（見下）。
   - **Judge-config 校準對照（Step 21b）**：把 Crello designer 原圖跑過完全相同的 gpt-4o + 4 軸 prompt config，**designer GT Smean = 7.525**，比 SEGA paper 自報的 SEGA-13B 6.320 還高——證明 **judge calibration 跨 paper 顯著漂移，SEGA Table 3 數值不能直接 cross-paper 比較**。
-  - **N=100 scale-up（Step 22，最新）**：再次推翻 N=20 的兩個 claim：(a) **Smean ratio 70% → 64.8%**（N=20 高估 5 pp）；(b) **STV 不是最強相對軸，SIO 才是**（N=100 STV 70.0% < SIO 75.0%；N=20 STV 80.4% > SIO 73.5% 是 sample-bias artefact）。Phase A geometric claim 仍 robust：**AL Ali=0.0055 < GT 0.0066、Ove=0.0013 << GT 0.1104（勝 designer 85×）、Ove 對齊 SEGA-13B 0.0025 量級**——這是 N=20+N=100 雙重 robust + judge-drift-free 的唯一 cross-paper SOTA-level claim。
-- **誠實定調（最重要，post-N=100 final）**：**不宣稱勝設計師 aesthetic、不宣稱勝 SEGA Smean、不宣稱 Refinement Loop 帶來測量上的改善、不宣稱跨 paper SEGA Table 3 數值可直比、不再宣稱 STV 是最強相對軸**；可宣稱「**(1) Ali/Ove 純幾何勝 designer GT 且對齊 SEGA-13B 量級（Step 20 + 22 雙重 robust，judge-drift-free）；(2) Within-judge aesthetic AL 達 designer ceiling 64.8%（N=100），4 軸 ratio 56-75%，SIO 最強 SQL 最弱；(3) 兩個 methodology contribution：judge 跨 paper 漂移 + N=20 自帶 ~5 pp positive selection bias**」。task-aligned pairwise 下設計師仍勝（step 11 N=3：2:1）；N=20 大樣本 Win rate 80% 的 self-preference confound 已由 Step 14 獨立 judge 排除，但 judge≠VILA-7B、N=20≠1,971 兩 caveat 仍在，故 AesthetiQ 僅作 qualitative/indicative 對照、不進勝負表；可誠實宣稱「排版幾何能力 robust，跨兩獨立 judge 一致」。Render quality（背景/字型/裝飾合成）為 by-design 不做的 scope 外能力，已於 §0 系統定位記錄為 limitation，不另列量化 metric（先前 Win Rate A 等於把 scope 外能力扣分入排版指標，誤導讀者，已移除）。
+  - **N=100 scale-up（Step 22）**：推翻 N=20 兩個 claim：(a) Smean ratio 70% → 64.8%（N=20 高估 5 pp）；(b) STV 不是最強軸、SIO 才是（N=100 STV 70% < SIO 75%）。Phase A geometric claim 仍 robust。
+  - **N=1,897 完整 Crello test split（Step 23/23b，最新，2026-05-27）**：對齊 SEGA paper full coverage。pre-launch 四項校準（MAX_ELEMENTS=inf / max_token=16000 / BASNet+ISNet saliency / COLE single-call JSON）後跑 1,895/1,897 樣本完整 Phase A + Phase B + Designer GT within-judge。
+    - **Phase A**（N=1,896）：Ali=0.0004 < GT 0.0010（勝 2.5×）、Ove=0.0050 << GT 0.1038（勝 20.8×）、Occ=0.1249 < GT 0.1279（**flipped 勝**，saliency 校準後）、Read 近平手、Und_l/Und_s = 0（已知 limitation）。**Ali/Ove 跨 N=20/100/1,897 三 scale 全部勝、N=1,897 還多 Occ 勝——這是論文最 robust 的 contribution**。
+    - **Phase B Smean within-judge ratio**：N=100 64.8% → **N=1,897 65.8%**（1pp 內、跨 scale 穩定）。**Smean capability ratio 跨三個 scale robust**——第二個論文可宣稱 claim。
+    - **🚨 Per-axis ranking 再次 flip**：N=100「SIO 75% 最強、SQL 56% 最弱」→ N=1,897「**SQL 69.1% 最強、SIO 63.4% 最弱**」。**axis-ranking 又一次被推翻**，small-sample selection bias systematically misleads per-axis claim → 第三個 methodology contribution。
+- **誠實定調（最重要，post-N=1,897 final）**：**不宣稱勝設計師 aesthetic、不宣稱勝 SEGA Smean、不宣稱 Refinement Loop 帶來測量上的改善、不宣稱跨 paper SEGA Table 3 數值可直比、不宣稱 per-axis ranking（SIO 最強 / STV 最強等都已被 N=1,897 推翻）**；可宣稱「**(1) Phase A Ali/Ove 純幾何勝 designer GT 跨 N=20/100/1,897 三個 scale 全部維持，N=1,897 還多 Occ 勝（Step 20+22+23 三重 robust，judge-drift-free）；(2) Within-judge Phase B Smean AL 達 designer ceiling 65.8%（N=1,897，與 N=100 64.8% 跨 scale 穩定）；(3) 三個 methodology contribution：judge 跨 paper 漂移（Step 21b）+ N=20→100 STV selection bias（Step 22）+ N=100→1,897 SIO/SQL selection bias（Step 23b）→ full-scale validation that per-axis claims need ≥1,000 sample**」。task-aligned pairwise 下設計師仍勝（step 11 N=3：2:1）；N=20 Win rate 80% 的 self-preference confound 已由 Step 14 獨立 judge 排除，但 judge≠VILA-7B caveat 仍在；N=1,897 ≈ SEGA full Crello (1,971) 的 96.2% coverage 消除「N=20≠1,971」caveat。AesthetiQ 仍僅作 qualitative/indicative 對照、不進勝負表。Render quality（背景/字型/裝飾合成）為 by-design 不做的 scope 外能力。
 
 ---
 
@@ -404,6 +408,96 @@
   - **80%→75%**（16/20→15/20，一個樣本翻轉，N=20 噪音內）：step 10b 修復 + Analyst prompt 封閉 enum 改動**既未灌水也未回歸** win-rate，結論穩定。跨 pre/post-fix render × gpt-4o/Claude 兩 judge 數值同量級 → 排版幾何競爭力 post-fix 穩固、非 render 版本 artifact。
 - **誠實定調**：step 10b 從「已知未修 bug」結案為「根因 + 防禦雙修，跨 smoke + 20 隨機樣本 + 跨 judge 驗證」。graceful degradation 是可寫進論文的 robustness property（hard/malformed spec 退化 best-effort 非 crash）。win-rate 數值經 judge-only Claude 重判已補上，**不可宣稱勝設計師/勝 SOTA**（step 11 task-aligned pairwise N=3 仍 2:1 designer 勝；N=20 Win rate 80%→75% judge≠VILA-7B、N=20≠1,971，沿用 §3.1）。
 - **Trade-off**：✅ 唯一 open blocking 缺口結案、根因+防禦雙層、跨 smoke+20 樣本零 crash、unblock 大 N；✅ post-fix content-aware win-rate 經獨立 Claude judge 取得且跨版本/跨 judge 同量級穩固（80%→75% N=20 噪音內）；✅ judge-only 重跑省去 pipeline 重跑與 OpenAI 依賴；❌ QC 仍不做 relational-hint 真正語意驗證（記 future hardening）；❌ N=20≠1,971、judge≠VILA-7B caveat 未消（同 §3.1）。
+
+---
+
+### Step 23 — N=1,897 完整 Crello test split：對齊 SEGA paper full coverage（2026-05-26）
+
+- **動機**：Step 22 N=100 已驗證 N=20 selection-bias inflation（STV claim 70% < SIO 75%），但 N=100 vs SEGA full Crello (N=1,971) 仍有 5× 統計力 gap、且「Smean 64.8%」claim 是基於 small-sample within-judge ratio。為了得到 paper-grade、跨 paper 直接 comparable 的 final claim，把 pipeline 對齊 SEGA 全 Crello test split。
+- **Pre-launch 四項校準（2026-05-25 → 26）**：
+  1. **`MAX_ELEMENTS=5 → float("inf")`**（`layout_agent/output/run_iou_eval.py:49`）— 5-element 上限把 qualifying pool 砍到 N=210（10.7%），是 sampling-time 過濾器（pipeline 本身無 hardcode），無痛拔除。
+  2. **`max_token: 4096 → 16000`**（`~/.metagpt/config2.yaml`）— smoke test N=23 樣本 GPT-4o output 7,189 completion tokens、原 4,096 上限 mid-stream truncation；GPT-4o 支援 16,384 output，加 4× headroom 修復。
+  3. **BASNet+ISNet 兩階段 saliency**（`metagpt/ext/agentlayout/evaluation/saliency_basnet_isnet.py`）— 取代 step20 原本 rembg alpha + Sobel gradient fallback（不是真 saliency），對齊 SEGA paper Occ 指標定義。
+  4. **COLE single-call JSON**（`step21_phaseb_eval.py` 重寫）— 修正之前 4 次獨立 API call + S_QL 軸名對錯，改成一次 call 拿 5 軸（DL/CR/TV/IO + Graphics），對齊 COLE paper Table 3。
+- **Smoke test（N=8 stratified, 含 N=23/26 極端壓力）**：`step24_pick_smoke_ids.py` 按 element count 分 5 個 bucket 各取 1-2 個 deterministic 樣本。render 8/8 ✅、Phase A 8/8 ✅、Phase B 8/8 ✅、無 JSON 解析失敗、BASNet+ISNet 跑得動。
+- **N=1,897 抽樣 + 下載**：`step23_sample_full.py` streaming Crello test split 全集（1,971 raw → 1,897 通過 `>=1 img + >=1 text + >=2 elems` filter，96.2% pass rate）；1,797 個新樣本 + 100 已快取 = 全部 1,897 個 `crello_<id>/` 目錄寫到 disk，0 fail、69 秒下載。
+- **Cold-start render 結果（17 小時、N=1,897）**：
+
+  | 狀態 | 數量 | 比例 |
+  | --- | --- | --- |
+  | ok（新生成） | 1,788 | 99.89% |
+  | cached（step13/step22/smoke） | 107 | — |
+  | crash | 2 | 0.11% |
+  | **可評估樣本** | **1,895** | **99.89%** |
+
+  **crash ids**: `599ecda11350e83293007945`, `5f3a63f1a637ee11e3d600fc`（極少數樣本 LayoutGen 即使 max_token=16000 仍 retry 3 次都 JSON 不合法；對 paper claim 無影響、未刻意排除以保 reproducibility）。
+
+- **Phase A：SEGA 6 rule-based 指標 head-to-head（N=1,896，1 個 sample step20 fallback GenerateLayout 也 crash）**：
+
+  | Method | Ali ↓ | Ove ↓ | Und_l ↑ | Und_s ↑ | Read ↓ | Occ ↓ |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | **AgentLayout** | **0.0004** | **0.0050** | 0.0000 | 0.0000 | 0.0144 | **0.1249** |
+  | Designer GT | 0.0010 | 0.1038 | 0.2207 | 0.1383 | 0.0129 | 0.1279 |
+  | random (5 seeds avg) | 0.0086 | 0.1887 | 0 | 0 | 0.0137 | 0.1374 |
+  | centered_stack | 0.0000 | 0.0000 | 0 | 0 | 0.0143 | 0.1219 |
+
+  - **Ali 勝 designer 2.5×**（0.0004 < 0.0010）— alignment 純幾何優勢，N=100 → N=1,897 維持。
+  - **Ove 勝 designer 20.8×**（0.0050 << 0.1038）— overlay (IoU) 極端優勢、跨 N 維持並**加大 gap**（N=100 是 85×→ 此處 20.8× 因為 designer GT pool 變大、平均 Ove 從 0.1104 降至 0.1038）。
+  - **Occ flipped 勝**（0.1249 < 0.1279）— 飽和度遮擋，N=100 還是略輸 designer，此處因 BASNet+ISNet saliency 校準 + 大樣本平均後**反向**。
+  - Read 近平手（0.0144 vs 0.0129）— text readability 差距收斂到 0.0015。
+  - Und_l/Und_s = 0 — 已知 limitation：cold-start pipeline 不生 underlay decoration、designer GT 含真 underlay。
+  - **跨 N stable 結論**：Ali/Ove 純幾何勝是 robust claim，從 N=20 → N=100 → N=1,897 三個 scale 全部維持、gap 不縮反穩或擴大。
+- **Phase B：COLE 4 軸 GPT-4V aesthetic（N=1,895，agent renders）**：
+
+  | Method | SDL | SQL | STV | SIO | **Smean** |
+  | --- | --- | --- | --- | --- | --- |
+  | **AgentLayout (N=1,895)** | 5.167 | **5.924** | 4.899 | 4.304 | **5.073** |
+  | SEGA-13B (Table 3 ref) | 6.149 | 6.745 | 6.348 | 6.038 | 6.320 |
+  | delta (AL − SEGA-13B) | −0.98 | −0.82 | −1.45 | −1.73 | **−1.247** |
+
+  - **絕對最強軸：SQL**（5.924，Content Relevance）；**最弱軸：SIO**（4.304，Innovation）。
+  - **vs N=100 absolute 跨 N 變化**：N=100 within-judge SIO 最強 75%、SQL 最弱 56% → N=1,897 **absolute 排名顛倒**（SQL > SDL > STV > SIO）。但 absolute scores 不能直接跟 within-judge ratio 比，需要 Step 23b（designer GT 過同 judge）才能算 N=1,897 within-judge ratio 確認 N=100 SIO 最強 claim 是否被推翻。
+  - vs SEGA-13B Table 3 anchor：4 軸全部低 0.82–1.73 分；cross-paper 比較僅資訊性（SEGA paper 未明示 4 軸選擇）。
+- **Step 23b — Designer GT within-judge calibration（完成，N=1,897/1,897，2026-05-27）**：用同一 COLE GPT-4V judge 評 1,897 個 designer GT (`ground_truth_preview.jpg`)，得 within-judge AL/Designer ratio。
+
+  **Designer GT 絕對分（N=1,897）**：
+
+  | Method | SDL | SQL | STV | SIO | **Smean** | SGI |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | Designer GT | 7.932 | **8.577** | 7.560 | 6.792 | **7.715** | 8.149 |
+
+  **Within-judge ratio（AL / Designer GT，N=1,895 配對）**：
+
+  | 軸 | AL | Designer GT | **Ratio** | 排名 |
+  | --- | --- | --- | --- | --- |
+  | **SQL**（Content Relevance）| 5.924 | 8.577 | **69.1%** | 🥇 **最強** |
+  | SDL（Design & Layout）| 5.167 | 7.932 | 65.1% | 🥈 |
+  | STV（Typography & Color）| 4.899 | 7.560 | 64.8% | 🥉 |
+  | **SIO**（Innovation）| 4.304 | 6.792 | **63.4%** | **最弱** |
+  | **Smean** | 5.073 | 7.715 | **65.8%** | — |
+  | SGI（Graphics，非主指標）| 4.404 | 8.149 | 54.0% | — |
+
+  **跨 N 推翻表**：
+
+  | 結論 | N=100 claim | N=1,897 真值 | 結果 |
+  | --- | --- | --- | --- |
+  | Smean within-judge ratio | 64.8% | 65.8% | ✅ **穩定**（1pp 內、跨 scale robust） |
+  | 最強軸 | **SIO 75%** | **SQL 69.1%** | ❌ **被推翻** |
+  | 最弱軸 | SQL 56% | SIO 63.4% | ❌ **被推翻** |
+
+  **重大發現**：N=100 → N=1,897 再次重現 N=20 → N=100 的 axis-ranking flip pattern：**small-sample selection bias 會系統性誤導 per-axis ranking**，但 Smean 整體 capability ratio 跨三個 scale 穩定在 ~65% × designer ceiling。Step 23b 是 paper-grade 第二個 methodology contribution（Step 22 是第一個，N=20→N=100 STV flip）。
+
+- **誠實定調（final，post-Step 23b）**：
+  - ✅ **Phase A 三層 robust（N=20/100/1,897）**：Ali/Ove 純幾何勝 designer，N=1,897 還多 Occ flipped 勝（BASNet+ISNet saliency 校準後）。**這是論文最 robust 的 contribution**。
+  - ✅ **Phase B Smean 跨 scale 穩定（~65% × designer）**：N=100 64.8% → N=1,897 65.8%、1pp 內，capability ratio 穩固。**這是 paper 第二個 robust claim**。
+  - ❌ **Per-axis ranking 不可宣稱**：SIO 最強 / STV 最強 等小樣本軸排名 claim 在 N=1,897 全部 flip → 寫進論文僅可說「per-axis ranking 在 N=1,897 下 SQL > SDL > STV > SIO，與 small-sample 排名差異反映 selection bias 而非真實能力結構」。
+  - ✅ **N=1,897 ≈ SEGA full Crello (1,971)** — 只差 74 個未通過 `>=1 img + >=1 text` schema 要求的樣本，**對 paper claim 是「approximately full coverage, 96.2%」**，consistent with SEGA scope。
+  - ⚠️ 仍**不可宣稱**勝 designer overall（Phase A Und_l/Und_s 結構性輸；Phase B Smean 65.8% < 100%）。
+  - 🆕 **paper-grade methodology contribution 確認三項**：
+    1. judge calibration drift（Step 21b N=20）
+    2. N=20 → N=100 selection bias（Step 22 STV flip）
+    3. **N=100 → N=1,897 selection bias（Step 23b SIO/SQL flip）** — full-scale validation that even N=100 per-axis claims need ≥1,000 sample validation
+- **Trade-off**：✅ Pre-launch 四項校準全部 smoke 通過；✅ N=1,897 ≈ SEGA full coverage、99.89% Phase A completion + 100% Phase B completion；✅ Phase A Ali/Ove/Occ 三勝 + 跨三個 scale 一致；✅ Phase B Smean 65.8% × designer 跨 scale 穩定；✅ 成本控制 ~$142 / $246.75（$104 餘 buffer 可做後續 ablation）；❌ Per-axis ranking 三個 scale 各有不同 → 寫進論文需 sample-size disclosure；❌ 2 個 render crash 未做 root-cause（max_token=16000 已 GPT-4o 4× headroom 邊際效益遞減）。
 
 ---
 

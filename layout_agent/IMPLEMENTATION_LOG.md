@@ -2532,4 +2532,153 @@ Phase B GPT-4V 4 軸 within-judge ratio (AL / Designer GT)：
 
 ---
 
-*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/25*
+## 2026-05-26 — Step 23：Crello 全 test split 下載完成（N=1,897）
+
+**新增檔案：** `layout_agent/output/step23_sample_full.py` — streaming Crello test split 並下載**所有**過 filter 的樣本（不抽樣、不 shuffle，要的是全 population）。
+
+**Dry-run 結果（量 pool 大小）：**
+```
+scanned=1971, qualifying=1897 (96.2% pass rate)
+already cached on disk: 100
+would download new: 1797
+```
+→ 確認 SEGA 的 N=1971 是 raw split size；我們的 `>=1 img + >=1 text + >=2 elems` filter 留下 **1,897 個樣本**（96.2%），跟 SEGA 的 5× scale 差別只在最後 74 個無法滿足 image+text 配對的樣本。
+
+**實際下載：**
+- 新下載：**1,797 個**
+- 已快取：100（step13 20 個 + step22 80 個）
+- 失敗：**0**
+- 總耗時：**69 秒**（HuggingFace streaming 加 PIL 寫檔，非常快）
+- 磁碟用量：261 MB total（每樣本 ~1–2 MB）
+
+**輸出檔：**
+- 主 ID 檔：`step23_full_ids.json` — 包含 1,897 個 ids、filter 規格、commenting
+- 每樣本：`crello_<id>/{meta.json, asset_*.png, ground_truth_preview.jpg}`（meta.json 有 `n_elements` 欄位可供下游分層用）
+
+---
+
+## 2026-05-26 — Step 24：Smoke test 抽樣（pre-full-run 驗證）
+
+**動機：** 拿掉 MAX_ELEMENTS=5 之後，元素數 6–26 的樣本**從沒進過 pipeline**。在花 $200+ 跑 N=1,897 之前先用 8 個樣本驗證 LayoutGen prompt / Renderer / saliency / Phase B JSON 解析全部在高元素數下都不爆。
+
+**新增檔案：** `layout_agent/output/step24_pick_smoke_ids.py`
+
+**抽樣策略（deterministic, no shuffle）：**
+
+| Bucket | Element 數 | 抽樣數 | 風險 | 實際挑到 |
+|---|---|---|---|---|
+| 2–3 | 低 | 1 | sanity 對照 | 3 elems |
+| 4–5 | 低 | 1 | 對照舊 N=100 範圍 | 4 elems |
+| 6–9 | 中 | 2 | 新領域 | 6, 6 elems |
+| 10–15 | 高 | 2 | 新領域 | 12, 10 elems |
+| 16+ | **極端** | 2 | 最大壓力測試 | **26, 23 elems** |
+
+**輸出：** `step24_smoke_ids.json` — 8 個 ids + 分層 metadata + picked_details
+
+**驗證項目（pipeline 跑完後檢查）：**
+1. 8 個樣本是否都產出 `step22_coldstart_crello_<id>_render.png`
+2. 高元素樣本的 LayoutGen 是否 hit prompt token limit
+3. Renderer 處理 N=26 是否合理（不重疊到認不出）
+4. Phase A BASNet+ISNet saliency 跑得動（CPU/GPU memory）
+5. Phase B COLE single-call JSON 解析成功
+6. 6 個 Phase A 指標 + 4 個 Phase B 軸在合理範圍
+
+**預估：** ~$1.00 / ~10–15 分鐘。
+
+**Smoke 實際結果（2026-05-26）：**
+- Render 8/8 通過（一開始 N=23 因 max_token=4096 truncation 失敗 → 提升至 16000 後 retry 通過）
+- Phase A 8/8 通過、Phase B COLE JSON 8/8 解析成功
+- 8 個樣本 token 用量 ~$1.00（含 N=23 retry 3 次 4096 limit cost）
+- 確認 pipeline 在 >5-element 樣本上 robust，可進 N=1,897 full run
+
+**🔥 Pre-launch 新發現：`max_token=4096` 是真正 blocker**
+- N=23 樣本 GPT-4o output 用 7,189 completion tokens，4,096 limit mid-stream truncation 導致 JSON invalid
+- 修：`~/.metagpt/config2.yaml` 加 `max_token: 16000`（GPT-4o 支援 16,384、4× headroom）
+- 備份原檔：`~/.metagpt/config2.yaml.pre_max_token_bump.bak`
+
+---
+
+## 2026-05-26 → 27 — Step 23 / 23b：N=1,897 完整 Crello test split paper-grade run
+
+**新增檔案：**
+- `layout_agent/output/step23_sample_full.py` — Crello test split 全集 streaming sampler
+- `layout_agent/output/step23_full_ids.json` — 1,897 個 qualifying ids
+- `layout_agent/output/step24_pick_smoke_ids.py` — stratified-by-element-count smoke sampler
+- `layout_agent/output/step24_smoke_ids.json` — 8 個含 N=23/26 極端壓力 smoke ids
+- `layout_agent/output/step24_smoke_phasea.json` / `_phaseb.json` — smoke 結果（pre-launch 驗證）
+
+**Render（17 小時）：**
+- N=1,897 cold-start render 結果：1,788 新生 + 107 cached = **1,895 / 1,897 完成（99.89%）**
+- crash 2 個（`599ecda1*`、`5f3a63f1*`）— 即使 max_token=16000 retry 3 次都 JSON 不合法
+- 寫入：`step22_coldstart_crello_<id>_{render.png,spec.json,candidate.json}`（1,895 套）
+
+**Phase A（30 分）：**
+- `step20_sega_eval.py --mode cold --ids-file step23_full_ids.json`
+- N completed = **1,896/1,897**（1 個 sample step20 fallback GenerateLayout 也 crash）
+- 寫入：`step23_phasea_full.json`
+
+**Phase A 結果**（vs designer GT）：
+
+| Method | Ali ↓ | Ove ↓ | Und_l ↑ | Und_s ↑ | Read ↓ | Occ ↓ |
+|---|---|---|---|---|---|---|
+| **AgentLayout** | **0.0004** | **0.0050** | 0.0000 | 0.0000 | 0.0144 | **0.1249** |
+| Designer GT | 0.0010 | 0.1038 | 0.2207 | 0.1383 | 0.0129 | 0.1279 |
+
+- ✅ Ali 勝 2.5×、Ove 勝 20.8×、Occ flipped 勝（vs N=100 略輸 → N=1,897 saliency 校準後反向）
+- Read 近平手、Und_l/Und_s = 0（已知 limitation）
+- **跨 N=20/100/1,897 三個 scale 全部維持 Ali/Ove 勝、N=1,897 還多 Occ 勝**
+
+**Phase B agent renders（2 小時）：**
+- `step21_phaseb_eval.py --ids-file step23_full_ids.json`
+- N completed = **1,895/1,897**
+- 寫入：`step23_phaseb_full.json`
+- AL absolute: SDL=5.167、SQL=5.924（最強）、STV=4.899、SIO=4.304（最弱）、Smean=5.073、SGI=4.404
+
+**Phase B designer GT 校準 / Step 23b（2-3 小時）：**
+- `step21_phaseb_eval.py --source designer-gt --ids-file step23_full_ids.json`
+- N completed = **1,897/1,897**（designer GT JPG 全部可讀）
+- 寫入：`step23_phaseb_designer_gt_full.json`
+- Designer GT absolute: SDL=7.932、SQL=8.577（最強）、STV=7.560、SIO=6.792、Smean=7.715、SGI=8.149
+
+**🎯 Within-judge ratio（AL / Designer GT，paper-grade final）：**
+
+| 軸 | AL | Designer | **Ratio** | 排名 |
+|---|---|---|---|---|
+| SQL | 5.924 | 8.577 | **69.1%** | 🥇 最強 |
+| SDL | 5.167 | 7.932 | 65.1% | 🥈 |
+| STV | 4.899 | 7.560 | 64.8% | 🥉 |
+| SIO | 4.304 | 6.792 | **63.4%** | 最弱 |
+| **Smean** | 5.073 | 7.715 | **65.8%** | — |
+
+**🚨 跨 N 推翻表：**
+
+| Claim | N=100 | N=1,897 | 結果 |
+|---|---|---|---|
+| Smean ratio | 64.8% | 65.8% | ✅ **跨 scale 穩定**（1pp 內）|
+| 最強軸 | SIO 75% | **SQL 69.1%** | ❌ **被推翻** |
+| 最弱軸 | SQL 56% | **SIO 63.4%** | ❌ **被推翻** |
+
+**重大發現：** N=20 → N=100 → N=1,897 三個 scale 重現同樣的 axis-ranking flip pattern。Small-sample selection bias **systematically misleads per-axis ranking**，但 Smean overall capability ratio 跨 scale 穩定 ~65% × designer ceiling。**第三個 paper-grade methodology contribution**（前兩個：Step 21b judge calibration drift + Step 22 N=20→100 STV flip）。
+
+**全程成本盤點：**
+| 階段 | 實際成本 |
+|---|---|
+| Smoke test (N=8 + retry) | ~$1.0 |
+| Render N=1,790 新 | ~$120 |
+| Phase A (2 fallback GenerateLayout) | ~$0.3 |
+| Phase B agent | ~$11 |
+| Phase B designer GT (Step 23b) | ~$11 |
+| **總計** | **~$143 / $246.75** |
+| **剩餘 buffer** | **~$103**（可做後續 ablation） |
+
+**Final paper claims（post-N=1,897）：**
+1. ✅ **Phase A 三層 robust**：Ali/Ove/Occ 跨 N=20/100/1,897 純幾何勝 designer + 對齊 SEGA-13B
+2. ✅ **Phase B Smean ~65.8% × designer ceiling**（N=1,897，與 N=100 跨 scale 穩定）
+3. ✅ **三個 methodology contribution**：judge drift、N=20→100 selection bias、N=100→1,897 selection bias
+4. ❌ **Per-axis ranking 不可宣稱**（三個 scale 各有不同 winner，全部 flip）
+
+**關聯：** Step 22 的 N=100 paper-grade claim 被本 step 部分推翻（per-axis ranking）+ 部分強化（Smean ratio 跨 scale stable + Phase A 三 scale robust）；新增 Step 23/23b 為論文最終 evidence。
+
+---
+
+*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/27*
