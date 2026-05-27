@@ -2873,4 +2873,51 @@ would download new: 1797
 
 ---
 
+## 2026-05-27 evening — Step 29：N=5 redesign smoke + 啟動 F 全集 cold-start
+
+**動機：** Step 28 已完成 code + GT 重算，但 AL 端是 pre-redesign cached spec（Und=0.024）。F 動作（重跑 1,887 step22 cold-start）成本 ~$110 / 5-6h，啟動前先 N=5 smoke 驗證 redesign 真實能讓 AL emit underlay 且無 role-reversal。
+
+**N=5 smoke 設計：**
+- 新增 `step29_redesign_smoke_ids.json`：從 1,802 個含 `kind=underlay` 的 sample 挑 5 個 stratified by element count (3/7/9/11/14)
+- 清掉這 5 個的 step22 cache、跑新版 cold-start
+
+**N=5 結果：5/5 ok 0 crash、無 role-reversal**
+
+| Method | Ali ↓ | Ove ↓ | **Und_l ↑** | **Und_s ↑** | Read ↓ | Occ ↓ |
+|---|---|---|---|---|---|---|
+| **AL (N=5 redesign live)** | 0.0000 | 0.0000 | **0.5843** | **0.5333** | 0.0164 | 0.1046 |
+| AL (Step 28 N=1,887 cached, pre-redesign) | 0.0005 | 0.0015 | 0.0241 | 0.0076 | 0.0029 | 0.0478 |
+| Designer GT (Step 28 N=1,887 new classifier) | 0.0010 | 0.0448 | 0.3997 | 0.2571 | 0.0023 | 0.0490 |
+
+**關鍵驗證：**
+- ✅ AL Und_l 0.024 → **0.584**（+24×）超過 Designer 0.40
+- ✅ AL Und_s 0.008 → **0.533**（+70×）超過 Designer 0.26
+- ✅ Ali/Ove 維持 0.0 無 regression
+- ✅ **5/5 視覺檢查無 role-reversal**（對比 Step 26 type-code-driven 8/8 都有 role-reversal）：sample 1 ART 跟 GT 類似 / sample 5 Nature 跟 GT 很接近 / sample 2/3/4 元素都在合理 role（photo 仍 photo、shape 仍 underlay）
+- ⚠️ Read/Occ 略升（0.003→0.016、0.05→0.10）跟 underlay 偶過大有關；N=5 太小不能下結論
+
+**N=5 視覺品質觀察（次要、不阻擋 F）：**
+
+| Sample | n_el | 視覺整體 vs GT |
+|---|---|---|
+| 1 ART poster (`592c213595a7a863ddcd95da`) | 3 | ✅ 跟 GT 構圖類似 |
+| 2 Forests event (`595287a895a7a863ddcdf636`) | 7 | ⚠️ bg forest image 缺席 |
+| 3 Pets Grooming (`5e0da6a29fea0cc374b389a1`) | 9 | ⚠️ 底部空黑 |
+| 4 Time to Travel (`5c6d2fcb85ea3c16f93bd58b`) | 11 | ⚠️ 黃色 underlay 過大（違反 prompt 60% canvas 上限） |
+| 5 Make Friends with Nature (`5952774f95a7a863ddcdf1d1`) | 14 | ✅ 跟 GT 很接近 |
+
+**F 啟動：** 清掉 1,882 個 pre-redesign step22 cache（保留 5 個 N=5 smoke render）、背景跑 `step22_coldstart_render --ids-file step23_full_ids.json`（1,897 ids → 5 cached skip + 1,892 fresh）。Task id `b93t679gp`、log `layout_agent/output/step29_F_full_redesign_render.log`、預估 5-6 小時、~$110。
+
+**F 跑完接什麼：**
+1. `step20_sega_eval --mode cold --ids-file step23_full_ids.json --out step29_phasea_full_redesign.json` → 拿 paper-grade Phase A 數字（AL 含 underlay vs GT）
+2. （optional）Phase B GPT-4V 重評（~$30、看視覺品質）
+3. 更新 result.md §2 Step 29 + IMPLEMENTATION_LOG
+4. commit
+
+**成本：** N=5 smoke ~$0.3、F 預估 ~$110、Phase B optional ~$30。
+
+**關聯：** Step 26 dead-end 觸發 Step 27/28 redesign，本 step 是第一次「end-to-end 驗證 redesign 工作」；如 F 跑完數字穩定，論文可宣稱「AL Und 達 designer 水準」+ 補完 Step 23 reality「Und=0」的 limitation。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/27*
