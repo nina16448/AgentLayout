@@ -530,6 +530,85 @@
 
 ---
 
+### Step 26–28 — Underlay redesign：Crello dataset critique + 真實 Designer GT baseline 重算（zero LLM，2026-05-27）
+
+**動機**：Step 25 oracle 預測 underlay 改造可 push Und_l 到 ~0.20–0.23（接近 designer）。實作前先驗證 dataset 假設正確。
+
+**Step 26 — dead-end（已 REVERTED，commit `510a52ef`）**
+
+- 5 個檔案改動把 Crello `type 2/3/4` 元素當 placeable underlay：`save_sample` 存 `asset_NN_underlay.png`、`build_pipeline_inputs` emit 進 asset_list、`analyze_brief` PROMPT 加「underlay → decorative_image」、`generate_layout` PROMPT 加「decorative_image z_index 低於前景」、`step20._cls_from_spec_element` 加 decorative_image → CLS_UNDERLAY 分支
+- Smoke N=8 stratified samples：metric 看似漂亮（Und_l 0→0.67、Und_s 0→0.625、Ali/Ove 不變），但 8/8 視覺品質都不及 designer GT；其中 sample `5de51f659fea0cc374ae59e8`（"Graphic Designer Working on Tablet" 廣告）發生明顯 **role-reversal**：desk photo 被當 underlay（z=2、middle 層），紅色 SALE pill 被當 product_image（z=3、前景）
+- 視覺 role-reversal 觸發深查 dataset 假設、最後決定整批 revert
+
+**Step 27 — dataset audit（保留作為 paper-worthy methodology contribution）**
+
+- 新增 `layout_agent/output/step27_audit_underlay_assets.py`：image content classifier（PIL `unique_colors` + `alpha_var` + `area_ratio`）跑 1,897 個 Step 23 qualifying samples 的 type 0/2/3/4 element
+- 全 corpus（12,274 個 raster element）分類結果：
+
+  | Label | count | 占比 |
+  | --- | --- | --- |
+  | shape (placeable underlay) | **8,087** | **65.9%** |
+  | photo | 2,319 | 18.9% |
+  | full_canvas | 1,821 | 14.8% |
+  | ambiguous | 47 | 0.4% |
+
+- Per-type-code 分布揭露：
+
+  | Type | Total | shape % | photo % | full_canvas % |
+  | --- | --- | --- | --- | --- |
+  | **type 0 (image)** | **9,780** | **82%** | 13% | 5% |
+  | type 2 (svgImage) | 1,661 | 1% | 47% | 52% |
+  | type 3 (coloredBackground) | 503 | 0% | 0% | 100% |
+  | type 4 (graphic) | 330 | 5% | 92% | 3% |
+
+- **核心 dataset finding：Crello 沒有「underlay 專屬 type code」。82% 的 shape underlay 藏在 type 0；type 2/3/4 反而幾乎沒有可 placement 的 shape underlay（type 3 全 full_canvas、type 4 全 photo）**
+- **這同時暴露 Step 23 `_build_gt_layout` 嚴重低估 Designer underlay 能力**：舊 logic line 250-253 把所有 type 0 → CLS_IMAGE_LOGO，**漏算 8,058 個 shape underlay**
+
+**Step 28 — classifier-driven redesign + 真實 Designer GT 重算（zero LLM、commit `510a52ef`）**
+
+- 6 個檔案改動（5 個是 Step 26「正確設計面向」保留 + 1 個新加）：
+  1. `run_iou_eval.save_sample`：對 type 0/2/3/4 element 跑 `_classify_underlay` → shape→`kind=underlay` / photo→`kind=image` / full_canvas→`kind=background_candidate`；descriptor 加 `classifier_label` + `classifier_signals`
+  2. `run_role_team_live_crello.build_pipeline_inputs`（+ `run_iou_eval` 鏡像版）：emit `kind=underlay` 進 asset_list；bg 偵測優先 `kind=background_candidate`
+  3. `analyze_brief.PROMPT_TEMPLATE`：`_underlay.png` 後綴 → `semantic_type=decorative_image`（措辭改為「pre-classified shape plate」）
+  4. `generate_layout.PROMPT_TEMPLATE`：`decorative_image` z_index 嚴格低於前景、bbox extend 10-20%、面積 < 60% canvas
+  5. `step20._cls_from_spec_element`：`semantic_type=decorative_image` → `CLS_UNDERLAY`
+  6. **新增** `step20._build_gt_layout`：從 type_code-driven 改為 meta.json `kind`-driven（`kind=underlay`→CLS_UNDERLAY、`kind=image`→CLS_IMAGE_LOGO、`kind=background_candidate`→skip；保留 95% full-canvas defense）
+- 新增 driver：`step28_resnapshot_with_classifier.py`（重抓 1,897 sample 用新 save_sample；8.5 分鐘、$0；underlay=8,087、image=2,366、background_candidate=1,821、text=8,016 跟 audit 完全對齊）
+- 新增 driver：`step28_phasea_cached_ids.json`（1,887 個有 step22 cached candidate 的 ids；過濾掉 10 個 missing cache 避免重打 LLM）
+- 重算 Phase A（`step20 --mode cold --ids-file step28_phasea_cached_ids.json --out step28_phasea_classifier_redesign.json`，cached AL spec + 新 GT classifier、LLM-free）：
+
+  | Method | Ali ↓ | Ove ↓ | **Und_l ↑** | **Und_s ↑** | Read ↓ | Occ ↓ |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | AgentLayout (cached spec, pre-redesign) | 0.0005 | 0.0015 | 0.0241 | 0.0076 | 0.0029 | 0.0478 |
+  | **Designer GT (NEW classifier)** | 0.0010 | 0.0448 | **0.3536** | **0.2667** | 0.0023 | 0.0490 |
+  | random (5 seeds avg) | 0.0086 | 0.1031 | 0.2482 | 0.0486 | 0.0030 | 0.0529 |
+  | centered_stack | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0031 | 0.0468 |
+
+- **對比 Step 23 reality（舊 type_code-driven GT）**：
+
+  | Metric | Step 23 GT (old) | Step 28 GT (new) | 變化 |
+  | --- | --- | --- | --- |
+  | Designer Und_l | ~0.125 | **0.3536** | **+2.83×** |
+  | Designer Und_s | ~0.125 | **0.2667** | **+2.13×** |
+
+- **核心 paper finding（取代 Step 25 oracle 預估）**：
+  - 🔴 **舊 `_build_gt_layout` 嚴重低估 Designer Und 2-3 倍**：type_code-driven 漏算 8,058 個 type 0 內的 shape underlay。Step 23「designer underlay 不算強」的數字是 measurement artifact，**真實 designer 大量使用 underlay**
+  - 🔴 **真實 AL → Designer capability gap：Und_l ~14.7×、Und_s ~33×**（之前以為兩邊都 0 或 ~1× gap、實際大一個 order of magnitude）
+  - 🟢 **Step 23 Ali/Ove「AL 勝 designer」claim 不受影響**：AL Ali 0.0005 / Ove 0.0015 vs GT Ali 0.0010 / Ove 0.0448 跟舊計算對齊。Ove gap 從 ~32× (0.16/0.005) 縮為 ~30× (0.045/0.0015)，因為新 `_build_gt_layout` 把 GT underlay 也算進 overlap 計算後 Ove 降；但方向不變
+  - 🟢 **Ali/Ove/Read/Occ 為 Step 23 reality 鎖定的 main paper claim 提供獨立驗證**：跨「舊 type_code-driven GT」與「新 classifier-driven GT」兩種 GT 設置，AL 仍維持 Ali/Ove 雙勝
+- **沒做的事（成本 + 時間考量）**：
+  - 修 AL 端讓它真實能 emit underlay（`build_pipeline_inputs` 改動已 commit `510a52ef`，但**沒重跑 1,887 step22 cold-start**，預估 ~$110 / 5-6h LLM）
+  - Phase B（COLE 5-axis）GPT-4V 重評（~$30）
+  - 上面兩項都會讓 AL Und 從 0.024 升到某個值（也許接近 0.20-0.30，但需實證）
+- **誠實定調**：
+  - 本 step 是 **dataset critique 性質的 methodology contribution**（PKU PosterLayout 在 Crello 上 cohort 需 image content classifier，不是 type code）
+  - **可寫進論文** §method：「Crello dataset 沒有 underlay 專屬 type code、需 image content classifier 區分 photo vs shape；既有 SEGA-style 評估若 type_code-driven 會嚴重低估 Designer 真實 Und 約 2-3 倍」
+  - **可寫進論文** §results：「我們的 AgentLayout cold-start 在 Ali/Ove 跨兩種 GT classifier 設置均勝 designer；但在 Und 上 capability gap ~15-33× 為 limitation，pipeline 改造（underlay placement）為明確 future work」
+  - **不可宣稱**：(a) AL 真實能 emit underlay（cached AL spec 仍是 pre-redesign）；(b) 拿 0.354 跟 0.024 的 ratio 當「方法不足」的最終 evidence（需 AL re-render 才知道改造後真實 gap）
+- **Trade-off**：✅ Zero LLM cost、$0、commit 進 git、pytest 154 passed 0 regression；✅ 拿到「真實 Designer GT 0.354」這個 paper-grade baseline；✅ Step 23 main claim 不受影響；❌ AL 端真實能力還沒驗證（待 ~$110 LLM 重跑）；❌ Step 25 oracle 數字部分作廢（587 個 sample 含 photo-mislabeled underlay；舊 oracle 0.2787 偏低估值，真實 designer 是 0.3536）；❌ [[feedback-underlay-is-placement]] memory 中「type 2/3/4 dataset 提供 underlay PNG」這句作廢，已新建 [[project-crello-underlay-in-type0]] 取代
+
+---
+
 ## §3 核心誠實定調（consolidated — 論文 honesty 章節用）
 
 ### §3.1 不可宣稱勝設計師 / 勝 SOTA
@@ -557,6 +636,7 @@
 | ~~標準幾何指標（Layout-IoU + baseline）~~ | ✅ 已完成（Step 15） | N=20 BypassJudge：completion 95%、mean IoU AL 0.0994 > random 0.0567、≈ centered 0.0931。舊 `eval_iou_baseline.json`（5/10 pre-content-aware + stale-id_map bug）已排除不用。 |
 | 擴 N / 放寬 filter（現為最高 open 項） | 🔴 高 | 消剩餘 caveat 需擴 N（→ 趨近 1,971）；judge≠VILA-7B 仍在，head-to-head 需 VILA-7B（重）。content-aware 亦可增樣確認 72/plateau 一致。 |
 | decorative / asset synthesis | 🟢 研究級 | 突破 plateau 需改 schema 加裝飾元素表達力——屬另一個研究問題、大型架構改動，超出本論文範疇。 |
+| underlay placement (AL 端 re-render) | 🔴 高 | Step 28 已完成 dataset critique + pipeline code redesign + 真實 Designer GT baseline（Und_l 0.354）。仍需 ~$110 / 5-6h LLM 重跑 1,887 step22 cold-start，才能拿到「AgentLayout 改造後真實 Und」數字補完 capability gap claim。 |
 | ~~post-Analyst-retry Generator crash~~ | ✅ 已完成（Step 17） | 根因＝Analyst retry 路徑 emit relational hint `below_title`（不在 QC 白名單）→ 全 candidate UNKNOWN_HINT → RuntimeError。雙層修：`analyze_brief.py` prompt 封閉 9-region enum + `rank_candidates_by_violations` graceful degradation（兩 mirror）。離線 140 tests + smoke `5d972ca9` + N=20 隨機樣本**全 0 crash / 0 degradation**。 |
 | ~~N=20 content-aware win-rate 數值~~ | ✅ 已完成（Step 17） | gpt-4o judging 撞 OpenAI 429 後，改用 Step 14 Claude 獨立 judge judge-only 重判 20 個 post-fix render：Win rate 75.0%（80→75 N=20 噪音內）→ crash 修復未灌水/回歸 win-rate。零 pipeline 重跑、零 OpenAI。 |
 
