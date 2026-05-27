@@ -2718,4 +2718,159 @@ would download new: 1797
 
 ---
 
+## 2026-05-27 — Step 26：Underlay pipeline 改造（REVERTED — 設計前提錯誤）+ Step 27 audit finding
+
+**最終狀態：5 檔改動全部 revert（git restore 2 tracked + 手動還原 3 gitignored），保留 audit driver `step27_audit_underlay_assets.py` 與 audit 結果 JSON 作為 dataset critique 證據。**
+
+### Phase 1：Step 26 改造（基於錯誤前提）
+
+**動機：** Step 25 oracle 證明 metric architecture 對 underlay 改造 robust；嘗試讓 AgentLayout pipeline 真正能 emit + place Crello underlay。
+
+**5 檔改動（全 revert）：**
+1. `run_iou_eval.save_sample`：`t in (2,3,4)` 存 `asset_NN_underlay.png`
+2. `run_role_team_live_crello.build_pipeline_inputs` + `run_iou_eval.build_pipeline_inputs`：把 `kind=="underlay"` emit 為 AssetInput
+3. `analyze_brief.PROMPT_TEMPLATE`：「`_underlay.png` 結尾 → semantic_type=decorative_image」
+4. `generate_layout.PROMPT_TEMPLATE`：「decorative_image z_index 嚴格 < 前景；bbox extend 10-20%」
+5. `step20_sega_eval._cls_from_spec_element`：「decorative_image → CLS_UNDERLAY」
+
+**Smoke test（N=8 stratified type 2/3/4 samples）：**
+- 8/8 cold-start ok、0 crash、pytest 154 passed
+- Phase A Und_l 0→0.67、Und_s 0→0.625（**metric 看起來大幅 lift**）
+- 視覺品質 8/8 都不及 designer GT；1/8 完全 role 反轉（sample 5de51f659 desk photo 被當 underlay）
+
+### Phase 2：Step 27 audit 揭露設計前提錯誤
+
+**動機：** 視覺 role 反轉觸發深查；想量化 Crello dataset 「type 2/3/4 = underlay」假設的嚴重度。
+
+**第一輪 audit（只掃 type 2/3/4）：** 8,087 個 type 2/3/4 element 中 shape **僅 29 個（1.2%）**，其餘 55% full_canvas + 43% photo。這個數字嚇人到讓我準備宣告「dataset 沒 underlay」。
+
+**User 糾正「不對不對 應該有 underlay 的」+ 直接 inspect Crello row schema：**
+- Sample #6 palm trees 的綠色齒輪 underlay **在 `el[1] type=0`**（不是 type 2/3/4）
+- Crello dataset **沒有「underlay 專屬 type code」**；所有 raster element（photos / shapes / icons / decorative dots）全擠在 type 0
+- 我們前面以為「type 2/3/4 才是 underlay」根本錯誤
+
+**第二輪 audit（掃 type 0/2/3/4 全部，按 image content classifier 分類）：**
+
+| Label | Element count | 占比 |
+|---|---|---|
+| shape (real underlay) | **8,087** | **65%** |
+| photo | 2,319 | 19% |
+| full_canvas | 1,821 | 15% |
+| ambiguous | 47 | 0.4% |
+
+- **type 0 = 9,780 element，82% 是 shape underlay**（8,058 個 shape 藏在 type 0 裡）
+- type 2 = 52% full_canvas + 47% photo + 1% shape
+- type 3 = 100% full_canvas
+- type 4 = 92% photo
+
+**真實情況**：Crello 全 1,897 個 step23 樣本含 **8,087 個 shape underlay**，平均每樣本 4.3 個。Step 26 用 `t in (2,3,4)` 完全抓錯地方。
+
+### Revert 決策
+
+**revert 理由：**
+1. Step 26 的 `t in (2,3,4)` filter 漏掉 99% 真實 underlay（藏在 type 0）
+2. 命中的 type 2/3/4 中 98.8% 是 photo / full_canvas，不該當 underlay
+3. Smoke test 看似 metric lift 0→0.67，實際是「pipeline 強迫把 photo 當 underlay 放，metric 算出虛假高分」— 是 metric overfit 不是真實 capability
+4. 留著錯誤設計會誤導後續設計；先 revert 乾淨再重做
+
+**保留的部分：**
+- `step27_audit_underlay_assets.py`：classifier 設計可重用
+- `step27_underlay_audit.json`：1,897 樣本完整分類結果
+- `step26_pick_underlay_smoke.py` / `step26_underlay_smoke_ids.json`：作為失敗案例紀錄
+- 8 個 smoke 樣本 `crello_<id>/asset_NN_underlay.png` 暫留（之後 redesign 時 wipe 重抓）
+
+**清除的部分：**
+- `metagpt/ext/agentlayout/actions/{analyze_brief, generate_layout}.py` PROMPT_TEMPLATE：`git restore` 還原
+- `layout_agent/output/{run_iou_eval, run_role_team_live_crello, step20_sega_eval}.py`：手動 Edit 還原（gitignored 無 git baseline）
+- 8 個 smoke sample 的 `step22_coldstart_crello_*_*.{spec,candidate,render}` 已 delete
+
+### Lesson learned（記下來給未來 redesign 用）
+
+1. **「Crello type 2/3/4 = underlay」是錯的整個前提** — 應該基於 image content 而非 type code
+2. **Smoke test metric lift 不代表真實 capability** — Sample #8 role 反轉就應該立刻深查 dataset assumption，不該以「Caveat 可接受」收尾
+3. **AskUserQuestion 寫「方案 A」前要先做 dataset audit**，避免基於錯誤前提投入工程
+
+### 下一輪 redesign 方向（待 user 決定，本 entry 不展開）
+
+正確設計應該：
+- `save_sample` 對所有 type 0/2/3/4 element 跑 image content classifier
+- shape → `kind="underlay"`；photo/icon → `kind="image"`；full_canvas → `kind="background_candidate"`
+- `step20._build_gt_layout` 也用同樣 classifier 認 type 0 shape 為 CLS_UNDERLAY（目前 line 250-253 把所有 type 0 → CLS_IMAGE_LOGO，**Step 23 designer GT Und 0.125 是嚴重低估**）
+- 重算 GT-side metric → 取得「真實 designer Und」對照 baseline
+- 才決定是否值得 LLM re-render
+
+**成本：** Step 26+27 共 ~$0.5 LLM cost（8 個 smoke） + 0 個其他實驗 + 5 檔 code revert。
+
+**關聯：** [[feedback-underlay-is-placement]] memory 已過期需更新（type 2/3/4 不是 placement target）；Step 25 oracle 「587 designer underlay GT bbox」**包含 photos**，數字有問題。
+
+---
+
+## 2026-05-27 — Step 28：Classifier-driven underlay redesign（zero LLM、拿到真實 Designer GT baseline）
+
+**動機：** Step 27 audit 證明 Crello 真實 underlay 大量藏在 type 0（8,058 / 9,780 = 82%）；Step 26 用 `t in (2,3,4)` 完全抓錯地方。本 step 把 Step 26 5 個正確設計面向（filename-suffix prompt、step20 `_cls_from_spec_element` decorative_image 分支）保留，把錯誤面向（save_sample 用 type code 判 underlay）換成 image content classifier 驅動。
+
+**5 個檔案改動：**
+
+| # | 檔案 | Step 26（已 revert）做的 | Step 28 重做的 |
+|---|---|---|---|
+| 1 | `run_iou_eval.save_sample` | `t in (2,3,4)` → kind=underlay | type 0/2/3/4 都跑 `step27._classify_underlay` → shape→underlay PNG / photo→image PNG / full_canvas→background_candidate PNG；descriptor 加 `classifier_label` + `classifier_signals` |
+| 2 | `run_role_team_live_crello.build_pipeline_inputs` | kind="underlay" emit AssetInput | （本 step 暫不動，留待 LLM re-render 階段） |
+| 3 | `analyze_brief.PROMPT_TEMPLATE` | _underlay.png → decorative_image | 同 Step 26，但措辭從「Crello dataset convention」改為「asset filename heuristic」，背景強調 classifier 已預過濾非 photo / 非 full canvas |
+| 4 | `generate_layout.PROMPT_TEMPLATE` | decorative_image z_index/bbox/area | 同 Step 26，措辭強調「pre-classified shape plate」 |
+| 5 | `step20._cls_from_spec_element` | decorative_image → CLS_UNDERLAY | 同 Step 26 |
+| 6 | `step20._build_gt_layout` | （Step 26 沒動） | **新增**：從 type_code-driven 改為 meta.json `kind`-driven；kind=underlay→CLS_UNDERLAY、kind=image→CLS_IMAGE_LOGO、kind=background_candidate→skip；保留 95% full-canvas defense |
+
+**Driver 與 artefact：**
+- 新增 `step27_audit_underlay_assets.py`（Step 27 階段保留）：image content classifier + 1,897 sample 完整分類
+- 新增 `step28_resnapshot_with_classifier.py`：重抓 1,897 sample 用新 save_sample（wipe legacy asset_*.png + meta.json，重寫）
+- 新增 `step28_phasea_cached_ids.json`：1,887 個有 step22 cached candidate 的 ids（過濾掉 10 個 missing cache 樣本避免重打 LLM）
+- 產出 `step27_underlay_audit.json`、`step28_resnapshot_stats.json`、`step28_phasea_classifier_redesign.json`
+
+**重抓統計（N=1,897，8.5 分鐘、$0）：**
+- 1,897/1,897 重寫成功、0 failed、11,643 個 legacy file removed
+- 新 element kind 分布：text=8,016、**underlay=8,087**、image=2,366、background_candidate=1,821
+- underlay count 8,087 跟 Step 27 audit 數字完全對齊
+
+**Phase A 重算結果（N=1,887、`step20 --mode cold --ids-file step28_phasea_cached_ids.json`、LLM-free）：**
+
+| Method | Ali ↓ | Ove ↓ | Und_l ↑ | Und_s ↑ | Read ↓ | Occ ↓ |
+|---|---|---|---|---|---|---|
+| AgentLayout (cached spec) | 0.0005 | 0.0015 | 0.0241 | 0.0076 | 0.0029 | 0.0478 |
+| **Designer GT (new classifier)** | 0.0010 | 0.0448 | **0.3536** | **0.2667** | 0.0023 | 0.0490 |
+| random | 0.0086 | 0.1031 | 0.2482 | 0.0486 | 0.0030 | 0.0529 |
+| centered | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0031 | 0.0468 |
+
+**對比 Step 23 reality（舊 GT 用 type_code）：**
+
+| Metric | Step 23 GT (old) | Step 28 GT (new) | 變化 |
+|---|---|---|---|
+| Designer Und_l | ~0.125 | **0.3536** | **+2.83×** |
+| Designer Und_s | ~0.125 | **0.2667** | **+2.13×** |
+
+**核心 paper finding：**
+- **舊 `_build_gt_layout` 嚴重低估 Designer Und 約 2-3 倍**：因為 type_code-driven 漏掉 8,058 個藏在 type 0 的 shape underlay
+- **真實 AL → Designer capability gap：Und_l 14.7× / Und_s 35×**（之前以為兩邊都 0、或 AL 0 vs GT 0.125 = ~1×）
+- Ali/Ove/Read/Occ 跟 Step 23 reality 對齊（AL Ali 0.0005 / Ove 0.0015 vs GT Ali 0.0010 / Ove 0.0448），**Step 23 「AL Ali/Ove 勝 Designer」claim 不受影響**
+
+**為什麼 AL Und_l = 0.024 而非 0**：AL spec/candidate 是舊版 step22 cached（沒 underlay 改造），但 step20 GT 比對是用 set IoU，AL 的 image element 偶然 contain 到 GT underlay 也會貢獻一點 Und 分數。0.024 << 0.354，效果不影響結論。
+
+**沒做的事（user 表示「之後再跑」）：**
+- 修 `build_pipeline_inputs` 把 kind=underlay 加進 AL asset_list
+- 重跑 1,887 step22 cold-start 拿 AL 真實 underlay 能力（~$110、5-6h LLM）
+- Phase B（COLE 5-axis）重跑（~$30）
+- result.md §6 整合（新 Designer GT baseline + 真實 capability gap）
+
+**離線回歸：** pytest tests/metagpt/ext/agentlayout/ → 154 passed, 12 skipped, 0 fail。
+
+**成本：** $0（classifier 純 PIL、重抓純 dataset stream、step20 重算用 cached candidate）。
+
+**Lesson learned 更新：**
+- ✅ Image content classifier > dataset type code（Crello type 系統不可靠）
+- ✅ 「先 audit 再決定設計」（Step 25 oracle → Step 27 audit → Step 28 redesign 三層 zero-cost validation）
+- ⚠️ Step 25 oracle 「587 個 designer underlay GT bbox」**包含 photos** → oracle 數字部分作廢，新 baseline 應以 Step 28 為準
+
+**關聯：** [[feedback-underlay-is-placement]] memory **完全作廢**（type 2/3/4 不是 placement target）；新 memory 應寫「Crello 真實 underlay 大量在 type 0、需 image content classifier 區分 photo vs shape」。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/27*

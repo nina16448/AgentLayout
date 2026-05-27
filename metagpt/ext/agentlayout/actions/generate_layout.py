@@ -212,6 +212,19 @@ ATTENTION: Canvas vertical coverage. The layout MUST occupy the full canvas
            is short, distribute them with larger inter-element gaps so the
            bottom edge still hits 0.85 of canvas_height -- do NOT cluster
            everything in the top half and leave a giant white band below.
+ATTENTION: Decorative-image underlays. An element with
+           semantic_type=="decorative_image" is a pre-classified shape plate
+           (low colour complexity / transparent edges, not a photo). Treat
+           it as a middle stacking layer:
+             - z_index MUST be strictly LESS THAN the z_index of every title,
+               subtitle, body_text, caption, product_image, logo, icon, cta
+               and pricetag element. A typical good assignment is
+               background_image=1, decorative_image=2, image/logo/text=3+.
+             - The underlay should typically sit BEHIND a paired text/product
+               element with bbox extending 10-20% beyond that element on each
+               side (so the underlay frames the foreground, not the reverse).
+             - Do NOT make decorative_image cover >=95% of the canvas; that is
+               background territory. Keep its area below 60% of canvas.
 ATTENTION: If feedback is provided, satisfy every structured_suggestion in at
            least 4 of 5 candidates. Use the suggestions[] free text only as
            supplementary context. Do not ignore the structured list, but also

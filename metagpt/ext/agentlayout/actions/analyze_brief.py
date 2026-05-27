@@ -197,6 +197,27 @@ verbatim if the brief implies a different mood):
   "minimalist white"), you MAY emit "#FFFFFF" -- but then keep
   inferred_fields["canvas.background_color"]=false because it was user-specified.
 
+# Underlay assets (asset filename heuristic)
+ATTENTION: Any asset whose `asset_ref` ends with the suffix `_underlay.png`
+has been pre-classified by the pipeline as a placeable decorative shape
+(low colour complexity or transparent edges, NOT a photo and NOT a full
+canvas plate). These plates are designed to sit BEHIND a text or product
+element and visually anchor it.
+
+Rules for `_underlay.png` assets:
+- The element you emit MUST have:
+    semantic_type: "decorative_image"
+    visual_type:   "image"
+    asset_ref:     <the exact `_underlay.png` path from asset_list>
+- Do NOT mark these as `background_image` -- the full-canvas plate is a
+  separate asset (suffix `_background.png` if present).
+- Do NOT mark these as `product_image` / `logo` / `icon` -- they are
+  semantic-free decorative shapes by classifier construction.
+- The underlay should usually be paired with the text or product element it
+  visually supports. When the pairing is implied by the brief you MAY add a
+  `z_order` hard_constraint with hint "above_background" on the underlay
+  so the Layout Generator stacks it correctly.
+
 # Format example
 {format_example}
 
