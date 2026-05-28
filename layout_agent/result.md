@@ -22,8 +22,8 @@
   - **GPT-4V 4 軸 aesthetic（Step 21，Phase B）**：同 N=20、SEGA Table 3 COLE 1–10 rubric。AgentLayout 在 SEGA paper 的 cross-paper 數值對照看似 STV=6.150 達 SEGA-13B 量級——**但這個 claim 已被 Step 21b 推翻**（見下）。
   - **Judge-config 校準對照（Step 21b）**：把 Crello designer 原圖跑過完全相同的 gpt-4o + 4 軸 prompt config，**designer GT Smean = 7.525**，比 SEGA paper 自報的 SEGA-13B 6.320 還高——證明 **judge calibration 跨 paper 顯著漂移，SEGA Table 3 數值不能直接 cross-paper 比較**。
   - **N=100 scale-up（Step 22）**：推翻 N=20 兩個 claim：(a) Smean ratio 70% → 64.8%（N=20 高估 5 pp）；(b) STV 不是最強軸、SIO 才是（N=100 STV 70% < SIO 75%）。Phase A geometric claim 仍 robust。
-  - **N=1,897 完整 Crello test split（Step 23/23b，最新，2026-05-27）**：對齊 SEGA paper full coverage。pre-launch 四項校準（MAX_ELEMENTS=inf / max_token=16000 / BASNet+ISNet saliency / COLE single-call JSON）後跑 1,895/1,897 樣本完整 Phase A + Phase B + Designer GT within-judge。
-    - **Phase A**（N=1,896）：Ali=0.0004 < GT 0.0010（勝 2.5×）、Ove=0.0050 << GT 0.1038（勝 20.8×）、Occ=0.1249 < GT 0.1279（**flipped 勝**，saliency 校準後）、Read 近平手、Und_l/Und_s = 0（已知 limitation）。**Ali/Ove 跨 N=20/100/1,897 三 scale 全部勝、N=1,897 還多 Occ 勝——這是論文最 robust 的 contribution**。
+  - **N=1,897 完整 Crello test split（Step 23/23b，最新，2026-05-27）**：對齊 SEGA paper full coverage。pre-launch 四項校準（MAX_ELEMENTS=inf / max_token=16000 / BASNet+ISNet saliency / COLE single-call JSON）後完成 render 1,895/1,897（99.89%）；Phase A N=1,896、Phase B N=1,895、Designer GT within-judge N=1,897。
+    - **Phase A**（N=1,896）：Ali=0.0004 < GT 0.0010（勝 ~2.2×）、Ove=0.0050 << GT 0.1038（勝 ~20.6×）、Occ=0.1249 < GT 0.1279（**flipped 勝**，saliency 校準後）、Read 近平手、Und_l/Und_s = 0（已知 limitation）。**Ali/Ove 跨 N=20/100/1,897 三 scale 全部勝、N=1,897 還多 Occ 勝——這是論文最 robust 的 contribution**。
     - **Phase B Smean within-judge ratio**：N=100 64.8% → **N=1,897 65.8%**（1pp 內、跨 scale 穩定）。**Smean capability ratio 跨三個 scale robust**——第二個論文可宣稱 claim。
     - **🚨 Per-axis ranking 再次 flip**：N=100「SIO 75% 最強、SQL 56% 最弱」→ N=1,897「**SQL 69.1% 最強、SIO 63.4% 最弱**」。**axis-ranking 又一次被推翻**，small-sample selection bias systematically misleads per-axis claim → 第三個 methodology contribution。
   - **Underlay-enabled 端到端（Step 29，最新，2026-05-28）**：把 Step 23「Und=0」當 baseline、underlay redesign 後重跑 N=1,895 cold-start 當 **ablation 對照**。AL Und_l 0→**0.5518** > designer 0.3542、Und_s 0→**0.4428** > 0.2674（4 幾何指標 Ali/Ove/Und_l/Und_s 全勝 designer），Ali/Ove 雙勝跨三設置（Step 23 舊 GT / Step 28 cached / Step 29 re-render）維持；但 Read/Occ 略退（over-containment），**Und 勝是 metric-level containment、非視覺更好**，視覺品質（Phase B COLE 5-axis）尚未重評。流程先 N=5 smoke gate（0 role-reversal）才燒 $110 全跑。
@@ -442,8 +442,8 @@
   | random (5 seeds avg) | 0.0086 | 0.1887 | 0 | 0 | 0.0137 | 0.1374 |
   | centered_stack | 0.0000 | 0.0000 | 0 | 0 | 0.0143 | 0.1219 |
 
-  - **Ali 勝 designer 2.5×**（0.0004 < 0.0010）— alignment 純幾何優勢，N=100 → N=1,897 維持。
-  - **Ove 勝 designer 20.8×**（0.0050 << 0.1038）— overlay (IoU) 極端優勢、跨 N 維持並**加大 gap**（N=100 是 85×→ 此處 20.8× 因為 designer GT pool 變大、平均 Ove 從 0.1104 降至 0.1038）。
+  - **Ali 勝 designer ~2.2×**（0.00045 vs 0.00100）— alignment 純幾何優勢，N=100 → N=1,897 維持。
+  - **Ove 勝 designer ~20.6×**（0.0050 << 0.1038）— overlay (IoU) 極端優勢、跨 N 維持並**加大 gap**（N=100 是 85×→ 此處 ~20.6× 因為 designer GT pool 變大、平均 Ove 從 0.1104 降至 0.1038）。
   - **Occ flipped 勝**（0.1249 < 0.1279）— 飽和度遮擋，N=100 還是略輸 designer，此處因 BASNet+ISNet saliency 校準 + 大樣本平均後**反向**。
   - Read 近平手（0.0144 vs 0.0129）— text readability 差距收斂到 0.0015。
   - Und_l/Und_s = 0 — 已知 limitation：cold-start pipeline 不生 underlay decoration、designer GT 含真 underlay。
@@ -595,7 +595,7 @@
 - **核心 paper finding（取代 Step 25 oracle 預估）**：
   - 🔴 **舊 `_build_gt_layout` 嚴重低估 Designer Und 2-3 倍**：type_code-driven 漏算 8,058 個 type 0 內的 shape underlay。Step 23「designer underlay 不算強」的數字是 measurement artifact，**真實 designer 大量使用 underlay**
   - 🔴 **真實 AL → Designer capability gap：Und_l ~14.7×、Und_s ~33×**（之前以為兩邊都 0 或 ~1× gap、實際大一個 order of magnitude）
-  - 🟢 **Step 23 Ali/Ove「AL 勝 designer」claim 不受影響**：AL Ali 0.0005 / Ove 0.0015 vs GT Ali 0.0010 / Ove 0.0448 跟舊計算對齊。Ove gap 從 ~32× (0.16/0.005) 縮為 ~30× (0.045/0.0015)，因為新 `_build_gt_layout` 把 GT underlay 也算進 overlap 計算後 Ove 降；但方向不變
+  - 🟢 **Step 23 Ali/Ove「AL 勝 designer」claim 不受影響**：AL Ali 0.0005 / Ove 0.0015 vs GT Ali 0.0010 / Ove 0.0448 跟舊計算對齊。Ove gap 從 ~20.8× (0.104/0.005、Step 23 老 type_code GT) 變為 ~30× (0.045/0.0015、Step 28 新 classifier GT)：新 `_build_gt_layout` 把 GT underlay 也算進 overlap 後 GT Ove 降，但 AL 仍維持 Ove 大勝、方向不變
   - 🟢 **Ali/Ove/Read/Occ 為 Step 23 reality 鎖定的 main paper claim 提供獨立驗證**：跨「舊 type_code-driven GT」與「新 classifier-driven GT」兩種 GT 設置，AL 仍維持 Ali/Ove 雙勝
 - **沒做的事（成本 + 時間考量）**：
   - 修 AL 端讓它真實能 emit underlay（`build_pipeline_inputs` 改動已 commit `510a52ef`，但**沒重跑 1,887 step22 cold-start**，預估 ~$110 / 5-6h LLM）
