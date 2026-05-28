@@ -636,7 +636,8 @@
 | ~~標準幾何指標（Layout-IoU + baseline）~~ | ✅ 已完成（Step 15） | N=20 BypassJudge：completion 95%、mean IoU AL 0.0994 > random 0.0567、≈ centered 0.0931。舊 `eval_iou_baseline.json`（5/10 pre-content-aware + stale-id_map bug）已排除不用。 |
 | 擴 N / 放寬 filter（現為最高 open 項） | 🔴 高 | 消剩餘 caveat 需擴 N（→ 趨近 1,971）；judge≠VILA-7B 仍在，head-to-head 需 VILA-7B（重）。content-aware 亦可增樣確認 72/plateau 一致。 |
 | decorative / asset synthesis | 🟢 研究級 | 突破 plateau 需改 schema 加裝飾元素表達力——屬另一個研究問題、大型架構改動，超出本論文範疇。 |
-| underlay placement (AL 端 re-render) | 🔴 高 | Step 28 已完成 dataset critique + pipeline code redesign + 真實 Designer GT baseline（Und_l 0.354）。仍需 ~$110 / 5-6h LLM 重跑 1,887 step22 cold-start，才能拿到「AgentLayout 改造後真實 Und」數字補完 capability gap claim。 |
+| ~~underlay placement (AL 端 re-render)~~ | ✅ 已完成（Step 29） | Step 29 端到端跑 1,895 redesigned cold-start：AL Und_l 0.5518 > designer 0.3542（1.56×）、Und_s 0.4428 > 0.2674（1.66×），Ali/Ove 維持雙勝。4 幾何指標全勝、Read/Occ 略輸（over-containment trade-off）。 |
+| Phase B（COLE 5-axis）對 underlay-enabled 配置重評 | 🟡 中 | Step 29 只重跑 Phase A 幾何指標；underlay-enabled 配置的視覺品質（COLE GPT-4V 5-axis）尚未重評（~$30），可補強「Und 高是否=視覺好」的證據。 |
 | ~~post-Analyst-retry Generator crash~~ | ✅ 已完成（Step 17） | 根因＝Analyst retry 路徑 emit relational hint `below_title`（不在 QC 白名單）→ 全 candidate UNKNOWN_HINT → RuntimeError。雙層修：`analyze_brief.py` prompt 封閉 9-region enum + `rank_candidates_by_violations` graceful degradation（兩 mirror）。離線 140 tests + smoke `5d972ca9` + N=20 隨機樣本**全 0 crash / 0 degradation**。 |
 | ~~N=20 content-aware win-rate 數值~~ | ✅ 已完成（Step 17） | gpt-4o judging 撞 OpenAI 429 後，改用 Step 14 Claude 獨立 judge judge-only 重判 20 個 post-fix render：Win rate 75.0%（80→75 N=20 噪音內）→ crash 修復未灌水/回歸 win-rate。零 pipeline 重跑、零 OpenAI。 |
 
