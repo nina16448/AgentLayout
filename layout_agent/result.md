@@ -26,6 +26,7 @@
     - **Phase A**（N=1,896）：Ali=0.0004 < GT 0.0010（勝 2.5×）、Ove=0.0050 << GT 0.1038（勝 20.8×）、Occ=0.1249 < GT 0.1279（**flipped 勝**，saliency 校準後）、Read 近平手、Und_l/Und_s = 0（已知 limitation）。**Ali/Ove 跨 N=20/100/1,897 三 scale 全部勝、N=1,897 還多 Occ 勝——這是論文最 robust 的 contribution**。
     - **Phase B Smean within-judge ratio**：N=100 64.8% → **N=1,897 65.8%**（1pp 內、跨 scale 穩定）。**Smean capability ratio 跨三個 scale robust**——第二個論文可宣稱 claim。
     - **🚨 Per-axis ranking 再次 flip**：N=100「SIO 75% 最強、SQL 56% 最弱」→ N=1,897「**SQL 69.1% 最強、SIO 63.4% 最弱**」。**axis-ranking 又一次被推翻**，small-sample selection bias systematically misleads per-axis claim → 第三個 methodology contribution。
+  - **Underlay-enabled 端到端（Step 29，最新，2026-05-28）**：把 Step 23「Und=0」當 baseline、underlay redesign 後重跑 N=1,895 cold-start 當 **ablation 對照**。AL Und_l 0→**0.5518** > designer 0.3542、Und_s 0→**0.4428** > 0.2674（4 幾何指標 Ali/Ove/Und_l/Und_s 全勝 designer），Ali/Ove 雙勝跨三設置（Step 23 舊 GT / Step 28 cached / Step 29 re-render）維持；但 Read/Occ 略退（over-containment），**Und 勝是 metric-level containment、非視覺更好**，視覺品質（Phase B COLE 5-axis）尚未重評。流程先 N=5 smoke gate（0 role-reversal）才燒 $110 全跑。
 - **誠實定調（最重要，post-N=1,897 final）**：**不宣稱勝設計師 aesthetic、不宣稱勝 SEGA Smean、不宣稱 Refinement Loop 帶來測量上的改善、不宣稱跨 paper SEGA Table 3 數值可直比、不宣稱 per-axis ranking（SIO 最強 / STV 最強等都已被 N=1,897 推翻）**；可宣稱「**(1) Phase A Ali/Ove 純幾何勝 designer GT 跨 N=20/100/1,897 三個 scale 全部維持，N=1,897 還多 Occ 勝（Step 20+22+23 三重 robust，judge-drift-free）；(2) Within-judge Phase B Smean AL 達 designer ceiling 65.8%（N=1,897，與 N=100 64.8% 跨 scale 穩定）；(3) 三個 methodology contribution：judge 跨 paper 漂移（Step 21b）+ N=20→100 STV selection bias（Step 22）+ N=100→1,897 SIO/SQL selection bias（Step 23b）→ full-scale validation that per-axis claims need ≥1,000 sample**」。task-aligned pairwise 下設計師仍勝（step 11 N=3：2:1）；N=20 Win rate 80% 的 self-preference confound 已由 Step 14 獨立 judge 排除，但 judge≠VILA-7B caveat 仍在；N=1,897 ≈ SEGA full Crello (1,971) 的 96.2% coverage 消除「N=20≠1,971」caveat。AesthetiQ 仍僅作 qualitative/indicative 對照、不進勝負表。Render quality（背景/字型/裝飾合成）為 by-design 不做的 scope 外能力。
 
 ---
@@ -606,6 +607,38 @@
   - **可寫進論文** §results：「我們的 AgentLayout cold-start 在 Ali/Ove 跨兩種 GT classifier 設置均勝 designer；但在 Und 上 capability gap ~15-33× 為 limitation，pipeline 改造（underlay placement）為明確 future work」
   - **不可宣稱**：(a) AL 真實能 emit underlay（cached AL spec 仍是 pre-redesign）；(b) 拿 0.354 跟 0.024 的 ratio 當「方法不足」的最終 evidence（需 AL re-render 才知道改造後真實 gap）
 - **Trade-off**：✅ Zero LLM cost、$0、commit 進 git、pytest 154 passed 0 regression；✅ 拿到「真實 Designer GT 0.354」這個 paper-grade baseline；✅ Step 23 main claim 不受影響；❌ AL 端真實能力還沒驗證（待 ~$110 LLM 重跑）；❌ Step 25 oracle 數字部分作廢（587 個 sample 含 photo-mislabeled underlay；舊 oracle 0.2787 偏低估值，真實 designer 是 0.3536）；❌ [[feedback-underlay-is-placement]] memory 中「type 2/3/4 dataset 提供 underlay PNG」這句作廢，已新建 [[project-crello-underlay-in-type0]] 取代
+
+---
+
+### Step 29 — Underlay-enabled AL 端到端重跑：N=1,895 paper-grade Phase A（2026-05-28）
+
+**動機**：Step 28 拿到真實 Designer GT（Und_l 0.354）但 AL 端仍是 pre-redesign cached spec（Und_l 0.024）。Step 28「沒做的事」第一項——重跑 step22 cold-start 讓 AL 真實 emit underlay——本 step 完成，補完 capability gap claim。
+
+**方法**：
+
+1. **N=5 redesign smoke gate（先擋再燒）**：從 1,802 個含 `kind=underlay` 的 sample 挑 5 個 stratified by element count (3/7/9/11/14)，清 cache 跑新版 cold-start。結果 5/5 ok、0 crash、**0 role-reversal**（對比 Step 26 type-code-driven 的 8/8 role-reversal）；AL Und_l 0.024→0.584、Und_s 0.008→0.533，視覺檢查確認 photo 仍 photo、shape 仍 underlay。N=5 過關才啟動全集（避免重蹈 Step 26 燒完才發現 role-reversal）。
+2. **F 全集 cold-start re-render**：清 1,882 個 pre-redesign cache（保留 5 個 smoke render）、跑 `step22_coldstart_render --ids-file step23_full_ids.json`（~$110、~6h）。結果 1,890 ok + 5 cached = **1,895 / 1,897（99.89%）**，2 crash（0.1%，ids `5f3a63f1a637ee11e3d600fc`、`5889aa8395a7a863ddcc361a`）。
+3. **Phase A 重算（zero-LLM）**：`step20 --mode cold --ids-file step23_full_ids.json --out step29_phasea_full_redesign.json`，用新 underlay-enabled AL spec/candidate vs 新 classifier GT。
+
+**結果（N=1,895，underlay-enabled AL vs Designer GT）**：
+
+| Method | Ali ↓ | Ove ↓ | **Und_l ↑** | **Und_s ↑** | Read ↓ | Occ ↓ |
+| --- | --- | --- | --- | --- | --- | --- |
+| **AgentLayout (underlay-enabled)** | 0.0000 | 0.0035 | **0.5518** | **0.4428** | 0.0311 | 0.1620 |
+| Designer GT (new classifier) | 0.0010 | 0.0449 | 0.3542 | 0.2674 | 0.0235 | 0.1371 |
+
+- AL Und 軌跡：Step23 `0.000` → Step28 cached `0.024` → N=5 smoke `0.584` → **full `0.5518`**
+- 4 個幾何指標（Ali / Ove / Und_l / Und_s）全勝 designer；2 個 content-aware（Read +33% / Occ +18%）略輸
+- Designer GT 0.3542 vs Step 28 的 0.3536：N=1,895 vs N=1,887 的 8 樣本差異、一致
+
+**誠實定調**：
+
+- 🟢 underlay capability gap 已從 Step 28 的「AL 0.024 vs GT 0.354（~15× 落後）」反轉為「AL 0.55 vs GT 0.35（達/超過 designer 幾何水準）」——pipeline redesign 證實有效
+- 🟢 Ali/Ove 雙勝在 underlay-enabled 配置下維持（跨三種設置：Step 23 舊 GT、Step 28 cached AL、Step 29 re-render AL，方向一致）
+- 🔴 **Und 勝是 metric-level containment、不等於視覺品質更好**：Read/Occ 同時略退（over-containment trade-off），N=5 smoke 也觀察到 underlay 偶爾過大 / 底部留空。論文把 baseline AL（Und=0）vs underlay-enabled AL（Und=0.55）當 **ablation 對照**，不覆寫 Step 23、不宣稱視覺勝 designer
+- 🟡 underlay-enabled 配置的視覺品質（COLE 5-axis GPT-4V）**尚未重評**（~$30，§4 open 項）——「Und 高是否=視覺好」目前只有 Phase A 幾何證據
+
+**Trade-off**：✅ 補完 Step 23/28 的 AL 端缺口、capability gap claim 完整；✅ N=5 smoke gate 在燒 $110 前擋掉 role-reversal 風險；✅ Ali/Ove 雙勝跨三設置 robust；❌ Read/Occ 略退（over-containment）；❌ 視覺品質（Phase B）未重評
 
 ---
 

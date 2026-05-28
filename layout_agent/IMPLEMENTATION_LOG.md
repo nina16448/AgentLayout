@@ -2873,7 +2873,7 @@ would download new: 1797
 
 ---
 
-## 2026-05-27 evening — Step 29：N=5 redesign smoke + 啟動 F 全集 cold-start
+## 2026-05-27→28 — Step 29：N=5 redesign smoke + F 全集 cold-start 完成（端到端 underlay-enabled，N=1,895 paper-grade）
 
 **動機：** Step 28 已完成 code + GT 重算，但 AL 端是 pre-redesign cached spec（Und=0.024）。F 動作（重跑 1,887 step22 cold-start）成本 ~$110 / 5-6h，啟動前先 N=5 smoke 驗證 redesign 真實能讓 AL emit underlay 且無 role-reversal。
 
@@ -2908,16 +2908,24 @@ would download new: 1797
 
 **F 啟動：** 清掉 1,882 個 pre-redesign step22 cache（保留 5 個 N=5 smoke render）、背景跑 `step22_coldstart_render --ids-file step23_full_ids.json`（1,897 ids → 5 cached skip + 1,892 fresh）。Task id `b93t679gp`、log `layout_agent/output/step29_F_full_redesign_render.log`、預估 5-6 小時、~$110。
 
-**F 跑完接什麼：**
-1. `step20_sega_eval --mode cold --ids-file step23_full_ids.json --out step29_phasea_full_redesign.json` → 拿 paper-grade Phase A 數字（AL 含 underlay vs GT）
-2. （optional）Phase B GPT-4V 重評（~$30、看視覺品質）
-3. 更新 result.md §2 Step 29 + IMPLEMENTATION_LOG
-4. commit
+**F 全集跑完最終結果（2026-05-28、commit `146f1df1`）：**
+- Cold-start render：1,897 ids → 1,890 ok + 5 cached = **1,895 / 1,897（99.89%）**，2 crash（0.1%，ids `5f3a63f1a637ee11e3d600fc`、`5889aa8395a7a863ddcc361a`）
+- Phase A 重算（`step20 --mode cold --ids-file step23_full_ids.json --out step29_phasea_full_redesign.json`、zero-LLM）：
 
-**成本：** N=5 smoke ~$0.3、F 預估 ~$110、Phase B optional ~$30。
+| Method | Ali ↓ | Ove ↓ | **Und_l ↑** | **Und_s ↑** | Read ↓ | Occ ↓ |
+|---|---|---|---|---|---|---|
+| **AL (full N=1,895 underlay-enabled)** | 0.0000 | 0.0035 | **0.5518** | **0.4428** | 0.0311 | 0.1620 |
+| Designer GT (N=1,895 new classifier) | 0.0010 | 0.0449 | 0.3542 | 0.2674 | 0.0235 | 0.1371 |
+
+- AL Und 軌跡：Step23 0.000 → Step28 cached 0.024 → N=5 smoke 0.584 → **full 0.5518**（全集比 N=5 略降、收斂合理）
+- ✅ 4 幾何指標（Ali/Ove/Und_l/Und_s）全勝 designer；⚠️ Read +33% / Occ +18% 略輸（over-containment trade-off，與 N=5 趨勢一致）
+- 誠實定調：Und 勝是 metric-level containment、非視覺更好；論文當 baseline (Und=0) vs underlay-enabled (Und=0.55) **ablation 對照**，不覆寫 Step 23
+- 🟡 Phase B（COLE 5-axis）對 underlay-enabled 配置尚未重評（~$30、user 2026-05-28 決定先不跑）；視覺品質目前只有 Phase A 幾何證據
+
+**成本：** N=5 smoke ~$0.3、F 全集 ~$110、Phase B（未跑）~$30。result.md §2/§4 + 本 LOG 已同步。
 
 **關聯：** Step 26 dead-end 觸發 Step 27/28 redesign，本 step 是第一次「end-to-end 驗證 redesign 工作」；如 F 跑完數字穩定，論文可宣稱「AL Und 達 designer 水準」+ 補完 Step 23 reality「Und=0」的 limitation。
 
 ---
 
-*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/27*
+*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/28*
