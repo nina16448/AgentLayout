@@ -2,7 +2,9 @@
 
 The only multi-modal LLM agent in the pipeline. Renders each candidate to a
 PNG, encodes it as base64, and asks a vision-capable LLM to score the layouts
-across four aesthetic dimensions (each 0-25, total 0-100).
+across the COLE 5-axis aesthetic rubric (each 1-10, total 5-50). See Step 30
+migration (2026-06-09) for the rationale aligning this with the offline
+Phase B COLE eval (layout_agent/output/step21_phaseb_eval.py).
 
 Pipeline position::
 
@@ -11,14 +13,14 @@ Pipeline position::
         v
     JudgeAesthetic (THIS) -> AestheticJudgement
         |                       |
-        |                       +-> decision == 'accept' (>= 75) -> stop, return best
+        |                       +-> decision == 'accept' (>= 35) -> stop, return best
         |                       +-> decision == 'reject'         -> feedback to
         |                                                            Generator (rounds 1..N)
         |                                                            or Analyst (round N+1+)
 
 Validation layers:
 1. Pydantic schema (``AestheticJudgement`` / ``Evaluation`` / ``JudgeScores``):
-   - JudgeScores 4 dims each 0-25
+   - JudgeScores 5 COLE axes each 1-10
    - Evaluation total == sum(scores)  (model_validator)
    - accept <-> feedback null, reject <-> feedback non-null  (model_validator)
 2. Action-level semantic check (``_validate_against_input``):
@@ -68,26 +70,28 @@ FORMAT_EXAMPLE_ACCEPT = """{
   "evaluations": [
     {
       "candidate_id": "cand_01",
-      "total": 74,
+      "total": 33,
       "scores": {
-        "requirement_alignment": 20,
-        "info_hierarchy": 18,
-        "layout_balance": 19,
-        "visual_coherence": 17
+        "design_layout": 7,
+        "content_relevance": 7,
+        "typography_color": 6,
+        "graphics_images": 6,
+        "innovation_originality": 7
       },
       "strengths": "headline_1 position is clear, logo_1 in top-right matches the brief.",
       "weaknesses": "product_img_1 and headline_1 are too far apart, weakening their semantic link."
     },
     {
       "candidate_id": "cand_02",
-      "total": 85,
+      "total": 38,
       "scores": {
-        "requirement_alignment": 23,
-        "info_hierarchy": 21,
-        "layout_balance": 20,
-        "visual_coherence": 21
+        "design_layout": 8,
+        "content_relevance": 8,
+        "typography_color": 7,
+        "graphics_images": 7,
+        "innovation_originality": 8
       },
-      "strengths": "Generous whitespace, clear visual hierarchy, palette matches style_keywords.",
+      "strengths": "Generous whitespace, clear reading order, palette matches style_keywords.",
       "weaknesses": "price_1 is slightly small and could be more legible."
     }
   ],
@@ -104,7 +108,7 @@ FORMAT_EXAMPLE_ACCEPT = """{
         "metric": "width",
         "op": "increase_by",
         "value": 24,
-        "rationale": "Small bump improves legibility without breaking the accepted balance."
+        "rationale": "Small bump improves legibility without breaking the accepted design_layout."
       },
       {
         "kind": "resize",
@@ -125,15 +129,16 @@ FORMAT_EXAMPLE_REJECT = """{
   "evaluations": [
     {
       "candidate_id": "cand_03",
-      "total": 71,
+      "total": 31,
       "scores": {
-        "requirement_alignment": 20,
-        "info_hierarchy": 16,
-        "layout_balance": 18,
-        "visual_coherence": 17
+        "design_layout": 6,
+        "content_relevance": 7,
+        "typography_color": 6,
+        "graphics_images": 6,
+        "innovation_originality": 6
       },
       "strengths": "Palette aligns with style_keywords, background space is well used.",
-      "weaknesses": "headline_1 is too small to dominate the layout, inconsistent with its importance."
+      "weaknesses": "headline_1 is too small to dominate the layout, weakening design_layout hierarchy."
     }
   ],
   "feedback": {
@@ -150,7 +155,7 @@ FORMAT_EXAMPLE_REJECT = """{
         "metric": "font_size",
         "op": ">=",
         "value": 72,
-        "rationale": "Currently ~32px, too small to anchor info hierarchy."
+        "rationale": "Currently ~32px, too small to anchor the design_layout hierarchy."
       },
       {
         "kind": "spacing",
@@ -183,20 +188,43 @@ Layout Tree: {layout_tree}
 Dominant palette: {dominant_palette}
 Candidate IDs (in the same order as the attached images): {candidate_ids}
 
-# Scoring rubric (each dimension 0-25, total 100)
-A. requirement_alignment (0-25)
-   Does the layout fulfill the user's design goals and hard_constraints?
+# Scoring rubric (each dimension 1-10 on the COLE scale, total 5-50)
+Grading anchors (apply to EVERY axis):
+  * 10 = flawless on this axis.
+  * 7  = mediocre / acceptable.
+  * 4  = clear shortcomings.
+  * 1-2 = severely poor.
 
-B. info_hierarchy (0-25)
-   Is the visual focus clear? Is the reading order natural?
-   Do elements follow the importance hierarchy in the Layout Tree?
+A. design_layout (1-10)
+   Is the layout clean, balanced, and consistent? Does the organization of
+   elements create clear paths for the eye and follow the importance
+   hierarchy in the Layout Tree? A 10 maximizes readability and visual
+   appeal; a 1 is a cluttered, confusing layout with no hierarchy or flow.
 
-C. layout_balance (0-25)
-   Is visual weight distributed evenly?
-   No excessive crowding or empty space?
+B. content_relevance (1-10)
+   Does the layout fulfill the user's design goals, hard_constraints, AND
+   resonate with the intended audience? This axis absorbs the legacy
+   `requirement_alignment` semantics: brief fidelity is graded HERE. A 10
+   means the content aligns with the design's purpose and the brief; a 1
+   means it is irrelevant to the brief or to the audience.
 
-D. visual_coherence (0-25)
-   Do the style, spacing, and colors align with style_keywords and dominant_palette?
+C. typography_color (1-10)
+   Do font selection, size, line spacing, color, placement, and the overall
+   color scheme work together to enhance readability and harmonize with
+   `style_keywords` and `dominant_palette`? A 10 is excellent legibility +
+   on-style palette; a 1 is unreadable or clashing.
+
+D. graphics_images (1-10)
+   Do graphics/images enhance the design rather than distract? Are they
+   high quality, relevant, and harmonious with other elements? A 10 means
+   imagery enhances message; a 1 means low-quality, irrelevant, or
+   distracting visuals. If only placeholder boxes are visible, score
+   conservatively (5-7) on quality of placement/sizing.
+
+E. innovation_originality (1-10)
+   Does the design show an original, creative approach beyond following
+   trends? A 10 stands out in originality; a 1 is generic or trend-
+   following with no unique interpretation of the brief.
 
 # Structured suggestions (REQUIRED on BOTH accept and reject)
 You MUST always emit a non-null `feedback` object containing
@@ -252,10 +280,10 @@ Color example:    {{"kind":"color","target_id":"bg_1","metric":"color","op":"set
 
 # Format examples (output one JSON matching whichever case applies)
 
-Case A -- best score >= 75, accept (feedback contains polish-step suggestions):
+Case A -- best score >= 35, accept (feedback contains polish-step suggestions):
 {format_example_accept}
 
-Case B -- best score < 75, reject with corrective feedback:
+Case B -- best score < 35, reject with corrective feedback:
 {format_example_reject}
 
 # Instruction

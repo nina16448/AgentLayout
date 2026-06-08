@@ -3,6 +3,8 @@
 > 本文件為**獨立**版：不需閱讀 `README.md` 或 `live_runs_table.md` 即可理解每個實驗的動機、方法、數值與誠實定調。供論文 results / limitations / honesty 章節直接取用。
 > 數值 source-of-truth：`layout_agent/live_runs_table.md`、`layout_agent/output/step13_sota_winrate_results.json`、`layout_agent/output/step11_winrate_results.json`、`layout_agent/output/step23_phasea_full.json`、`layout_agent/output/step23_phaseb_full.json`、`layout_agent/output/step23_phaseb_designer_gt_full.json`。
 > 最後更新：2026-05-27（Step 23/23b N=1,897 完整 Crello test split 完成）。
+>
+> ⚠️ **Step 30 Baseline 警示（2026-06-09）：** in-pipeline Aesthetic Judge 已從 4 軸 0-25 / total 0-100 改為 COLE 5 軸 1-10 / total 5-50（`ACCEPT_THRESHOLD` 75 → 35）。本文件目前所有 Phase A/B/win-rate 數值都是 **pre-Step 30 schema 產出**（git tag `step29-baseline-pre-judge-migration`、commit `0956f2bb`），跟 Step 30+ 之後的新 trace JSON / Phase B 結果**不可直接比較**。Step 30 動機與設計見 `IMPLEMENTATION_LOG.md`「Step 30」一節；若要跑新 baseline 並 cross-compare，需重跑 Phase B（~$30 / N=100）。
 
 ---
 

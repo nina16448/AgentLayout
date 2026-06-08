@@ -327,14 +327,15 @@ class LayoutPipeline:
 
     @staticmethod
     def _best_subscores(judgement: AestheticJudgement) -> Optional[Dict[str, int]]:
-        """Extract 4-dim subscores of the best candidate from the verdict."""
+        """Extract COLE 5-axis subscores of the best candidate from the verdict."""
         for ev in judgement.evaluations:
             if ev.candidate_id == judgement.best_candidate_id:
                 return {
-                    "requirement_alignment": ev.scores.requirement_alignment,
-                    "info_hierarchy": ev.scores.info_hierarchy,
-                    "layout_balance": ev.scores.layout_balance,
-                    "visual_coherence": ev.scores.visual_coherence,
+                    "design_layout": ev.scores.design_layout,
+                    "content_relevance": ev.scores.content_relevance,
+                    "typography_color": ev.scores.typography_color,
+                    "graphics_images": ev.scores.graphics_images,
+                    "innovation_originality": ev.scores.innovation_originality,
                 }
         return None
 

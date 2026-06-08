@@ -45,31 +45,34 @@ from metagpt.ext.agentlayout.schema import (
 
 
 def _judgement(decision: JudgeDecision, cand_id: str = "r0_cand_01") -> AestheticJudgement:
-    """Schema invariant: total == sum(scores). REJECT 4x17=68, ACCEPT 4x20=80.
+    """Schema invariant: total == sum(scores). On the COLE 5-axis 1-10 scale
+    (Step 30+): REJECT 5x6=30 (well below ACCEPT_THRESHOLD=35), ACCEPT 5x8=40.
 
     Refinement Loop (2026-05-20): ACCEPT must also carry feedback (polish-step
     suggestions consumed by the mandatory next refinement round).
     """
     if decision == JudgeDecision.ACCEPT:
         scores = JudgeScores(
-            requirement_alignment=20,
-            info_hierarchy=20,
-            layout_balance=20,
-            visual_coherence=20,
+            design_layout=8,
+            content_relevance=8,
+            typography_color=8,
+            graphics_images=8,
+            innovation_originality=8,
         )
-        total = 80
+        total = 40
         feedback = AestheticFeedback(
             common_issues="overall good; minor polish",
             suggestions=["nudge headline_1 +5% width"],
         )
     else:
         scores = JudgeScores(
-            requirement_alignment=17,
-            info_hierarchy=17,
-            layout_balance=17,
-            visual_coherence=17,
+            design_layout=6,
+            content_relevance=6,
+            typography_color=6,
+            graphics_images=6,
+            innovation_originality=6,
         )
-        total = 68
+        total = 30
         feedback = AestheticFeedback(
             common_issues="title too small",
             suggestions=[

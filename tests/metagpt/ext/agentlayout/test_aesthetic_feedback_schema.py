@@ -58,12 +58,13 @@ def test_legacy_aesthetic_judgement_reject_still_parses():
         "evaluations": [
             {
                 "candidate_id": "cand_03",
-                "total": 71,
+                "total": 30,
                 "scores": {
-                    "requirement_alignment": 20,
-                    "info_hierarchy": 16,
-                    "layout_balance": 18,
-                    "visual_coherence": 17,
+                    "design_layout": 6,
+                    "content_relevance": 6,
+                    "typography_color": 6,
+                    "graphics_images": 6,
+                    "innovation_originality": 6,
                 },
                 "strengths": "palette ok",
                 "weaknesses": "headline_1 too small",
@@ -220,14 +221,22 @@ def test_suggestion_target_id_is_required():
 
 
 def _ev(cid: str, total: int) -> Evaluation:
+    """Build a valid Evaluation on the COLE 5-axis 1-10 scale (Step 30+).
+
+    Distributes `total` across 5 axes so each axis lies in [1, 10] for any
+    `total` in the supported [5, 46] band. Above 46 the remainder axis would
+    exceed 10; tests that need >46 must construct the Evaluation manually.
+    """
+    base = total // 5
     return Evaluation(
         candidate_id=cid,
         total=total,
         scores=JudgeScores(
-            requirement_alignment=total // 4,
-            info_hierarchy=total // 4,
-            layout_balance=total // 4,
-            visual_coherence=total - 3 * (total // 4),
+            design_layout=base,
+            content_relevance=base,
+            typography_color=base,
+            graphics_images=base,
+            innovation_originality=total - 4 * base,
         ),
         strengths="s",
         weaknesses="w",
@@ -240,7 +249,7 @@ def test_accept_with_feedback_is_required_refinement_loop():
     j = AestheticJudgement(
         decision=JudgeDecision.ACCEPT,
         best_candidate_id="cand_01",
-        evaluations=[_ev("cand_01", 88)],
+        evaluations=[_ev("cand_01", 40)],
         feedback=AestheticFeedback(
             common_issues="overall good, minor polish only",
             suggestions=["bump price_1 +15%"],
@@ -267,7 +276,7 @@ def test_accept_without_feedback_is_now_invalid():
         AestheticJudgement(
             decision=JudgeDecision.ACCEPT,
             best_candidate_id="cand_01",
-            evaluations=[_ev("cand_01", 88)],
+            evaluations=[_ev("cand_01", 40)],
             feedback=None,
         )
 
@@ -277,7 +286,7 @@ def test_reject_must_have_feedback():
         AestheticJudgement(
             decision=JudgeDecision.REJECT,
             best_candidate_id="cand_01",
-            evaluations=[_ev("cand_01", 60)],
+            evaluations=[_ev("cand_01", 25)],
             feedback=None,
         )
 
@@ -288,7 +297,7 @@ def test_reject_with_only_structured_suggestions_is_valid():
     j = AestheticJudgement(
         decision=JudgeDecision.REJECT,
         best_candidate_id="cand_01",
-        evaluations=[_ev("cand_01", 60)],
+        evaluations=[_ev("cand_01", 25)],
         feedback=AestheticFeedback(
             common_issues="x",
             suggestions=[],
@@ -309,27 +318,31 @@ def test_reject_with_only_structured_suggestions_is_valid():
 
 
 # ============================================================
-# ACCEPT_THRESHOLD calibration (2026-05-14: 80 -> 75)
+# ACCEPT_THRESHOLD calibration history:
+#   2026-05-14: 80 -> 75 on the legacy 4-axis 0-25 scale (total 0-100).
+#   2026-06-09: 75 -> 35 on the COLE 5-axis 1-10 scale (total 5-50). Step 30
+#               migration: 35 = 5 * 7 = mean axis 7/10 = COLE "mediocre" anchor.
 # ============================================================
 
 
-def test_accept_threshold_is_75():
-    """Pinned constant. If someone bumps it back to 80 without recalibrating
-    against Crello GT (which scores ~68), they must update this test and the
-    docstring history."""
-    assert ACCEPT_THRESHOLD == 75
+def test_accept_threshold_is_35():
+    """Pinned constant. Step 30 migration anchored ACCEPT_THRESHOLD to 35 on
+    the COLE 5-axis 1-10 scale. If someone changes it, they must (a) update
+    this test, (b) update schema.py's calibration history docstring, and (c)
+    re-run verify_judge_corner.py to re-measure the Crello GT baseline on the
+    new scale before committing."""
+    assert ACCEPT_THRESHOLD == 35
 
 
-def test_accept_threshold_strictly_above_gt_baseline():
-    """The 2026-05-13 Judge corner Case 2 measured Crello GT at 68. The
-    threshold must stay strictly above the GT baseline so the loop does not
-    accept random human-quality output, but also not so high it can never
-    accept anything (the 80 problem)."""
-    GT_BASELINE = 68  # 2026-05-13 verify_judge_corner Case 2
-    assert ACCEPT_THRESHOLD > GT_BASELINE
-    assert ACCEPT_THRESHOLD < 80, (
-        "Pre-calibration was 80; if you reverted, re-justify with N-sample data."
-    )
+def test_accept_threshold_inside_cole_scale_bounds():
+    """The COLE 5-axis 1-10 schema constrains Evaluation.total to [5, 50].
+    The threshold must sit strictly inside this range, above the 'all axes
+    mediocre = 5*5 = 25' floor and below the perfect 50 ceiling, so the
+    acceptance comparison is non-degenerate."""
+    COLE_MEDIOCRE_FLOOR = 25  # 5 axes * 5/10 mediocre anchor
+    COLE_MAX_TOTAL = 50  # 5 axes * 10/10 ceiling
+    assert ACCEPT_THRESHOLD > COLE_MEDIOCRE_FLOOR
+    assert ACCEPT_THRESHOLD < COLE_MAX_TOTAL
 
 
 def test_accept_judgement_at_exactly_threshold_validates():

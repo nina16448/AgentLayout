@@ -167,8 +167,9 @@ Operators:
   "increase_by" / "decrease_by" -> shift the current value by that amount.
 
 If two structured suggestions conflict with each other or with a
-hard_constraint, prefer the one that better serves info_hierarchy
-(the Layout Tree's depth order tells you which element is more important).
+hard_constraint, prefer the one that better serves design_layout
+(the Layout Tree's depth order tells you which element is more important;
+a clean, balanced, hierarchy-respecting design wins).
 
 # Layout Tree
 {layout_tree}
@@ -203,7 +204,7 @@ ATTENTION: Each candidate must take a distinctly different compositional approac
            Do not repeat similar layouts across candidates.
 ATTENTION: Canvas vertical coverage. The layout MUST occupy the full canvas
            height -- a poster with the bottom 30% empty looks unfinished and
-           gets penalised on layout_balance / visual_coherence. Concretely:
+           gets penalised on design_layout / typography_color. Concretely:
                max(top + height) across all elements >= 0.85 * canvas_height
                min(top)                              <= 0.10 * canvas_height
            Worked example for an 800x1200 canvas: the lowest element's bottom
@@ -367,15 +368,16 @@ class GenerateLayout(Action):
         bbox_block = "{\n" + ",\n".join(bbox_lines) + "\n}"
         subscores = prev_best_subscores or {}
         scores_line = (
-            f"requirement_alignment={subscores.get('requirement_alignment', '?')}  "
-            f"info_hierarchy={subscores.get('info_hierarchy', '?')}  "
-            f"layout_balance={subscores.get('layout_balance', '?')}  "
-            f"visual_coherence={subscores.get('visual_coherence', '?')}"
+            f"design_layout={subscores.get('design_layout', '?')}  "
+            f"content_relevance={subscores.get('content_relevance', '?')}  "
+            f"typography_color={subscores.get('typography_color', '?')}  "
+            f"graphics_images={subscores.get('graphics_images', '?')}  "
+            f"innovation_originality={subscores.get('innovation_originality', '?')}"
         )
         return (
             "prev_best_layout (element_id -> [left, top, width, height], pixels):\n"
             f"{bbox_block}\n"
-            f"prev_best_subscores (0-25 each):\n  {scores_line}"
+            f"prev_best_subscores (COLE 5-axis, 1-10 each):\n  {scores_line}"
         )
 
     @staticmethod

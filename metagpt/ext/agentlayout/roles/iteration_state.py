@@ -102,10 +102,11 @@ class RetryPayload(BaseModel):
     prev_best_subscores: Optional[Dict[str, int]] = Field(
         default=None,
         description=(
-            "Previous round's best candidate four-dim subscores "
-            "{requirement_alignment, info_hierarchy, layout_balance, "
-            "visual_coherence} in 0-25. Generator uses the lowest-scoring dim "
-            "to prioritise its refinement edits."
+            "Previous round's best candidate COLE 5-axis subscores "
+            "{design_layout, content_relevance, typography_color, "
+            "graphics_images, innovation_originality} in 1-10. Generator uses "
+            "the lowest-scoring axis to prioritise its refinement edits. "
+            "(Step 30 migration 2026-06-09: was 4 dims 0-25 pre-Step 30.)"
         ),
     )
 
@@ -266,13 +267,14 @@ class IterationStateRole(Role):
     def _extract_best_subscores(
         judgement: AestheticJudgement,
     ) -> Optional[Dict[str, int]]:
-        """Find the best candidate's four-dim subscores from the evaluations list."""
+        """Find the best candidate's COLE 5-axis subscores from the evaluations list."""
         for ev in judgement.evaluations:
             if ev.candidate_id == judgement.best_candidate_id:
                 return {
-                    "requirement_alignment": ev.scores.requirement_alignment,
-                    "info_hierarchy": ev.scores.info_hierarchy,
-                    "layout_balance": ev.scores.layout_balance,
-                    "visual_coherence": ev.scores.visual_coherence,
+                    "design_layout": ev.scores.design_layout,
+                    "content_relevance": ev.scores.content_relevance,
+                    "typography_color": ev.scores.typography_color,
+                    "graphics_images": ev.scores.graphics_images,
+                    "innovation_originality": ev.scores.innovation_originality,
                 }
         return None

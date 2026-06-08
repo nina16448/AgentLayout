@@ -2928,4 +2928,40 @@ would download new: 1797
 
 ---
 
-*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/05/28*
+## Step 30 — In-pipeline Aesthetic Judge 改用 COLE 5-axis 1-10 schema（對齊 Phase B 評分軸）
+
+**動機（2026-06-09）：** in-pipeline Aesthetic Judge（`metagpt/ext/agentlayout/actions/judge_aesthetic.py`）原本用 4 維 0-25 / total 0-100 的自訂 rubric（`requirement_alignment` / `info_hierarchy` / `layout_balance` / `visual_coherence`），跟 Phase B 離線 COLE 評分（`step21_phaseb_eval.py`、5 軸 1-10）軸不一致。Generator 的 refinement loop 是按 lowest-scoring axis 來改，所以 in-loop 最佳化的目標跟最後 paper 評分目標脫鉤。本 step 把兩邊對齊，看 COLE 5 軸是否能拉高 Phase B 數字。
+
+**設計拍板：**
+- 分數範圍：**1-10 per axis、total 5-50**（直接對齊 COLE）
+- `requirement_alignment` 折入 `content_relevance` rubric 文字（保留 brief fidelity 約束、不另立第 6 軸）
+- `ACCEPT_THRESHOLD`：75/100 → **35/50**（= 5 × 7，對應 COLE rubric "mediocre design = 7" 的 anchor，比例約 0.70 與舊 0.75 相近但語意對齊 COLE）
+- Step 29 baseline 釘 git tag **`step29-baseline-pre-judge-migration`**（commit `0956f2bb`）；所有 pre-Step 30 trace JSON / winrate JSON / Phase B 結果都跟新 schema 不可直接比較
+
+**碰過的程式碼：**
+
+| 檔案 | 改點 |
+|---|---|
+| `metagpt/ext/agentlayout/schema.py:413-441` | `JudgeScores` 4 field 0-25 → 5 field 1-10；`Evaluation.total` range 0-100 → 5-50；`_total_matches_scores` 算式更新 |
+| `metagpt/ext/agentlayout/schema.py:568` | `ACCEPT_THRESHOLD` 75 → 35，docstring 加 Step 30 calibration history |
+| `metagpt/ext/agentlayout/actions/judge_aesthetic.py` | PROMPT_TEMPLATE rubric A/B/C/D → A(design_layout)/B(content_relevance 含 brief alignment)/C(typography_color)/D(graphics_images)/E(innovation_originality)；threshold 引用 75 → 35；`FORMAT_EXAMPLE_ACCEPT`/`REJECT` 三個 few-shot 全換 5 軸 key + 新數值；module docstring 改寫 |
+| `metagpt/ext/agentlayout/actions/generate_layout.py:170,206,370-378` | conflict-resolution prompt 引用 `info_hierarchy` → `design_layout`；canvas-coverage prompt 引用 `layout_balance / visual_coherence` → `design_layout / typography_color`；`_format_prev_best()` scores_line 5 軸 + label `(0-25 each)` → `(COLE 5-axis, 1-10 each)` |
+| `metagpt/ext/agentlayout/roles/iteration_state.py:95-110,265-278` | `IterationState.prev_best_subscores` description 換；`_extract_best_subscores()` dict key 5 軸 |
+| `metagpt/ext/agentlayout/pipeline.py:328-339` | `_best_subscores()` dict key 5 軸 |
+| `tests/metagpt/ext/agentlayout/test_aesthetic_feedback_schema.py` | legacy_aesthetic_judgement_reject payload 換 5 軸 + total 30；`_ev()` helper 改 `total // 5` 分配 5 軸；call sites `_ev(cid, 88)` → 40、`_ev(cid, 60)` → 25；ACCEPT_THRESHOLD 斷言 75 → 35 + 重寫 calibration test 為「>25 COLE mediocre floor & <50 max」 |
+| `tests/metagpt/ext/agentlayout/test_iteration_state.py:47-93` | `_judgement()` fixture REJECT/ACCEPT 換 5 軸 + total 30/40 |
+| `tests/metagpt/ext/agentlayout/test_judge_corner.py:167-194` | `requires_llm` test 軟下限 60 → 25，上限 100 → 50，ACCEPT_THRESHOLD 斷言 75 → 35，docstring 補 Step 30 calibration history |
+| `layout_agent/output/{verify_roles_mvp,smoke_team_reject,verify_iteration_corner}.py` | 三個 fixture helper 換 5 軸 + total 30/40 |
+| `layout_agent/output/verify_judge_corner.py` | docstring 寫明新 scale、Case 1 gap >= 8 → >= 4、Case 2 GT total >= 60 → >= 25 |
+
+**驗證（offline pytest，conda env `meta`）：**
+- agentlayout 套件 154 passed / 12 skipped
+- 全 repo offline subset 148 passed / 20 skipped / 0 failed（pytest.ini default ignore，53.9s）
+
+**Baseline incompatibility 警示：** Step 30 之後產生的 `role_live_*_trace.json`、Phase B JSON（`step21_phaseb_results.json`、`step23_phaseb_*.json` 等）schema 跟 pre-Step 30 不同；論文表格的 SEGA-13B vs AgentLayout Phase B 對比若想拿 Step 30+ 結果比 Step 29 之前舊數字，**必須重跑** Phase B（~$30 / N=100）才能 cross-compare。Step 29 baseline 透過 git tag `step29-baseline-pre-judge-migration` 釘住，任何時候 `git checkout step29-baseline-pre-judge-migration` 可取舊 schema replay。
+
+**下一步建議：** 跑一個 N=5 cold-start smoke 看 in-loop Judge 給的 COLE 5 軸 score 分布合不合理（不要 5 個都打 7、`graphics_images` / `innovation_originality` 對半成品有區辨力），確認後再決定要不要全集 N=1,895 重跑 Phase A/B 跟 Step 29 baseline 比較。
+
+---
+
+*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/09*

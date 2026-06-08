@@ -167,12 +167,16 @@ async def test_judge_multimodal_probe_picks_gt_over_collapsed():
 @pytest.mark.requires_llm
 @pytest.mark.asyncio
 async def test_judge_gt_layout_total_meets_soft_floor():
-    """GT alone should score >= 60 (Judge is not pathologically harsh).
+    """GT alone should score >= the COLE 'mediocre' anchor (5*5=25) on the
+    5-axis 1-10 scale (Judge is not pathologically harsh).
 
-    NOTE: 2026-05-13 verify_judge_corner observed GT=68 vs the old
-    ACCEPT_THRESHOLD=80, which we calibrated down to 75 on 2026-05-14. Even
-    so, GT=68 is BELOW 75 so this test still does NOT assert ACCEPT — but the
-    headroom is now believable rather than degenerate.
+    Calibration history:
+    * 2026-05-13: GT=68/100 vs old ACCEPT=80 (legacy 4-axis 0-25 scale).
+    * 2026-06-09 (Step 30): migrated to COLE 5-axis 1-10 scale; total in
+      [5, 50]; ACCEPT_THRESHOLD=35. The 'soft floor' = 25 (mean axis 5/10,
+      COLE 'mediocre' anchor). The GT baseline on the new scale will be
+      re-measured by verify_judge_corner.py after the migration; until then
+      we only assert the soft floor, not whether GT crosses ACCEPT.
     """
     if not (SAMPLE_DIR / "result_spec.json").exists():
         pytest.skip(f"missing fixture: {SAMPLE_DIR}")
@@ -189,9 +193,9 @@ async def test_judge_gt_layout_total_meets_soft_floor():
     assert len(judgement.evaluations) == 1
     gt_total = judgement.evaluations[0].total
     assert judgement.best_candidate_id == "cand_gt"
-    assert gt_total >= 60, f"got {gt_total} (soft floor)"
-    assert gt_total <= 100
-    assert ACCEPT_THRESHOLD == 75  # sanity constant (calibrated 2026-05-14)
+    assert gt_total >= 25, f"got {gt_total} (COLE mediocre soft floor)"
+    assert gt_total <= 50
+    assert ACCEPT_THRESHOLD == 35  # sanity constant (Step 30 calibration 2026-06-09)
 
 
 # ============================================================

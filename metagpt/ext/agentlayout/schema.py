@@ -411,19 +411,26 @@ class CandidatesBatch(BaseModel):
 
 
 class JudgeScores(BaseModel):
-    """Four scoring dimensions, each 0-25. Sum capped at 100 by validation on Evaluation."""
+    """COLE 5-axis scoring (Step 30 migration, 2026-06-09).
 
-    requirement_alignment: int = Field(..., ge=0, le=25)
-    info_hierarchy: int = Field(..., ge=0, le=25)
-    layout_balance: int = Field(..., ge=0, le=25)
-    visual_coherence: int = Field(..., ge=0, le=25)
+    Aligns the in-pipeline Aesthetic Judge with the offline Phase B COLE eval
+    (layout_agent/output/step21_phaseb_eval.py). Each axis 1-10, total 5-50.
+    `content_relevance` absorbs the old `requirement_alignment` semantics so
+    brief fidelity is still optimised (see judge_aesthetic.py rubric B).
+    """
+
+    design_layout: int = Field(..., ge=1, le=10)
+    content_relevance: int = Field(..., ge=1, le=10)
+    typography_color: int = Field(..., ge=1, le=10)
+    graphics_images: int = Field(..., ge=1, le=10)
+    innovation_originality: int = Field(..., ge=1, le=10)
 
 
 class Evaluation(BaseModel):
     """Per-candidate evaluation entry produced by Aesthetic Judge."""
 
     candidate_id: str
-    total: int = Field(..., ge=0, le=100)
+    total: int = Field(..., ge=5, le=50)
     scores: JudgeScores
     strengths: str
     weaknesses: str
@@ -432,7 +439,11 @@ class Evaluation(BaseModel):
     def _total_matches_scores(self) -> "Evaluation":
         s = self.scores
         expected = (
-            s.requirement_alignment + s.info_hierarchy + s.layout_balance + s.visual_coherence
+            s.design_layout
+            + s.content_relevance
+            + s.typography_color
+            + s.graphics_images
+            + s.innovation_originality
         )
         if self.total != expected:
             raise ValueError(
@@ -565,21 +576,20 @@ class AestheticJudgement(BaseModel):
 # ============================================================
 
 
-ACCEPT_THRESHOLD: int = 75
+ACCEPT_THRESHOLD: int = 35
 """Aesthetic Judge total score >= this value triggers ``decision='accept'``.
 
-Calibration history (2026-05-14):
-    Previously hardcoded at 80 (2026-05-07). The 2026-05-13 Judge corner-case
-    verification (verify_judge_corner.py Case 2) measured the Crello designer
-    ground-truth layout — taken as the realistic upper aesthetic bound — at
-    only 68 / 100 under the existing prompt rubric. With ACCEPT=80 the loop
-    can never accept anything resembling human-quality output and the live
-    feedback loop becomes degenerate (75->72->72 observed 2026-05-10/14).
-    Lowering to 75 keeps the threshold strictly above the GT baseline (68),
-    leaving real headroom to discriminate, while no longer demanding scores
-    no system in this fixture has produced. A full N-sample calibration on
-    the Crello dataset is the next step (see layout_agent/README.md
-    "ACCEPT_THRESHOLD calibration" section)."""
+Calibration history:
+    2026-05-07: 80 (4 axes * 25 max = 100).
+    2026-05-14: 75 (lowered after corner-case verification measured Crello
+                 designer GT at 68/100 under the old rubric).
+    2026-06-09 (Step 30): 35 on the new COLE 5-axis 1-10 scale (total 5-50).
+                 35 = 5 * 7 i.e. mean axis 7/10, the COLE rubric's "mediocre
+                 design" anchor (judge_aesthetic.py PROMPT_TEMPLATE rule 2).
+                 This preserves the prior 75/100 = 0.75 acceptance ratio while
+                 mapping cleanly onto COLE's documented quality anchors. A
+                 full N-sample calibration on the Crello dataset is the next
+                 step after the Step 30 migration smoke run."""
 
 K_VALID: int = 5
 """Target number of Quality-Checker-passing candidates per generation round."""
