@@ -384,8 +384,19 @@ class LayoutElement(BaseModel):
     font_family: Optional[str] = None
     font_size: Optional[int] = Field(default=None, gt=0)
     font_weight: Optional[str] = Field(
-        default=None, description="e.g. 'regular' / 'bold' / a numeric weight as str."
+        default=None,
+        description=(
+            "e.g. 'regular' / 'bold' / a numeric weight as str. LLMs sometimes "
+            "emit numeric int (e.g. 700); the validator coerces int->str."
+        ),
     )
+
+    @field_validator("font_weight", mode="before")
+    @classmethod
+    def _coerce_font_weight_int_to_str(cls, v):
+        if isinstance(v, int) and not isinstance(v, bool):
+            return str(v)
+        return v
     color: Optional[str] = Field(default=None, description="Hex string, e.g. '#1B3A6B'.")
     text_align: Optional[str] = Field(
         default=None, description="'left' / 'center' / 'right' / 'justify'."
@@ -637,6 +648,36 @@ class IterationState(BaseModel):
     )
     feedback_target: Optional[FeedbackTarget] = None
     last_feedback: Optional[AestheticFeedback] = None
+
+    best_so_far_total: Optional[int] = Field(
+        default=None,
+        ge=5,
+        le=50,
+        description=(
+            "Step 31 (2026-06-09): refinement-loop best-so-far guard. The "
+            "highest total score observed across ALL judgement rounds in this "
+            "pipeline run. Updated only when a new round's best STRICTLY "
+            "exceeds this value; otherwise the loop keeps using best-so-far as "
+            "the Generator's anchor, preventing the score from regressing on "
+            "noisy re-judges (root cause #1 of the loop's negative result in "
+            "Step 20b / Step 30 N=5)."
+        ),
+    )
+    best_so_far_layout: Optional[Dict[str, Tuple[float, float, float, float]]] = Field(
+        default=None,
+        description=(
+            "Bbox dict of the best-so-far candidate. Replaces "
+            "judgement.best_candidate_layout when routing refinement feedback "
+            "to LayoutGenerator. None until the first ACCEPT/REJECT round."
+        ),
+    )
+    best_so_far_subscores: Optional[Dict[str, int]] = Field(
+        default=None,
+        description=(
+            "Per-axis sub-scores (5 COLE axes 1-10) of the best-so-far "
+            "candidate. Passed to the Generator alongside best_so_far_layout."
+        ),
+    )
 
     def next_target(self) -> FeedbackTarget:
         """Decide which agent receives feedback after the most recent verdict.

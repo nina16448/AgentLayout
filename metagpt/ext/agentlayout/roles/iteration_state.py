@@ -181,6 +181,20 @@ class IterationStateRole(Role):
             self._state.consecutive_accepts = 0
             self._state.reject_count += 1
 
+        # Step 31 best-so-far guard: only update when THIS round's best STRICTLY
+        # exceeds the running best. Prevents Markov-chain regression on noisy
+        # re-judges (root cause #1 from the Step 30 N=5 negative-result
+        # analysis). When this round is worse-or-equal, the Generator anchors
+        # to the previously-stored best instead.
+        this_round_best = self._extract_best_total(judgement)
+        if this_round_best is not None and (
+            self._state.best_so_far_total is None
+            or this_round_best > self._state.best_so_far_total
+        ):
+            self._state.best_so_far_total = this_round_best
+            self._state.best_so_far_layout = judgement.best_candidate_layout
+            self._state.best_so_far_subscores = self._extract_best_subscores(judgement)
+
         # Termination check #1: refinement actually converged (two accepts in a row).
         if is_accept and self._state.consecutive_accepts >= ACCEPT_CONSECUTIVE_STOP:
             logger.info(
@@ -227,10 +241,18 @@ class IterationStateRole(Role):
         if target == FeedbackTarget.LAYOUT_GENERATOR:
             cause_cls: type[Action] = RetryGeneration
             target_name = "LayoutGenerator"
-            # Refinement Loop: carry prev_best_layout + subscores so the
-            # Generator runs in anchored-edit mode.
-            prev_layout = judgement.best_candidate_layout
-            prev_scores = self._extract_best_subscores(judgement)
+            # Refinement Loop (Step 20) + best-so-far guard (Step 31):
+            # anchor the Generator on the BEST candidate seen across ALL
+            # rounds, not just this round. Falls back to this-round's best
+            # only when best-so-far has not been populated yet (which can
+            # happen on the first verdict before _extract_best_total ran).
+            prev_layout = (
+                self._state.best_so_far_layout or judgement.best_candidate_layout
+            )
+            prev_scores = (
+                self._state.best_so_far_subscores
+                or self._extract_best_subscores(judgement)
+            )
         else:
             cause_cls = RetryAnalyst
             target_name = "Analyst"
@@ -262,6 +284,21 @@ class IterationStateRole(Role):
             cause_by=cause_cls,
             send_to={target_name},
         )
+
+    @staticmethod
+    def _extract_best_total(judgement: AestheticJudgement) -> Optional[int]:
+        """Find the best candidate's `total` from the evaluations list.
+
+        Step 31 (2026-06-09): used by the best-so-far guard in `_act()` to
+        decide whether this round's verdict should overwrite the running
+        best. Returns None if the best_candidate_id is absent from the
+        evaluations list (defensive; pydantic validation should already
+        prevent this).
+        """
+        for ev in judgement.evaluations:
+            if ev.candidate_id == judgement.best_candidate_id:
+                return ev.total
+        return None
 
     @staticmethod
     def _extract_best_subscores(

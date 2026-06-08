@@ -2964,4 +2964,62 @@ would download new: 1797
 
 ---
 
+## Step 31 — Refinement Loop Diagnostic：N=5 live + best-so-far guard，confirm Step 20b limitation
+
+**動機（2026-06-09）：** Step 30 把 in-pipeline Judge 改成 COLE 5 軸後跑 verify_judge_corner 看到 GT=31/50，比舊 scale GT=68/100 略低；想知道 refinement loop 拿到新軸能不能爬上去（answer Phase B 對齊有沒有實際效益）。順帶撈出兩個 pre-existing pipeline bug、實作 best-so-far guard 看能不能止血。
+
+**N=5 live 跑了三次：**
+
+| 跑次 | 結果 | 修了甚麼 |
+|---|---|---|
+| Run 1（裸 Step 30）| 5/5 crash 在 PlanAssets：`LayoutTree element mismatch. missing=['underlay_1', ...]` | — |
+| Run 2（加 PlanAssets prompt 規則 + live driver 5 軸 print + font_weight int→str validator）| 5/5 跑通、0 accept、3/5 flat、2/5 退步、平均 best=33.2 | PlanAssets prompt 加 `decorative_image` 必須入樹規則；`run_role_team_live_crello.py`/`run_role_team_live.py` 印分數欄位換 5 軸；`schema.py` `font_weight` 加 BeforeValidator coerce int→str |
+| Run 3（加 best-so-far guard）| 5/5 跑通、0 accept（pipeline 報告仍 last-round）、但 best-so-far mean=34.8（含 1 個 sample 達到 38 ≥ threshold 35）| `schema.py:IterationState` 加 `best_so_far_total/layout/subscores`；`iteration_state.py:_act()` 加嚴格 > 比較 only 更新 best-so-far；anchor 從 best-so-far 取而非 last-round；新增 helper `_extract_best_total()` |
+
+**Run 2/3 數據對照：**
+
+| Sample | Run 2 軌跡 | Run 3 軌跡 | Run 3 best-so-far |
+|---|---|---|---|
+| 5928 | [34,34,34] | [34,32,32] | 34 |
+| 5c94 | [34,32,32] | [34,32,32] | 34 |
+| 5e6a | [34,34,34] | [33,34,34] | 34 |
+| 5f56 | [34,32,32] | [32,34,32] | 34 |
+| 5e72 | [34,34,34] | [38,32,32,34] | **38** |
+| **mean(final-round)** | 33.2 | 32.8 | — |
+| **mean(best-so-far)** | 34.0 | **34.8** | — |
+| **超過 threshold 35** | 0/5 | **1/5（5e72 round 1=38）** | — |
+
+**結論：refinement loop 在 Crello 上不會 climb — 跟 Step 20b A2 同 pattern**
+
+四個 root cause 合起來 → 必然 random walk 或退步：
+1. **COLE rubric anchor 飽和**：5 個樣本 CR=7（全一致）、IO=6（4/5 一致）；Judge 對 Crello-grade input 沒有區辨力 → reward gradient ≈ 0
+2. **Judge noise > signal gap**：1-10 整數軸、threshold gap 1-3 點 ≈ 平均每軸 0.2-0.6；GPT-4V 同圖噪音 ~1-2 點 → 訊號 < 噪音
+3. **Suggestion → action 鬆耦**：Generator 拿 structured_suggestions 改 1 個元素，但可能造成 overlap / 破壞 balance、總分下降
+4. **Markov-chain 退步**（架構可修、Step 31 已修）：原本 anchor 來自 last-round 的 best_candidate_layout、最佳化沒有 monotonicity 保障
+
+只要 (1) 在，後面三個都是放大器。Step 31 修了 (4) 拿到 mean +0.8（34.0→34.8），但 plateau 本質不變。
+
+**Step 31 程式碼改動：**
+
+| 檔案 | 改點 |
+|---|---|
+| `metagpt/ext/agentlayout/schema.py:591+` | `IterationState` 加 `best_so_far_total: Optional[int]`（5-50）+ `best_so_far_layout` + `best_so_far_subscores` |
+| `metagpt/ext/agentlayout/roles/iteration_state.py:174+` | `_act()` 每輪 judgement 進來後嚴格 > 比較、只在 strict-improvement 才更新 best-so-far |
+| `metagpt/ext/agentlayout/roles/iteration_state.py:230+` | retry payload 的 `prev_best_layout/subscores` 改從 `state.best_so_far_*` 取（fallback to judgement.best_candidate_layout 處理首輪） |
+| `metagpt/ext/agentlayout/roles/iteration_state.py:267` | 新增 `_extract_best_total()` static helper |
+| `metagpt/ext/agentlayout/actions/plan_assets.py:99+, 108+` | PROMPT_TEMPLATE 加 `decorative_image MUST appear as leaves` 規則 + ATTENTION（修 Run 1 crash） |
+| `metagpt/ext/agentlayout/schema.py:386+` | `LayoutElement.font_weight` 加 `BeforeValidator` coerce int→str（修 Run 2 LLM validation） |
+| `layout_agent/output/run_role_team_live_crello.py:254-260` | 印分數欄位換 5 軸；trace JSON 加 `best_so_far_total/subscores` 暴露 |
+| `layout_agent/output/run_role_team_live.py:222-228` | 同上印分數欄位換 5 軸 |
+
+**驗證（offline pytest，conda env `meta`）：** Run 2/3 之前後分別跑 agentlayout 套件、154 passed / 12 skipped 全綠。
+
+**還沒做的後續事項（paper limitation 候選、非本 step 範圍）：**
+- pipeline 回報層面也用 best-so-far（目前 trace 的 `best_total_score` 仍是 last-round；新 `iteration_state.best_so_far_total` 是輔助欄位）
+- Judge re-sample average（cost ×3）看 noise 能不能降下來
+- 強制 Generator 只 mutate suggested field（schema-level constraint）
+- COLE rubric anchor 7→8 for Crello-grade（plateau 治標）
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/09*

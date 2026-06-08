@@ -98,6 +98,11 @@ Elements (id / semantic_type / importance / semantic_relevance):
 - importance score is a reference: higher importance tends to be closer to root,
   but semantic relationship takes priority over importance
 - Do NOT include background image (semantic_type: background_image) in the tree
+- DO INCLUDE decorative_image elements (underlay assets) as leaves in the tree
+  -- they are foreground stacking layers placed BEHIND text/product elements
+  but ABOVE the background, NOT background themselves. A decorative_image
+  paired with the text/product it visually anchors should sit as a sibling
+  (or child, if the pairing is explicit) of that element.
 - The tree can have multiple levels of depth -- do not limit to two levels
 
 # Format example
@@ -106,6 +111,9 @@ Elements (id / semantic_type / importance / semantic_relevance):
 # Instruction
 ATTENTION: Every foreground element id from the Design Spec must appear exactly once.
 ATTENTION: Do NOT include background image (semantic_type: background_image) in the tree.
+ATTENTION: decorative_image (underlay) elements MUST appear in the tree as leaves.
+           They are foreground decorative shapes, NOT background. Omitting them
+           triggers a hard validation error and aborts the pipeline.
 ATTENTION: Do NOT create virtual group nodes -- every node must be a real element id.
 ATTENTION: Nodes only have two fields: "id" and "children". No other fields allowed.
 ATTENTION: Leaf nodes must have an empty children list [].
