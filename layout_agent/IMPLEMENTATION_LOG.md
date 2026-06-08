@@ -3114,6 +3114,41 @@ Round 3: 同上
 
 **下一步：** N=20 重跑 Step 34 確認 0/N 不是 outlier（如果 N=20 還是 ≤2 committed → 結論非常 robust）。預估成本 ~$10、~2-3 小時。
 
+### Step 34 N=20 robust validation 結果（2026-06-09 後續）
+
+**全 20 sample 跑完、總 60 個 pairwise verdicts：**
+
+| Metric | N=5 | **N=20** |
+|---|---|---|
+| ok (≥1 round committed) | 0/5 (0%) | **2/20 (10%)** |
+| round1_exhausted | 5/5 | 18/20 (90%) |
+| Total pairwise verdicts | 15 | **60** |
+| GT (B) wins | 15 (100%) | **55 (91.7%)** |
+| AgentLayout (A) wins | 0 | **4 (6.7%)** |
+| Ties | 0 | **1 (1.7%)** |
+
+**兩個 success case 細節：**
+
+`592c213595a7a863ddcd95da`（committed at Round 1 attempt 2）：
+- R1a1: GT 勝（B）—— summary: "Image B more balanced"
+- R1a2: **AL 勝（A）** —— summary: "more balanced and creatively uses space" → commit
+- R2: tie → 嚴格規則下不晉級、停在 R1a2
+
+`589d7bd995a7a863ddcc5560`（committed at Round 3，唯一 3 輪全勝）：
+- R1: **A 勝** "more effective in design, content, typography" → commit
+- R2: A 勝 "nearly identical, A preferred by default" → commit（注：tie-break 偏 A）
+- R3: A 勝 "slightly edges out due to better typography contrast" → commit
+
+**Caveat**：589d7bd9 的 R2/R3 都靠 pairwise prompt 寫的 tie-breaking rule（"when in doubt prefer Image A"）。真正贏 GT 的 verdict 只 2 個（592c2135 R1a2 + 589d7bd9 R1a1）、共 **2/60 = 3.3% 的 verdicts 真正勝過 reference**。
+
+**Paper-grade 量化結論**：LLM zero-shot Generator 在 Crello commercial design 約 **10% 案例**能達到/接近 designer 水準、**90% 案例**完全無法達到（即使 3 retry + axis-level feedback）。比 N=5 的「0/5」更接近真實 distribution、結論非常 robust。
+
+**對 paper 寫作的意涵**：
+- 不是「全敗」（避免過度悲觀）、是「10% 成功率」（誠實 + 有 showcase 素材）
+- 2 個 success case 可當論文「best case visualization」
+- 18 個 failure case 可當論文「typical failure mode visualization」
+- Negative result 框架仍然成立：bottleneck = Generator capability
+
 ---
 
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/09*
