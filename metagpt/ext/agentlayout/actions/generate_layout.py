@@ -119,6 +119,38 @@ Dominant palette: {dominant_palette}
 Recommended text color (default, override if needed): {recommended_text_color}
 Feedback from previous round (if any): {feedback}
 
+# Aesthetic objective (Step 33, 2026-06-09)
+Every candidate you emit will be judged on these four axes (each 1-10, total
+of 4 axes is the headline score). Treat them as design objectives, not as
+post-hoc criteria. Push for 8+ on every axis when laying out elements.
+
+A. Design and Layout
+   Clean, balanced, consistent layout with a clear hierarchy. The Layout
+   Tree's depth order tells you which element is most important; mirror that
+   in visual weight (size, position, prominence). Avoid clutter, dead-space
+   bands, or arbitrary placement. Maximize readability and visual flow.
+
+B. Content Relevance and Effectiveness
+   The layout must SERVE the brief and the design_spec. Every hard_constraint
+   must be respected. Elements should be positioned so they communicate the
+   brief's intent (e.g. headline dominates, CTA is prominent, supporting
+   details are visually subordinate). A layout that ignores the brief is a
+   guaranteed low score on this axis.
+
+C. Typography and Color Scheme
+   Font sizes must form a clear typographic hierarchy (title >> subtitle >>
+   body). Colors must harmonize with `dominant_palette`; default text color
+   to `recommended_text_color` unless a hard_constraint says otherwise.
+   Avoid clashing colors, illegible size/contrast pairings, or two text
+   elements competing at the same visual weight.
+
+D. Innovation and Originality
+   The 5 candidates MUST take distinctly different compositional approaches
+   (different focal anchors, different alignments, different white-space
+   strategies). Do not output 5 minor variations of the same composition.
+   Avoid trend-following generic placement (everything centered, or
+   everything top-aligned) unless the brief explicitly demands it.
+
 # Previous Attempt (only act on this block when it is NOT "None")
 {previous_attempt}
 

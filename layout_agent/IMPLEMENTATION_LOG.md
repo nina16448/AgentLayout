@@ -3022,4 +3022,98 @@ would download new: 1797
 
 ---
 
+## Step 32 — Phase B head-to-head：loop 真實落後 cold-start（−0.35）
+
+**動機（2026-06-09）：** Step 30/31 改完 Judge + best-so-far guard 後、in-loop Judge 數字沒上去；但是不是真的 loop 沒幫助、要拉到 Phase B（離線 COLE GPT-4V）直接比 cold-start vs live-loop 才能下結論。
+
+**方法：** 同 5 個 sample 的 step22 cold-start render（bypass Judge）跟 Step 31 live render（走 loop）一起餵 `step21_phaseb_eval` 的 COLE 5 軸打分（同一輪呼叫、控制跨日 noise）。
+
+**程式：** `layout_agent/output/step32_phaseb_compare.py`（新檔、gitignored output/）
+
+**結果（N=5、Phase B Smean）：**
+
+| Sample | cold-start | live-loop | Δ |
+|---|---|---|---|
+| 5928 | 6.000 | 5.750 | −0.25 |
+| 5c94 | 5.750 | 4.500 | **−1.25** |
+| 5e6a | 5.750 | 6.000 | +0.25 |
+| 5f56 | 5.000 | 5.000 | 0 |
+| 5e72 | 8.000 | 7.500 | −0.50 |
+| **mean** | **6.100** | **5.750** | **−0.35** |
+
+3/5 退步、1/5 改善、1/5 持平。每軸 delta：CR −0.80（最大退步、是吸收 requirement_alignment 的那軸）、STV −0.40、SGI −0.20、SIO −0.20、SDL 0。
+
+**結論：** Step 30/31 的對齊**沒有把 Phase B 分數推上去、還略降**。Judge in loop 加 selection 噪音、loop refinement 改不出更好的、跟 Step 20b A/B 同 pattern。**對齊是方法學一致性提升、不是性能改善**。
+
+---
+
+## Step 33 — Rubric 從 Judge 移到 Generator prompt：+0.05（噪音內）
+
+**動機（2026-06-09）：** Step 32 證明 Judge 當 post-hoc filter 沒用、但沒測過把 COLE rubric 直接寫進 Generator 的生成 prompt 當 prior（"rubric-as-prompt"、LLM 文獻常見技巧）。
+
+**方法：** `generate_layout.py` PROMPT_TEMPLATE Context 區塊後加新 `# Aesthetic objective` 區塊、列 4 個 COLE 軸（DL/CR/TV/IO、按 user 要求**不含 SGI**）的生成導向描述。同 5 個 sample 跑 cold-start（不走 loop），同一輪 Phase B 評分 PRE33 (no rubric) vs POST33 (with rubric)。
+
+**程式：** `metagpt/ext/agentlayout/actions/generate_layout.py:121+`（rubric block）、`layout_agent/output/step33_phaseb_compare.py`（新檔、gitignored）
+
+**結果（N=5、Phase B Smean）：**
+
+| Sample | PRE33 | POST33 | Δ |
+|---|---|---|---|
+| 5928 | 6.000 | 6.000 | 0 |
+| 5c94 | 5.750 | 5.750 | 0 |
+| 5e6a | 6.000 | **7.500** | **+1.50** |
+| 5f56 | 5.000 | 5.000 | 0 |
+| 5e72 | 8.000 | **6.750** | **−1.25** |
+| **mean** | **6.150** | **6.200** | **+0.05** |
+
+3/5 完全沒動、1 個大贏 (+1.5)、1 個大輸 (−1.25)、淨平均 **+0.05**（≈ 雜訊範圍）。Per-axis：DL +0.20、CR +0.20、SGI +0.40、STV −0.20、SIO 0。
+
+**結論：** rubric-as-prior 方向比 rubric-as-filter（Step 32 = −0.35）正確，但 effect size 在 N=5 雜訊內、IO 軸完全沒動（COLE 對 Crello-grade 飽和）、STV 反退。「rubric 位置不是 paper bottleneck」的初步證據。
+
+---
+
+## Step 34 — Oracle GT-guided pairwise refinement：5/5 全敗 GT（決定性 negative result）
+
+**動機（2026-06-09）：** Step 30/31/32/33 都用 absolute scoring、訊號弱；不知道「loop 沒幫忙」是 (X) Judge 弱 還是 (Y) Generator 弱。Oracle 實驗：給 Generator **最強的 reward signal**（pairwise judge vs Crello GT），如果還是不漲、答案是 (Y)。
+
+**架構：**
+```
+Round 1: Generator K=1 → QC → pairwise judge (A=candidate vs B=GT)
+   A 輸 → 拿 reason 重生（up to 3 retries）
+   A 贏/平 → commit、進 Round 2
+Round 2: K=1 vs 上輪 committed → 沒贏就停、贏就 commit Round 3
+Round 3: 同上
+```
+
+**警示：** 本 step 在 inference time 用了 ground truth、不能跟 SEGA/PosterO/Phase B 數字直接比；當 **oracle upper bound ablation** 寫進 paper。
+
+**程式：** `layout_agent/output/step34_oracle_refinement.py`（新檔、gitignored）；pairwise prompt 4 軸 verdict + overall_winner
+
+**結果（N=5）：5/5 全在 Round 1 用盡 3 次重試、0/5 committed、15/15 pairwise verdicts 都判 B (GT) 勝**
+
+每次 summary 形式都類似：「Image B excels in layout, content relevance, typography, AND originality」。
+
+**這告訴你的決定性結論：**
+
+1. **pairwise judge 有真實信號**：absolute scoring 在 5.75-6.10 vs 6.6 看起來差距小（似乎接近），但 pairwise 一面倒判 GT 勝、揭穿「飽和帶 noise 掩蓋差距」假象
+2. **Bottleneck = Generator**：給最強訊號（pairwise vs GT、3 retry、reason feedback）都救不了。zero-shot gpt-4o 在 Crello 上**無法達到 designer 水準**
+3. **Step 31 best-so-far guard 看到的 5e72 round 1 = 38 是 absolute scoring 在飽和帶的 noise**：同樣的 5e72 在 Step 34 連一次 pairwise vs GT 都沒贏
+
+**六個實驗的因果鏈閉合：**
+
+| Step | 假設 | 結果 |
+|---|---|---|
+| 20b | Refinement loop A/B controlled | 無 lift |
+| 30 | COLE 5-axis Judge alignment | 無 lift |
+| 31 | best-so-far guard | mean +0.8 noise |
+| 32 | Phase B loop vs cold | loop **−0.35** |
+| 33 | rubric in Generator | +0.05 noise |
+| **34** | **oracle pairwise vs GT** | **5/5 全敗、15/15 verdict GT 勝** |
+
+**Paper grade negative result**：bottleneck 在 Generator capability、不在 Judge 設計。論文「iterative refinement architecture」段應寫成「explored architecture, found Generator-bounded」、main result 用 single-shot cold-start。
+
+**下一步：** N=20 重跑 Step 34 確認 0/N 不是 outlier（如果 N=20 還是 ≤2 committed → 結論非常 robust）。預估成本 ~$10、~2-3 小時。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/09*
