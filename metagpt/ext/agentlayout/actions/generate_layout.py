@@ -216,6 +216,42 @@ prominent:   >=20%  |  medium: >=15% |  small: >=8%   |  caption: >=3%
  that target's width*height divided by canvas_width*canvas_height MUST be
  at or above the lower bound of H.)
 
+# Layout constraints (Step 37 hard rules, 2026-06-09)
+The Quality Checker downstream WILL reject candidates that violate any of
+these. Generate candidates that already comply so retries are not wasted:
+
+1. DECORATIVE elements (semantic_type = "decorative_image") MUST occupy
+   STRICTLY LESS than 40% of the canvas area each. Underlays are accents,
+   not the main visual. Full-canvas plates are background_image, not
+   decorative_image.
+
+2. TITLE elements (semantic_type = "title") MUST satisfy ALL of:
+     a) area_ratio = title.width * title.height / canvas_area >= 0.025
+        (titles must be large enough to read as the design's anchor)
+     b) horizontal centre  cx = (left + width/2) / canvas_width
+        must lie in [0.10, 0.90]
+     c) vertical centre    cy = (top + height/2) / canvas_height
+        must lie in [0.05, 0.85]
+   Titles in corners or pinned to canvas edges are rejected.
+
+3. TEXT elements (semantic_type in {{title, subtitle, body_text, caption}})
+   MUST NOT have any non-text element with z_index GREATER THAN OR EQUAL
+   to the text's z_index covering >= 20% of the text bbox. Place text
+   ABOVE decorative shapes in z order, and avoid placing it directly on
+   top of high-coverage image elements.
+
+4. TEXT colours MUST have WCAG 2.1 AA contrast (>= 4.5) against the canvas
+   background colour. White text on white bg / black text on black bg are
+   rejected. When in doubt prefer the spec's recommended_text_color.
+
+5. SEQUENTIAL text from the asset_list MUST be placed in top-to-bottom
+   y-order MATCHING the asset_list sequence. If the asset list contains
+   text snippets in the order [A, B, C], the rendered A must sit above B
+   and B above C (smaller top values). This preserves the designer's
+   reading-order intent. NEVER reverse a multi-line heading (e.g. do not
+   render "RESOURCES" above "HUMAN" when the source had "HUMAN" before
+   "RESOURCES").
+
 # Format example
 {format_example}
 

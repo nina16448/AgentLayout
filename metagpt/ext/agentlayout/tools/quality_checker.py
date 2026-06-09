@@ -467,11 +467,18 @@ TEXT_SEMANTIC_TYPES = frozenset(
     }
 )
 
-TEXT_OBSCURED_RATIO_THRESHOLD: float = 0.30
+TEXT_OBSCURED_RATIO_THRESHOLD: float = 0.20
 """Step 35: text element is flagged TEXT_OBSCURED_BY_OVERLAY when an above-z
-non-text element covers >= 30% of its area. Tuned conservatively so that
-intentional small decorations (corner badges, accent shapes) do not trigger
-the rule. Tighten to 0.20 if false-negatives dominate in eval."""
+(or same-z) non-text element covers >= 20% of its area.
+
+Step 37 tightening (2026-06-09, P3 of Tier-1 N=100 audit): threshold lowered
+0.30 -> 0.20 and the same-z case was added (was strictly above-z) after
+samples 5dc93 (Statco logo) and 589d7bd9 (Find yourself) showed text
+overlapping decorations the rule should have caught but did not. Risk: a
+few legitimate "text floating over a soft illustration backdrop" patterns
+(e.g. 5e8d nurse with white text over the white-shield foreground) may now
+false-positive; tolerated because pipeline retries on QC fail and the
+downstream pairwise judge filters surviving candidates anyway."""
 
 MIN_TEXT_CONTRAST_RATIO: float = 4.5
 """Step 35: WCAG 2.1 AA threshold for normal text. Hex color luminance is
@@ -542,7 +549,11 @@ def _check_text_obscured_by_overlay(
                 continue
             if types.get(other.id) in TEXT_SEMANTIC_TYPES:
                 continue
-            if other.z_index <= text_el.z_index:
+            # Step 37 P3 (2026-06-09): same-z trigger added (was strictly >).
+            # When text and an image element share the same z_index the
+            # render order is undefined; we now flag any image >= text's z
+            # that meaningfully covers the text bbox.
+            if other.z_index < text_el.z_index:
                 continue
             ratio = _aabb_overlap_ratio(text_el, other)
             if ratio >= TEXT_OBSCURED_RATIO_THRESHOLD:
