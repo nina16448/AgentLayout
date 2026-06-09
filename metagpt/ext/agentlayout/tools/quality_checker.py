@@ -580,11 +580,16 @@ caption at the bottom)."""
 
 TITLE_EDGE_X_BAND: Tuple[float, float] = (0.10, 0.90)
 TITLE_EDGE_Y_MAX: float = 0.85
-"""Step 36: a TITLE element whose bbox CENTER falls outside the horizontal
-band [0.10, 0.90] OR sits below 85% of the canvas height is flagged
-TITLE_PERIPHERAL. Bottom-edge titles still fail because the user-facing
-complaint was 'title in corner / at edge'; top-band placement is left
-fully permissive because titles legitimately anchor the top of designs."""
+TITLE_EDGE_Y_MIN: float = 0.05
+"""Step 36 / 36c: a TITLE element whose bbox CENTER falls outside the
+horizontal band [0.10, 0.90] OR sits below 85% of the canvas height OR
+sits above 5% of the canvas height is flagged TITLE_PERIPHERAL. The
+top-band cutoff was added in Step 36c (2026-06-09) after sample 5dad
+'GreenKO' landed at the very top-right corner under Step 36 (the leaf
+underlay correctly shrank but the title peripheral rule allowed any
+top placement). Titles legitimately sit in the upper third of designs
+(y ~ 0.10-0.30) but pinning them to the absolute top edge (y < 0.05)
+is the crop / catalog-badge failure mode we want to catch."""
 
 
 def _check_decorative_image_oversized(
@@ -655,6 +660,12 @@ def _check_title_peripheral(candidate: Candidate, spec: DesignSpec) -> List[Viol
         elif cy > TITLE_EDGE_Y_MAX:
             peripheral = True
             why = f"center_y={cy:.2f} > {TITLE_EDGE_Y_MAX} (too close to bottom)"
+        elif cy < TITLE_EDGE_Y_MIN:
+            peripheral = True
+            why = (
+                f"center_y={cy:.2f} < {TITLE_EDGE_Y_MIN} "
+                "(pinned to canvas top edge, likely cropped)"
+            )
         if peripheral:
             out.append(
                 Violation(

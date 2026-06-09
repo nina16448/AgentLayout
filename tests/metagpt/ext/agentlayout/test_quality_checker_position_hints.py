@@ -1206,3 +1206,22 @@ def test_step36_title_central_band_passes():
     result = check_candidate(cand, spec)
     peri = [v for v in result.violations if v.type == ViolationType.TITLE_PERIPHERAL]
     assert peri == [], f"central-band title must pass, got {peri}"
+
+
+def test_step36c_title_pinned_to_top_edge_flags():
+    """Step 36c (2026-06-09): titles pinned to the absolute top edge
+    (center_y < 0.05) trigger TITLE_PERIPHERAL. Catches the 5dad GreenKO
+    failure mode under Step 36 where the leaf underlay correctly shrank
+    but the title still landed in the upper-right corner (top edge)."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        ViolationType,
+        check_candidate,
+    )
+
+    spec = _step36_spec_with_title_decor()
+    # center = (500, 25) → x=0.5 (in band), y=0.025 (<0.05)
+    cand = _step36_candidate(title_left=300, title_top=0, title_w=400, title_h=50)
+    result = check_candidate(cand, spec)
+    peri = [v for v in result.violations if v.type == ViolationType.TITLE_PERIPHERAL]
+    assert len(peri) == 1, f"top-edge title must flag peripheral, got {result.violations}"
+    assert peri[0].targets == ["title_1"]
