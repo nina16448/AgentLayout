@@ -185,6 +185,8 @@ tests/data/rsp_cache_new.json
 tests/data/serdeser_storage/
 *.tmp
 *.png
+# Paper-figure showcase folder is tracked even though *.png is normally ignored.
+!layout_agent/good_result/*.png
 htmlcov
 htmlcov.*
 cov.xml
