@@ -737,7 +737,13 @@ def test_z_order_live_5efdd2dd_reproduction_unblocks():
                 font_family="sans-serif",
                 font_size=48,
                 font_weight="bold",
-                color="#F4F4F4",
+                # Step 35 (2026-06-09): contrast rule added to QC; the
+                # original test used #F4F4F4 (~near-white) against the
+                # default #FFFFFF canvas bg, which now correctly fails
+                # LOW_TEXT_CONTRAST. Change to a dark colour so this
+                # z_order regression test stays focused on the original
+                # crash signature.
+                color="#111111",
                 text_align="center",
             ),
         ],
@@ -876,3 +882,327 @@ def test_below_title_hint_crashes_filter_valid_but_degradation_survives():
 
     degraded = rank_candidates_by_violations(cands, reports)
     assert len(degraded) == 5, "degradation must keep the run alive (step 10b fix)"
+
+
+# ============================================================
+# 10. Step 35 visual-quality rules (text obscured + low contrast)
+# ============================================================
+
+
+def _step35_spec(text_color: str = "#111111", bg_color: str = "#FFFFFF"):
+    """Tiny 2-element spec used by the Step 35 rule tests below."""
+    from metagpt.ext.agentlayout.schema import (
+        Canvas,
+        DesignSpec,
+        Element,
+        SemanticType,
+        VisualType,
+    )
+
+    return DesignSpec(
+        canvas=Canvas(width=800, height=600, background_color=bg_color),
+        elements=[
+            Element(
+                id="title_1",
+                semantic_type=SemanticType.TITLE,
+                visual_type=VisualType.TEXT,
+                content="HELLO",
+                importance=5,
+                semantic_relevance=0.9,
+            ),
+            Element(
+                id="decor_1",
+                semantic_type=SemanticType.DECORATIVE_IMAGE,
+                visual_type=VisualType.IMAGE,
+                asset_ref="/tmp/decor.png",
+                importance=2,
+                semantic_relevance=0.5,
+            ),
+        ],
+        hard_constraints=[],
+        soft_constraints=[],
+        style_keywords=[],
+        language="en",
+        inferred_fields={},
+    )
+
+
+def _step35_candidate(
+    decor_z: int,
+    text_color: str = "#111111",
+    decor_overlap: bool = True,
+):
+    """Build a candidate where decor either overlaps title 50% or sits aside."""
+    from metagpt.ext.agentlayout.schema import Candidate, LayoutElement
+
+    title = LayoutElement(
+        id="title_1",
+        left=200,
+        top=200,
+        width=400,
+        height=100,
+        z_index=3,
+        font_family="sans-serif",
+        font_size=48,
+        font_weight="bold",
+        color=text_color,
+        text_align="center",
+    )
+    if decor_overlap:
+        decor = LayoutElement(
+            id="decor_1", left=300, top=200, width=400, height=100, z_index=decor_z
+        )
+    else:
+        decor = LayoutElement(
+            id="decor_1", left=10, top=10, width=80, height=80, z_index=decor_z
+        )
+    return Candidate(candidate_id="cand_step35", elements=[title, decor])
+
+
+def test_step35_text_obscured_by_overlay_flags_higher_z_overlap():
+    """A decorative_image with z_index > text z_index that covers >= 30% of
+    the text bbox triggers TEXT_OBSCURED_BY_OVERLAY. Catches the Step 34
+    589d7bd9 'F.YD' failure mode where a mountain shape sat over the title."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        ViolationType,
+        check_candidate,
+    )
+
+    spec = _step35_spec()
+    cand = _step35_candidate(decor_z=5, decor_overlap=True)  # decor above title
+    result = check_candidate(cand, spec)
+    violations = [v for v in result.violations if v.type == ViolationType.TEXT_OBSCURED_BY_OVERLAY]
+    assert len(violations) == 1, f"expected 1 obscured violation, got {result.violations}"
+    assert set(violations[0].targets) == {"title_1", "decor_1"}
+
+
+def test_step35_text_obscured_does_not_flag_lower_z_overlay():
+    """A decorative_image with z_index < text z_index is the *intended*
+    underlay-anchor pattern (decoration sits BEHIND text). Must NOT trigger
+    TEXT_OBSCURED_BY_OVERLAY even with 100% overlap."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        ViolationType,
+        check_candidate,
+    )
+
+    spec = _step35_spec()
+    cand = _step35_candidate(decor_z=1, decor_overlap=True)  # decor below title
+    result = check_candidate(cand, spec)
+    obscured = [v for v in result.violations if v.type == ViolationType.TEXT_OBSCURED_BY_OVERLAY]
+    assert obscured == [], f"underlay-below-text must NOT flag, got {obscured}"
+
+
+def test_step35_low_text_contrast_flags_near_white_on_white():
+    """Light gray text on white canvas falls under WCAG AA (4.5). Catches the
+    Step 34 Generator failure mode where text colour drifts toward the bg."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        ViolationType,
+        check_candidate,
+    )
+
+    spec = _step35_spec(bg_color="#FFFFFF")
+    cand = _step35_candidate(decor_z=1, text_color="#F4F4F4", decor_overlap=False)
+    result = check_candidate(cand, spec)
+    contrast = [v for v in result.violations if v.type == ViolationType.LOW_TEXT_CONTRAST]
+    assert len(contrast) == 1, f"expected 1 contrast violation, got {result.violations}"
+    assert contrast[0].targets == ["title_1"]
+
+
+def test_step35_high_text_contrast_passes():
+    """Dark text on white canvas easily exceeds 4.5 -- must NOT flag."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        ViolationType,
+        check_candidate,
+    )
+
+    spec = _step35_spec(bg_color="#FFFFFF")
+    cand = _step35_candidate(decor_z=1, text_color="#111111", decor_overlap=False)
+    result = check_candidate(cand, spec)
+    contrast = [v for v in result.violations if v.type == ViolationType.LOW_TEXT_CONTRAST]
+    assert contrast == [], f"high-contrast text must pass, got {contrast}"
+
+
+# ============================================================
+# 11. Step 36 visual-quality rules (oversized decor + tiny title + peripheral title)
+# ============================================================
+
+
+def _step36_spec_with_title_decor():
+    """Minimal 2-element spec for Step 36: one title + one decorative_image."""
+    from metagpt.ext.agentlayout.schema import (
+        Canvas,
+        DesignSpec,
+        Element,
+        SemanticType,
+        VisualType,
+    )
+
+    return DesignSpec(
+        canvas=Canvas(width=1000, height=1000),
+        elements=[
+            Element(
+                id="title_1",
+                semantic_type=SemanticType.TITLE,
+                visual_type=VisualType.TEXT,
+                content="HELLO",
+                importance=5,
+                semantic_relevance=0.9,
+            ),
+            Element(
+                id="underlay_1",
+                semantic_type=SemanticType.DECORATIVE_IMAGE,
+                visual_type=VisualType.IMAGE,
+                asset_ref="/tmp/underlay.png",
+                importance=2,
+                semantic_relevance=0.4,
+            ),
+        ],
+        hard_constraints=[],
+        soft_constraints=[],
+        style_keywords=[],
+        language="en",
+        inferred_fields={},
+    )
+
+
+def _step36_candidate(
+    title_left=200,
+    title_top=200,
+    title_w=400,
+    title_h=200,
+    decor_w=300,
+    decor_h=300,
+    decor_left=600,
+    decor_top=600,
+    title_color="#111111",
+):
+    from metagpt.ext.agentlayout.schema import Candidate, LayoutElement
+
+    return Candidate(
+        candidate_id="cand_step36",
+        elements=[
+            LayoutElement(
+                id="title_1",
+                left=title_left,
+                top=title_top,
+                width=title_w,
+                height=title_h,
+                z_index=3,
+                font_family="sans-serif",
+                font_size=48,
+                font_weight="bold",
+                color=title_color,
+                text_align="center",
+            ),
+            LayoutElement(
+                id="underlay_1",
+                left=decor_left,
+                top=decor_top,
+                width=decor_w,
+                height=decor_h,
+                z_index=1,
+            ),
+        ],
+    )
+
+
+def test_step36_decorative_image_oversized_flags_huge_underlay():
+    """A decorative_image covering > 40% of the canvas triggers
+    DECORATIVE_IMAGE_OVERSIZED. Replicates the dominant Step 34 N=20 failure
+    mode (7/17 samples) where Generator inflated an underlay to dwarf the
+    main visual."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        ViolationType,
+        check_candidate,
+    )
+
+    spec = _step36_spec_with_title_decor()
+    # 700x700 = 49% canvas area > 40% threshold
+    cand = _step36_candidate(decor_w=700, decor_h=700, decor_left=0, decor_top=0)
+    result = check_candidate(cand, spec)
+    over = [v for v in result.violations if v.type == ViolationType.DECORATIVE_IMAGE_OVERSIZED]
+    assert len(over) == 1, f"expected 1 oversized violation, got {result.violations}"
+    assert over[0].targets == ["underlay_1"]
+
+
+def test_step36_decorative_image_modest_size_passes():
+    """A decorative_image at ~10% canvas is fine -- intended underlay use."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        ViolationType,
+        check_candidate,
+    )
+
+    spec = _step36_spec_with_title_decor()
+    # 300x300 = 9% canvas area
+    cand = _step36_candidate(decor_w=300, decor_h=300)
+    result = check_candidate(cand, spec)
+    over = [v for v in result.violations if v.type == ViolationType.DECORATIVE_IMAGE_OVERSIZED]
+    assert over == [], f"modest underlay must pass, got {over}"
+
+
+def test_step36_title_undersized_flags_tiny_title():
+    """A title < 2.5% canvas area triggers TITLE_UNDERSIZED. Catches the
+    Step 34 5fbf 'ECUTER' / 5dad 'GreenKO' tiny-corner failures."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        ViolationType,
+        check_candidate,
+    )
+
+    spec = _step36_spec_with_title_decor()
+    # 100x100 = 1% canvas area < 2.5% threshold
+    cand = _step36_candidate(title_w=100, title_h=100)
+    result = check_candidate(cand, spec)
+    tiny = [v for v in result.violations if v.type == ViolationType.TITLE_UNDERSIZED]
+    assert len(tiny) == 1, f"expected 1 undersized violation, got {result.violations}"
+    assert tiny[0].targets == ["title_1"]
+
+
+def test_step36_title_reasonable_size_passes():
+    """A title at ~8% canvas easily clears 2.5%."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        ViolationType,
+        check_candidate,
+    )
+
+    spec = _step36_spec_with_title_decor()
+    # 400x200 = 8% canvas area
+    cand = _step36_candidate(title_w=400, title_h=200)
+    result = check_candidate(cand, spec)
+    tiny = [v for v in result.violations if v.type == ViolationType.TITLE_UNDERSIZED]
+    assert tiny == [], f"reasonable-size title must pass, got {tiny}"
+
+
+def test_step36_title_peripheral_flags_edge_placement():
+    """A title whose center sits in the right-edge band triggers
+    TITLE_PERIPHERAL. Catches Step 34 placements like '5f4f Limited time
+    offer' at the top-left corner."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        ViolationType,
+        check_candidate,
+    )
+
+    spec = _step36_spec_with_title_decor()
+    # center_x = (920 + 60/2) / 1000 = 0.95 > 0.90 → peripheral
+    cand = _step36_candidate(
+        title_left=920, title_top=400, title_w=60, title_h=200
+    )
+    result = check_candidate(cand, spec)
+    peri = [v for v in result.violations if v.type == ViolationType.TITLE_PERIPHERAL]
+    assert len(peri) == 1, f"expected 1 peripheral violation, got {result.violations}"
+    assert peri[0].targets == ["title_1"]
+
+
+def test_step36_title_central_band_passes():
+    """A title centred horizontally and in the upper-middle vertical band is
+    the canonical hero placement -- must NOT flag."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        ViolationType,
+        check_candidate,
+    )
+
+    spec = _step36_spec_with_title_decor()
+    # center = (500, 400) → x=0.5 (in band), y=0.4 (<0.85)
+    cand = _step36_candidate(title_left=300, title_top=300, title_w=400, title_h=200)
+    result = check_candidate(cand, spec)
+    peri = [v for v in result.violations if v.type == ViolationType.TITLE_PERIPHERAL]
+    assert peri == [], f"central-band title must pass, got {peri}"

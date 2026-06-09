@@ -16,7 +16,7 @@ mode for downstream error analysis. The single public entry point is
 from __future__ import annotations
 
 from enum import Enum
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -101,6 +101,17 @@ class ViolationType(str, Enum):
     SIZE_PREFERENCE = "size_preference"
     UNKNOWN_HINT = "unknown_hint"
     UNKNOWN_TARGET = "unknown_target"
+    # Step 35 (2026-06-09): visual-quality rules targeting the "super ugly"
+    # failure modes observed in Step 34 N=20 (text broken under decoration,
+    # white-on-white invisible body copy).
+    TEXT_OBSCURED_BY_OVERLAY = "text_obscured_by_overlay"
+    LOW_TEXT_CONTRAST = "low_text_contrast"
+    # Step 36 (2026-06-09): additional visual-quality rules driven by Step 34
+    # N=20 failure audit. Underlay/decoration scale was 7/17 failures (41%);
+    # title under-size + title-in-corner together were ~3/17 (18%).
+    DECORATIVE_IMAGE_OVERSIZED = "decorative_image_oversized"
+    TITLE_UNDERSIZED = "title_undersized"
+    TITLE_PERIPHERAL = "title_peripheral"
 
 
 class Violation(BaseModel):
@@ -135,6 +146,14 @@ def check_candidate(candidate: Candidate, spec: DesignSpec) -> CheckResult:
     violations.extend(_check_completeness(candidate, spec))
     violations.extend(_check_boundary(candidate, spec))
     violations.extend(_check_hard_constraints(candidate, spec))
+    # Step 35 (2026-06-09): visual-quality checks driven by Step 34 N=20
+    # failure-mode review.
+    violations.extend(_check_text_obscured_by_overlay(candidate, spec))
+    violations.extend(_check_text_contrast(candidate, spec))
+    # Step 36 (2026-06-09): additional rules from Step 34 N=20 visual audit.
+    violations.extend(_check_decorative_image_oversized(candidate, spec))
+    violations.extend(_check_title_undersized(candidate, spec))
+    violations.extend(_check_title_peripheral(candidate, spec))
     return CheckResult(
         candidate_id=candidate.candidate_id,
         passed=not violations,
@@ -433,6 +452,259 @@ def _aabb_overlap(a: LayoutElement, b: LayoutElement) -> bool:
     """Boolean wrapper for backward-compat callers (none in-tree, kept for
     external scripts that may import the helper)."""
     return _aabb_overlap_ratio(a, b) > 0.0
+
+
+# ============================================================
+# Step 35 visual-quality rules (2026-06-09)
+# ============================================================
+
+TEXT_SEMANTIC_TYPES = frozenset(
+    {
+        SemanticType.TITLE,
+        SemanticType.SUBTITLE,
+        SemanticType.BODY_TEXT,
+        SemanticType.CAPTION,
+    }
+)
+
+TEXT_OBSCURED_RATIO_THRESHOLD: float = 0.30
+"""Step 35: text element is flagged TEXT_OBSCURED_BY_OVERLAY when an above-z
+non-text element covers >= 30% of its area. Tuned conservatively so that
+intentional small decorations (corner badges, accent shapes) do not trigger
+the rule. Tighten to 0.20 if false-negatives dominate in eval."""
+
+MIN_TEXT_CONTRAST_RATIO: float = 4.5
+"""Step 35: WCAG 2.1 AA threshold for normal text. Hex color luminance is
+computed with the sRGB linearization formula; the ratio is (L_light + 0.05)
+/ (L_dark + 0.05). v1 compares text color against the canvas background
+only; a future v2 should resolve the *effective* background by walking
+under-z elements that overlap the text bbox."""
+
+
+def _hex_to_rgb01(hex_color: str) -> Optional[Tuple[float, float, float]]:
+    """Parse '#RRGGBB' / '#RGB' / '#RRGGBBAA' into floats in [0,1]. None on bad input."""
+    h = hex_color.lstrip("#") if hex_color else ""
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    elif len(h) == 8:
+        h = h[:6]
+    if len(h) != 6 or not all(c in "0123456789abcdefABCDEF" for c in h):
+        return None
+    try:
+        return int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0
+    except ValueError:
+        return None
+
+
+def _relative_luminance(hex_color: str) -> Optional[float]:
+    """WCAG 2.1 relative luminance for an sRGB hex color. None on bad input."""
+    rgb = _hex_to_rgb01(hex_color)
+    if rgb is None:
+        return None
+
+    def _to_linear(c: float) -> float:
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (_to_linear(c) for c in rgb)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast_ratio(fg_hex: str, bg_hex: str) -> Optional[float]:
+    l1 = _relative_luminance(fg_hex)
+    l2 = _relative_luminance(bg_hex)
+    if l1 is None or l2 is None:
+        return None
+    lighter, darker = (l1, l2) if l1 >= l2 else (l2, l1)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _spec_semantic_map(spec: DesignSpec) -> Dict[str, SemanticType]:
+    return {e.id: e.semantic_type for e in spec.elements}
+
+
+def _check_text_obscured_by_overlay(
+    candidate: Candidate, spec: DesignSpec
+) -> List[Violation]:
+    """Flag text elements that an above-z non-text element covers >= 30% of.
+
+    Catches the Step 34 N=20 failure mode where a decorative_image with high
+    z_index lands directly on top of a title and breaks it visually (e.g.
+    sample 589d7bd9 'FIND' rendered as 'F.YD' because the mountain shape sat
+    over the middle letters).
+    """
+    types = _spec_semantic_map(spec)
+    out: List[Violation] = []
+    for text_el in candidate.elements:
+        if types.get(text_el.id) not in TEXT_SEMANTIC_TYPES:
+            continue
+        for other in candidate.elements:
+            if other.id == text_el.id:
+                continue
+            if types.get(other.id) in TEXT_SEMANTIC_TYPES:
+                continue
+            if other.z_index <= text_el.z_index:
+                continue
+            ratio = _aabb_overlap_ratio(text_el, other)
+            if ratio >= TEXT_OBSCURED_RATIO_THRESHOLD:
+                out.append(
+                    Violation(
+                        type=ViolationType.TEXT_OBSCURED_BY_OVERLAY,
+                        targets=[text_el.id, other.id],
+                        detail=(
+                            f"text '{text_el.id}' (z={text_el.z_index}) covered by "
+                            f"'{other.id}' (z={other.z_index}) at "
+                            f"overlap_ratio={ratio:.2f} >= "
+                            f"{TEXT_OBSCURED_RATIO_THRESHOLD}"
+                        ),
+                    )
+                )
+    return out
+
+
+# ----- Step 36 rules -----------------------------------------------------
+
+DECORATIVE_IMAGE_MAX_AREA_RATIO: float = 0.40
+"""Step 36: a single decorative_image element occupying > 40% of the canvas
+area is flagged DECORATIVE_IMAGE_OVERSIZED. Catches the dominant failure
+mode in Step 34 N=20 (7/17 failures): Generator inflated an underlay shape
+to canvas-sized so that the main photo/text was buried (e.g. 5dad leaf
+covering 60% of canvas, 5f4e gray triangle ~50%, 5e7a yellow cross ~50%).
+True full-canvas plates use semantic_type=background_image, not
+decorative_image, so 0.40 is safely above legitimate underlay sizes."""
+
+TITLE_MIN_AREA_RATIO: float = 0.025
+"""Step 36: a TITLE element whose bbox is smaller than 2.5% of the canvas
+area is flagged TITLE_UNDERSIZED. Catches Step 34 N=20 cases like 5fbf
+('ECUTER' rendered tiny in a corner) and 5dad ('GreenKO' as a small
+caption at the bottom)."""
+
+TITLE_EDGE_X_BAND: Tuple[float, float] = (0.10, 0.90)
+TITLE_EDGE_Y_MAX: float = 0.85
+"""Step 36: a TITLE element whose bbox CENTER falls outside the horizontal
+band [0.10, 0.90] OR sits below 85% of the canvas height is flagged
+TITLE_PERIPHERAL. Bottom-edge titles still fail because the user-facing
+complaint was 'title in corner / at edge'; top-band placement is left
+fully permissive because titles legitimately anchor the top of designs."""
+
+
+def _check_decorative_image_oversized(
+    candidate: Candidate, spec: DesignSpec
+) -> List[Violation]:
+    canvas_area = max(1.0, spec.canvas.width * spec.canvas.height)
+    types = _spec_semantic_map(spec)
+    out: List[Violation] = []
+    for el in candidate.elements:
+        if types.get(el.id) != SemanticType.DECORATIVE_IMAGE:
+            continue
+        ratio = (el.width * el.height) / canvas_area
+        if ratio > DECORATIVE_IMAGE_MAX_AREA_RATIO:
+            out.append(
+                Violation(
+                    type=ViolationType.DECORATIVE_IMAGE_OVERSIZED,
+                    targets=[el.id],
+                    detail=(
+                        f"decorative_image '{el.id}' covers "
+                        f"area_ratio={ratio:.2f} > "
+                        f"{DECORATIVE_IMAGE_MAX_AREA_RATIO} of canvas; "
+                        "shrink so the main image/text stays dominant"
+                    ),
+                )
+            )
+    return out
+
+
+def _check_title_undersized(candidate: Candidate, spec: DesignSpec) -> List[Violation]:
+    canvas_area = max(1.0, spec.canvas.width * spec.canvas.height)
+    types = _spec_semantic_map(spec)
+    out: List[Violation] = []
+    for el in candidate.elements:
+        if types.get(el.id) != SemanticType.TITLE:
+            continue
+        ratio = (el.width * el.height) / canvas_area
+        if ratio < TITLE_MIN_AREA_RATIO:
+            out.append(
+                Violation(
+                    type=ViolationType.TITLE_UNDERSIZED,
+                    targets=[el.id],
+                    detail=(
+                        f"title '{el.id}' bbox area_ratio={ratio:.3f} < "
+                        f"{TITLE_MIN_AREA_RATIO} of canvas; titles must be "
+                        "large enough to anchor the design"
+                    ),
+                )
+            )
+    return out
+
+
+def _check_title_peripheral(candidate: Candidate, spec: DesignSpec) -> List[Violation]:
+    cw = max(1.0, float(spec.canvas.width))
+    ch = max(1.0, float(spec.canvas.height))
+    types = _spec_semantic_map(spec)
+    x_lo, x_hi = TITLE_EDGE_X_BAND
+    out: List[Violation] = []
+    for el in candidate.elements:
+        if types.get(el.id) != SemanticType.TITLE:
+            continue
+        cx = (el.left + el.width / 2.0) / cw
+        cy = (el.top + el.height / 2.0) / ch
+        peripheral = False
+        why = ""
+        if cx < x_lo or cx > x_hi:
+            peripheral = True
+            why = f"center_x={cx:.2f} outside [{x_lo}, {x_hi}]"
+        elif cy > TITLE_EDGE_Y_MAX:
+            peripheral = True
+            why = f"center_y={cy:.2f} > {TITLE_EDGE_Y_MAX} (too close to bottom)"
+        if peripheral:
+            out.append(
+                Violation(
+                    type=ViolationType.TITLE_PERIPHERAL,
+                    targets=[el.id],
+                    detail=(
+                        f"title '{el.id}' bbox center peripheral: {why}; "
+                        "move the title into the central hero zone"
+                    ),
+                )
+            )
+    return out
+
+
+# ----- end Step 36 rules -------------------------------------------------
+
+
+def _check_text_contrast(candidate: Candidate, spec: DesignSpec) -> List[Violation]:
+    """Flag text whose color has < WCAG AA contrast (4.5) against canvas bg.
+
+    Catches the Step 34 N=20 failure mode where the Generator emits text
+    colored close to the canvas plate (e.g. light-gray title on white
+    background that the COLE judge then marks unreadable). v1 only compares
+    against canvas.background_color; v2 should resolve effective bg through
+    z-layered elements covering the text bbox.
+    """
+    bg = spec.canvas.background_color or "#FFFFFF"
+    types = _spec_semantic_map(spec)
+    out: List[Violation] = []
+    for text_el in candidate.elements:
+        if types.get(text_el.id) not in TEXT_SEMANTIC_TYPES:
+            continue
+        if not text_el.color:
+            continue
+        ratio = _contrast_ratio(text_el.color, bg)
+        if ratio is None:
+            continue
+        if ratio < MIN_TEXT_CONTRAST_RATIO:
+            out.append(
+                Violation(
+                    type=ViolationType.LOW_TEXT_CONTRAST,
+                    targets=[text_el.id],
+                    detail=(
+                        f"text '{text_el.id}' color={text_el.color} vs "
+                        f"canvas_bg={bg} contrast={ratio:.2f} < "
+                        f"{MIN_TEXT_CONTRAST_RATIO} (WCAG AA)"
+                    ),
+                )
+            )
+    return out
 
 
 Z_ORDER_ABOVE_BACKGROUND_HINTS = frozenset(

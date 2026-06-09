@@ -3151,4 +3151,60 @@ Round 3: 同上
 
 ---
 
+## Step 35 — QC 加 TEXT_OBSCURED_BY_OVERLAY + LOW_TEXT_CONTRAST
+
+**動機（2026-06-09）：** Step 34 N=20 失敗 case 中觀察到具體視覺 bug：文字被 decorative_image 蓋住（如 589d7bd9 「F.YD」被山形切斷）、文字顏色跟背景對比度過低。這兩個是 QC 可程式化檢測的；之前 QC 只管 schema/boundary，沒管視覺品質。
+
+**程式：**
+- `metagpt/ext/agentlayout/tools/quality_checker.py`：加 `ViolationType.TEXT_OBSCURED_BY_OVERLAY`、`LOW_TEXT_CONTRAST`；新增 `_check_text_obscured_by_overlay`（IoU>0.3、決定 z 上的非文字元素是否壓住文字）+ `_check_text_contrast`（WCAG 2.1 AA contrast ratio 4.5 vs canvas bg）+ WCAG 輔助函數（hex→linear sRGB→luminance）
+- `tests/metagpt/ext/agentlayout/test_quality_checker_position_hints.py`：加 4 個 case 涵蓋兩條規則 + 邊界
+- 修 fixture `test_z_order_live_5efdd2dd_reproduction_unblocks`：text color `#F4F4F4`（near-white vs white bg、被新規則抓）→ `#111111`
+
+**N=20 結果：** 10%→**15%** ok（+1 sample），GT 勝率 91.7%→89.7%。改善小、因為 17 個失敗多數不是 text-overlay/contrast 類。
+
+---
+
+## Step 36 — QC 加 DECORATIVE_IMAGE_OVERSIZED + TITLE_UNDERSIZED + TITLE_PERIPHERAL，build_pipeline_inputs 修 Analyst metadata-title leak
+
+**動機（2026-06-09）：** 逐張看完 Step 34 N=20 失敗 PNG 後，發現之前推「Generator-bounded」結論**過度悲觀** — 17/17 失敗都有具體 fixable bug，根本不是 LLM 創意上界：
+- 🔴 41% (7/17) underlay/decoration 過大佔 canvas
+- 🟠 18% (3/17) Analyst 用 Crello metadata 描述當 title
+- 🟡 18% (3/17) Asset 利用不當
+- 🟡 12% (2/17) 配色 / 背景色錯
+- 6% (1/17) text obscured（Step 35 漏抓 58ac）
+- 6% (1/17) 接近 success 的小差
+
+**設計拍板：**
+- DECORATIVE_IMAGE_OVERSIZED：decorative_image 單一元素 area > 40% canvas 即 flag
+- TITLE_UNDERSIZED：title area < 2.5% canvas
+- TITLE_PERIPHERAL：title center_x 不在 [0.10, 0.90] OR center_y > 0.85（底部太靠邊）；top 暫不抓
+- build_pipeline_inputs 改：「titled '{title}'」→「for the theme '{title}'」+ 明示「visible heading text MUST come from text snippets in asset list」
+
+**程式：**
+- `metagpt/ext/agentlayout/tools/quality_checker.py`：3 個 enum 值 + 3 個 `_check_*` 函數 + 3 個常數（DECORATIVE_IMAGE_MAX_AREA_RATIO=0.40、TITLE_MIN_AREA_RATIO=0.025、TITLE_EDGE_X_BAND=(0.10,0.90)、TITLE_EDGE_Y_MAX=0.85）
+- `tests/metagpt/ext/agentlayout/test_quality_checker_position_hints.py`：加 6 個 case（每條規則 1 trigger + 1 pass）
+- `layout_agent/output/run_role_team_live_crello.py:91-96` (Step 36b)：build_pipeline_inputs 改 user_brief 描述
+
+**N=20 結果：**
+
+| 三輪累積對照 | ok | GT wins | AL wins | Ties |
+|---|---|---|---|---|
+| pre-Step35 baseline | 2/20 (10%) | 91.7% | 6.7% | 1.7% |
+| post-Step35 | 3/20 (15%) | 89.7% | 5.2% | 5.2% |
+| **post-Step36** | **4/20 (20%)** | **86.2%** | **10.3%** | 3.4% |
+
+**最大 win：sample 5e72** Quarantine concept（之前 Analyst 用「Quarantine concept with Man by open Window」當 title）：[B,B,B] → **[A,A,A] 全 3 輪贏 GT**。視覺對照確認標題正確用 text snippet「Don't be an airhead, air out your room.」，跟 GT 構圖**幾乎一樣**。Step 36b 對齊 build_pipeline_inputs 解決了這個失敗模式。
+
+**Step 36 DECORATIVE_IMAGE_OVERSIZED 驗證：** sample 5dad GreenKO 的綠色 leaf shape 從 ~60% canvas 縮到 ~40%（QC 規則生效）。但「GreenKO」標題仍在右上角 — TITLE_PERIPHERAL 規則太鬆（只 catch 底部 y>0.85、top 沒抓）。Step 36c 待續：top-band 也抓 peripheral。
+
+**驗證（offline pytest，conda env meta）：** 加 6 個 step36 + 4 個 step35 case 共 10 test，全跑 164 passed / 12 skipped 全綠。
+
+**Paper 意涵更新：**
+- 之前 Step 34 「Generator-bounded」結論**部分撤回**：bottleneck 不是 LLM 創意上界、是「特定 decoration / metadata / placement 工程規則缺失」
+- 5 條新 QC 規則 + 1 個 metadata fix 把成功率 **10%→20%**（doubled）；剩 80% 失敗仍有更多 fixable bug
+- 4 個 success case（5e8d / 592c / 589d / 5e72）可當 paper showcase 圖
+- Future work：top-band peripheral 抓更嚴、Generator prompt 直接寫 size cap、saliency-aware 標題放置、換 Generator 模型
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/09*
