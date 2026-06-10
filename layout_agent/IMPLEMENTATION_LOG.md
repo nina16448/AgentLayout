@@ -3806,4 +3806,74 @@ GT 不佔據的擺位子空間 → 造成 blind judge 扣分的 dead-space/失�
 
 ---
 
+## Step 54：實驗 C — Render-Parity 分解（2026/06/11）
+
+### 問題
+
+Blind 下 design_layout/typography 的 gap（Step 51）有多少其實是 **render
+channel**（字型解析、置中/斷行、rotation 不支援、raster 合成、style 預設值）
+而不是 Generator 的構圖決策？Steps 51/53 已排除 label bias 與 gate 不對稱，
+render parity 是最後一個系統性嫌疑因素。
+
+### 方法（`layout_agent/output/step54_render_parity.py`，離線、零 LLM）
+
+把 20 個 step13 樣本的設計師 GT 版面從 crello meta.json 幾何重建，走**我們
+自己的 renderer** 重渲染，再用 step51 blind 協議判 our-render(GT layout) vs
+GT 原圖。幾何 by construction 完全相同，所以 GT 的任何系統性偏好都量測
+render channel 本身。
+
+- GT meta 沒有 style metadata，font_size/color 只從 GT 幾何＋自家
+  deterministic 工具推導（`font_size = bbox_height/n_lines*0.75`、
+  `color = BackgroundAnalyzer recommended_text_color`）；不設
+  font_family/text_align（renderer 預設）。
+- 元素映射：text→TITLE/BODY_TEXT、image（未升格背景）→PRODUCT_IMAGE、
+  underlay→DECORATIVE_IMAGE；背景走 live 同一條
+  `_composite_background_plates` 路徑；z_index=設計師原順序。
+- Render 命名 `step54_render_parity_crello_<id>_r1a1.png`，直接餵
+  參數化後的 step51 blind judge（`--render-prefix step54_render_parity
+  --gt-control 0`）。20/20 渲染成功（不經 LLM，無 vision refusal，N=20 全量）。
+
+### 結果（gpt-4o blind、雙順序、40 判）
+
+| 軸 | cand / gt / tie | cand 勝率 |
+|---|---|---|
+| **overall** | 9 / 31 | **22.5%** |
+| design_layout | 9 / 31 / 0 | 22.5% |
+| typography_color | 7 / 31 / 2 | 17.5% |
+| graphics_images | 4 / 4 / 32 | tie 為主 |
+| content_relevance | 2 / 2 / 36 | tie 為主 |
+| innovation_originality | 13 / 8 / 19 | cand 領先 |
+
+order-flip：5/20（step53 為 2/17）——pairs 確實更接近。
+
+### Gap 分解（vs 50% parity）
+
+| 軸 | A blind（step51） | GT 幾何重渲染 | render channel 份額 | Generator 份額 |
+|---|---|---|---|---|
+| design_layout | 5% | 22.5% | 27.5 pts（**61%**） | 17.5 pts（39%） |
+| typography_color | 2.5% | 17.5% | 32.5 pts（**68%**） | 15 pts（32%） |
+
+### 解讀
+
+1. **Render channel 是 blind gap 的主要成份（六成以上）**，不是 Generator
+   構圖。「Generator-bounded」修正為「Generator ＋ render channel 共同
+   bounded，render channel 份額更大」。
+2. **天花板效應**：即使 Generator 輸出與設計師完全相同的幾何，現有 renderer
+   下 design_layout blind 勝率上限 ~22.5%。Steps 41–53 的 prompt/gate 改進
+   全部在這個天花板底下。
+3. **Judge 軸 bleed 直接證據**：幾何相同，design_layout 仍 31/40 判 GT 勝、
+   tie=0，理由是「cleaner hierarchy / better alignment」——design_layout 軸
+   實際被 render 品質污染（字型、置中、斷行都不是 layout 決策）。
+4. **Caveat（上界性質）**：重渲染未設 font_family/text_align（GT meta 無此
+   資料），這部分 Generator 原則上可經 typography 欄位改善，所以 61–68% 是
+   render+style channel 的**上界**；但 text rotation 不支援、粗圓體字型
+   不在 5 款 bundled fonts 內、自動置中/斷行缺失是 renderer 硬限制。
+5. 論文寫法：實驗 C 是 headline gap 的 decomposition——「A 落後設計師」的
+   blind 數字中，多數可歸因 render channel；Generator 構圖差距真實存在但
+   份額較小（~17.5 pts）。
+6. 剩餘未檢驗因素：元素數量對等（judge 理由曾多次提及 "additional text
+   elements"）。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/11*
