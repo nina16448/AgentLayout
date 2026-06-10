@@ -3933,4 +3933,54 @@ Step 54 證實 render channel 佔 blind gap 61–68%、renderer 天花板僅
 
 ---
 
+## Step 56：新 Renderer 下的 Live N=20 重測（2026/06/11）
+
+### 動機
+
+Step 51 的 A blind 基線（design_layout 5%）是舊 renderer 量的；Step 55
+把天花板從 22.5% 抬到 55% 之後，Generator 的真實構圖差距必須重測。
+
+### 方法
+
+標準 gate-on 配置重跑 live N=20（`--ids-file step13_drawn_ids.json
+--render-prefix step56_live`），新 renderer 全程生效（字型/variation/
+wrap/fit/rotation）。2 樣本（59280150、5dad776a）三次 attempt 全失敗
+（JSON parse / vision refusal，已知 deferred 問題）→ blind N=18。
+QC acceptance 仍 0/20 round1_exhausted（labeled in-loop judge 行為，
+與 blind 量測無關）。
+
+### 結果（blind，N=18、36 判）
+
+| 軸 | Step 51（舊 renderer） | **Step 56（新 renderer）** | 天花板（Step 55） |
+|---|---|---|---|
+| design_layout | 5%（2/38/0） | **13.9%（5/31/0）** | 55% |
+| typography_color | 2.5%（1/37/2） | **19.4%（7/26/3）** | 30% |
+| graphics_images | 17.5% | **27.8%（10/5/21，cand 領先）** | – |
+| innovation | 60% | 36%（13/10/13） | – |
+| overall | 5% | **11.1%（4/36）** | 45% |
+
+order-flip 2/18（判決穩定；對照 step55 parity 的 8/20 近不可分）。
+
+### 解讀
+
+1. **Render channel 修復對 A 真實有效**：design_layout ×2.8、typography
+   ×7.8、graphics 首次 blind 領先 GT。Step 51 歸給 Generator 的 gap 有
+   一大塊實為 renderer。
+2. **Typography 軸接近解決**：19.4% vs 天花板 30%，殘距已小於天花板
+   本身的資料層誤差（GT 無 font/color metadata）。
+3. **Generator 構圖差距最乾淨量測**：design_layout 13.9% vs 55% =
+   **~41 pts 純 Generator 構圖品質**（死空間、漏排元素；5e8d966a 抽查
+   可見下方 40% 空白、#StayHome ×2 未排入）。order-flip 對比（2/18 vs
+   8/20）：judge 分得出 A 和 GT、分不出我們的 render 和 GT。
+   **Generator-bounded 第四次存活**（47 render confound → 51 label
+   bias → 53 gate → 56 render channel），此為去 confound 後最終形態。
+4. 論文 headline 數字更新：A blind design_layout 13.9%（N=18，新
+   renderer）；舊 5% 僅作 render-channel decomposition 歷史基線。
+5. 後續候選方向：(a) Generator 構圖品質本體（死空間/元素完整性——
+   QC 已有 primary-in-safe-zone，缺 coverage/全元素排入的硬性檢查）；
+   (b) 2 個失敗樣本的 JSON parse/vision refusal 修復；(c) 元素數量
+   對等檢驗（仍未做）。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/11*
