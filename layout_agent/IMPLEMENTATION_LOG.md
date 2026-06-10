@@ -3427,4 +3427,50 @@ Sample 5928 三個 attempts：
 
 ---
 
+## Step 47（2026-06-10 晚）— 三項 render/data-channel confound 修正：「Generator-bounded」結論需重審
+
+**動機**：user 質疑「SOTA 不會這麼爛、應該還沒到上限」。直接目視 Step 46 N=5 render vs GT
+（sample `5c94fa6085ea3c16f9ca91a2` Mother's Day）後確認：Judge 看到的品質差距混雜了三個
+**與 Generator 排版能力無關的 confound**，Step 40 的 Generator-bounded 歸因在這些修掉前不成立。
+
+### 發現與修正
+
+| # | 問題 | 根因 | 修正 | 影響面 |
+|---|---|---|---|---|
+| 1 | GT 的花卉滿版外框整張消失，AL render 只剩素色底 | `build_pipeline_inputs` 取第一個 `background_candidate` 當背景，**其餘 background_candidate 無聲丟棄**（不進 asset_list） | `run_role_team_live_crello.py` 新增 `_composite_background_plates()`：全部 background_candidate 依 z-order（element list 順序）壓平成 `asset_bg_composite.png`，bg_ref 指向複合圖；單一 plate 行為不變 | **329/1902 = 17.3%** samples |
+| 2 | 所有文字都是 DejaVu 工程字型 + 黑色，GT 是設計師 script/display 字型 | `renderer._resolve_font` 把任何 font_family 二分為 serif/sans-serif，且 FONT_CANDIDATES 只列 DejaVu | family 四分類（+script/display 關鍵字桶）、新增 PROJECT_FONT_DIR（`tools/fonts/`）+ URW/Liberation/Ubuntu 系統字型候選、降級鏈 (family,weight)→(family,regular)→(sans,weight)→CJK→default | **100%** 文字元素 |
+| 3 | 68×67px 愛心被拉到 ~400px 糊成一團 | `_paint_image_element` 無條件 resize 到 bbox | `MAX_UPSCALE=2.0` 上限：超過 2× 原生解析度時鎖 2×、在宣告 bbox 內置中；縮小不受影響；背景（_make_canvas）豁免 | 所有小素材 |
+
+### 附帶診斷（未修，候選後續）
+
+- **Step 46 vision refusal 根因確認**：21 次 `I'm sorry, I can't assist with that.`（completion=9 tokens、
+  prompt_tokens 固定 5464、deterministic）全部來自 sample `5928015095a7a863ddcd8e38`——背景是無害的
+  綠色 low-poly 幾何紋理，確認為 gpt-4o guardrail false positive（可疑觸發：prompt 中 "face" 字眼 + 圖片）。
+  其餘 4 samples vision 呼叫全部成功。**未修**：GenerateLayout retry 帶同一張圖對 deterministic refusal
+  無效，應降級 text-only（user 暫緩）。
+- `metagpt/provider/base_llm.py:80` 把 base64 一律標 `data:image/jpeg`，實際送 PNG——MIME 錯標但非
+  refusal 主因（其他 4 張同樣錯標卻成功）。
+
+### 測試
+
+- 新增 `tests/metagpt/ext/agentlayout/test_renderer_step47.py`：family 正規化 14 cases、
+  `_resolve_font` 缺字型不 crash（24 組合）、upscale cap 像素級驗證（cap 生效 / downscale 不變 / 恰好 2× 滿版）。
+- 驗證狀態（2026-06-10 晚補）：
+  - ✅ `test_renderer_step47.py` 42 passed；全套 agentlayout **244 passed / 12 skipped / 0 failed**（零回歸）。
+  - ✅ Bug 1 合成 smoke：`crello_5c94fa6085ea3c16f9ca91a2` 產出 `asset_bg_composite.png`（1080×1080），目視確認奶油底 + 愛心形花卉框正確疊合。
+  - ✅ Gap 2 目視：4 family 渲染明顯分化（`output/step47_font_check2.png`）。另已下載 5 個 OFL Google Fonts（GreatVibes / Pacifico / Lobster / DancingScript / Oswald + OFL.txt）進 `tools/fonts/`，cursive→Great Vibes 書法體、display→Lobster。
+  - ✅ N=5 live smoke（step41 oracle, gpt-4o）完成，log：`output/step41_N5_smoke_step47_renderfix.log`。
+    - **render 品質目視（5c94fa Mother's Day）**：花卉框完整呈現、愛心小而銳利（不再是糊塊）——三個 confound 確認在 live pipeline 中已消除。
+    - **refusal 消失**：`5928015` 本輪 0 次 refusal（前輪 21 連拒），證實 gpt-4o guardrail false positive 非穩定觸發；vision fallback 修正的優先度可下調。
+    - 接受率仍 **0/5 round1_exhausted**，但失敗原因已「去 confound 化」——residual gap 現在可歸因於 Generator 的選擇：font_family 挑 sans-serif + 黑字（GT 是 script + 粉/橘）、title 疊到背景花卉、文字壓到愛心。這才是重跑 N≥20 時要量測的真實 Generator gap。
+
+### 對結論的影響
+
+Step 30–40 的「8 實驗收斂於 Generator-bounded」推論需加註：當時的 pairwise 比較中
+A 側 render 系統性承受 (1) 素材缺失 (2) 字型降級 (3) 素材糊化 三個 handicap，
+「2% match rate」的歸因應改寫為 *upper-bounded by rendering/data-channel fidelity*，
+修正後需重跑 N≥20 才能重新估計真實 Generator gap。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/10*
