@@ -3605,4 +3605,150 @@ serif 42；palette 色出現（#E64A52、#E02E70、#FDBB44…）但 #F4F4F4/#111
 
 ---
 
+## Step 50（2026-06-11 凌晨）— Generator 換 gpt-5.2 的 N=5 對照：排除「gpt-4o 特定」假設
+
+**動機**：Step 49 結論是 prompt-only 到頂、剩餘 gap 需要更強 Generator 或數值工具。
+使用者指定試 gpt-5.2-pro；該模型只支援 Responses API（chat/completions 回 404），
+與 MetaGPT provider 不相容，經確認改用同代 **gpt-5.2**（chat completions + vision 實測可用）。
+
+**工程改動**：`metagpt/provider/openai_api.py` `_cons_kwargs` 的 o1 特判擴大為
+`o1/o3/o4/gpt-5` 前綴——reasoning 模型拒收 `max_tokens`（實測 400）且 temperature
+固定 1；不設 completion 上限以免 reasoning tokens 吃掉輸出額度。gpt-4o 行為不變。
+
+**實驗設定**：Generator（含全部 Role）= gpt-5.2（swap `~/.metagpt/config2.yaml`，
+跑完已還原）；Judge 仍為 oracle 內寫死的 gpt-4o（基準不變）；樣本 = 49a smoke 同
+5 個 default IDs。log：`output/step50_N5_gpt52_generator.log`。
+
+### 結果（vs 49a smoke：gpt-4o Generator、同樣本）
+
+| 指標 | gpt-4o（49a smoke） | gpt-5.2（Step 50） |
+|---|---|---|
+| 接受率 | 0/5 | **0/5**（全 round1_exhausted） |
+| QC 拒絕率 | 11/15 ≈ 73% | **8/15 ≈ 53%** |
+| Judge calls | 4 | 7 |
+| design_layout | B 4/4 | **B 7/7** |
+| typography_color | B 4/4 | **B 7/7** |
+| graphics_images | B 4/4 | B 6 / tie 1 |
+| content_relevance | tie 3/4 | tie 7/7 |
+| font_family 分布 | cursive/display 主導 | sans-serif 51 / display 47 / serif 21 / cursive 15（更保守） |
+
+Judge 落敗理由與 gpt-4o 完全同型："more balanced composition / better alignment"、
+"better contrast / size hierarchy"。視覺抽查：`5c94fa60`（母親節花框）品質好、
+cursive 標題置中愛心區；`5e72455e`（#airout）右半 + 右下整片 dead space——
+跟 gpt-4o 犯一模一樣的錯，49b 水平 balance 指引同樣沒擋住。
+
+### 解讀
+
+1. **障礙不是 gpt-4o 特定的**：換上 2025-12 的 reasoning 模型，0/5、design_layout
+   與 typography_color 仍全敗、敗因同型。「Generator-bounded」應修正表述為
+   **「LLM-coordinate-generation-bounded」**——讓任何 LLM 直接吐像素座標都撞同一面牆。
+2. QC 拒絕率 73%→53% 有改善跡象（safe-zone 數值服從稍好），但 N=5 不足下定論。
+3. 與 Step 49 結論合流：剩餘路徑只剩 (a) 生成時數值工具（LLM 做語意決策、
+   solver 算座標）、(b) few-shot 檢索 GT 範例。模型升級這條路已用 N=5 初篩排除。
+
+---
+
+## Step 51（2026-06-11 凌晨）— Blind re-judge 審計：label bias 證實存在且 axis-specific
+
+**動機**：使用者要求跳脫框架重審系統（「我不認為LLM真的就上限，應該還有其他沒處理好的因素」）。
+全系統審視發現 **step41 oracle 的 pairwise 評比從來不是 blind**：judge prompt 明寫
+"Image A is the CANDIDATE / Image B is the designer GROUND-TRUTH reference"，且 A 永遠
+第一張、B 永遠第二張，Step 30–50 所有 pairwise 數字都在此設定下產生。
+
+**設計**（`output/step51_blind_judge_audit.py`，judge 同為 gpt-4o temp=0）：
+- cond2 blind：中性標籤 "Design 1/2"、不給 layout JSON/safe_zones，每 pair 判兩次
+  （cand 第一張/第二張各一次）隔離 position bias。樣本 = step13 N=20 的最後一次
+  render（15 個 gpt-4o + 5 個被 Step 50 覆蓋的 gpt-5.2 render）。
+- cond3 控制組：同一張 GT 送兩次，無偏 judge 應 100% tie。
+
+### 結果（`output/step51_blind_judge_results.json`）
+
+- **Position bias = 0**：GT-vs-GT 9/9 全軸 tie；order-flip 0/20（順序對調判決完全不變）。
+- **Blind overall**：cand 1 / gt 19（labeled 基準 = GT 32/32 全勝）。唯一 cand 勝 =
+  `5e8d966a`（Nurse）**雙順序一致**——正是 Step 43-R1 中人工檢查認為「視覺對等」
+  但 labeled judge 仍判 B 的那個樣本。
+- **Per-axis（兩順序合併，n=40）vs labeled（Step 49，n=32）**：
+
+| 軸 | labeled（cand/gt/tie） | blind（cand/gt/tie） | 解讀 |
+|---|---|---|---|
+| design_layout | 0/32/0 | 2/38/0 | **真實劣勢**，blind 下不變 |
+| typography_color | 0/29/3 | 1/37/2 | **真實劣勢**，blind 下不變 |
+| graphics_images | 0/19/13 | **9/4/27** | label bias：blind 下 cand 反而多勝 |
+| content_relevance | 0/13/19 | 2/6/32 | tie 為主，輕微 label bias |
+| innovation_originality | 0/4/28 | **24/6/10** | **重度 label bias：blind 下 cand 勝 60%** |
+
+### 解讀
+
+1. **Label bias 證實存在、但 axis-specific**：客觀軸（balance、contrast）GT 優勢
+   blind 下完整保留——design_layout / typography_color 的失分是真的，
+   Generator-bounded 的核心結論存活。但主觀軸被「designer ground-truth」標籤
+   系統性壓制：innovation 從 cand 0% → 60%、graphics 從 0% 勝 → 淨勝。
+2. **至少一個真勝利被 labeled 設定吞掉**（5e8d966a），與 Step 43 人工檢查互相印證。
+3. **論文影響**：(a) headline pairwise 數字必須改用 blind protocol 重跑才能引用；
+   (b) blind 後可主張 innovation 軸勝設計師（需在乾淨條件重做——本次樣本混了
+   gpt-4o/gpt-5.2 render 且取末次 attempt（可能含 QC-rejected 版面），僅作 bias
+   存在性證明，不作 headline 數字）；(c) Step 30–50 的 labeled 數字一律標註
+   non-blind limitation。
+
+---
+
+## Step 52（2026-06-11 凌晨）— 實驗 B：設計師 GT 過我們自己的 QC safe-zone gate
+
+### 動機
+
+Step 51 證實 design_layout / typography_color 劣勢在 blind 下成立 = 真實 gap，
+但仍有未檢驗的系統因素：**QC gate 不對稱假說** —— Step 43 的
+primary-in-safe-zone 規則（≥50% overlap，`quality_checker.py:729`）只約束
+candidate A，GT 從不被檢。若設計師的版面本身大量違反這條規則，gate 就是把 A
+強制壓進一個 GT 不存在的擺位子空間，可能正是 blind judge 扣分的
+dead-space / 失衡構圖的來源。
+
+### 方法（`step52_gt_qc_audit.py`，離線、零 API 成本）
+
+對 step13 N=20 每個樣本：
+1. bg_ref 走 live runner **同一條路徑**（`_composite_background_plates` →
+   fallback 第一個 kind=="image"）；safe zones 走 `resolve_background()`
+   同一條 CV 路徑——與 Step 47–49 中 A 被審的條件一字不差。
+2. GT primary 近似映射：kind=="text" → 文字 primary（caption/cta 在 QC 不算
+   primary，故此映射**高估**違規＝對假說保守）；kind=="image" 且未升格為背景
+   → product_image。
+3. 重疊計算逐字複製 `_check_primary_in_safe_zone` 的 LTRB 交集／element-area
+   公式與 0.5 門檻。
+
+### 結果
+
+- **設計師 GT 有 14/20（70%）會被我們自己的 gate 退件**（任一 primary 違規即
+  reject，與 pipeline 行為一致）。Element 級：27/44（61.4%）違規；
+  image primary 8/9（88.9%）、text primary 19/35（54.3%）。
+- 違規是**重度**的，不是門檻邊界噪音：violating overlap median = **0.062**，
+  其中 10 個元素 overlap = 0.0（完全在 safe zone 外）。
+- 對照：candidate A 的 QC rejection rate為 step48 47% / step49 41%——A 被
+  反覆退回重生直到服從規則，GT 卻天生 70% 不服從。
+- Suggestive 關聯：blind 唯一勝場 `5e8d966a` 正是 6 個「GT 通過 gate」樣本
+  之一——當設計師恰好也守規則時，A 才有同場競技的機會。
+
+### 解讀
+
+1. **Gate 不對稱證實**：設計師慣常把文字直接壓在背景主體上（疊在照片上的
+   標題是正規海報手法），我們的 safe-zone 規則明文禁止這件事。A 是在跟一群
+   「不需要遵守 A 的規則」的對手比賽。
+2. **與 Generator-bounded 的關係**：此發現不推翻 blind 下的 design_layout /
+   typography 真實劣勢（那是 judge 看渲染圖的判斷，與 gate 無關），但指出
+   劣勢的一部分可能是 gate **造成**的：A 被迫避開視覺重心區，產生 judge 扣分
+   的留白／偏置構圖。
+3. **下一步候選**：(a) ablation——關掉 safe-zone gate 重跑 N=20 blind，看
+   design_layout 軸是否改善；(b) 把 gate 從 hard reject 改成 soft signal
+   （隨 prompt 提示但不退件）；(c) 門檻校準——以 GT 分布反推（GT median
+   passing overlap ≈0.7，violating median 0.062，雙峰明顯，0.5 不是好切點）。
+
+### 附帶：openai_api.py gpt-5 相容修正（Step 50 遺留，本次一併 commit）
+
+`_cons_kwargs`（`metagpt/provider/openai_api.py`）原本只對 `"o1-"` 特判；
+gpt-5.x 同樣拒收 `max_tokens` 且 temperature 只接受 1。擴充為
+`startswith(("o1", "o3", "o4", "gpt-5"))` → pop max_tokens、temperature=1。
+三條呼叫路徑（stream / non-stream / structured）都過 `_cons_kwargs`，
+子類（azure/ark）繼承同一行為。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/11*

@@ -145,8 +145,9 @@ class OpenAILLM(BaseLLM):
             "model": self.model,
             "timeout": self.get_timeout(timeout),
         }
-        if "o1-" in self.model:
-            # compatible to openai o1-series
+        if "o1-" in self.model or self.model.startswith(("o1", "o3", "o4", "gpt-5")):
+            # openai reasoning models reject max_tokens and non-default temperature;
+            # leave completion budget unset so reasoning tokens don't starve the output
             kwargs["temperature"] = 1
             kwargs.pop("max_tokens")
         if extra_kwargs:
