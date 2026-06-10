@@ -107,10 +107,10 @@ FORMAT_EXAMPLE_JSON = """{
           "id": "headline_1",
           "left": 80, "top": 1200, "width": 920, "height": 480,
           "angle": 0, "z_index": 3,
-          "font_family": "serif",
+          "font_family": "cursive",
           "font_size": 84,
           "font_weight": "bold",
-          "color": "#FFFFFF",
+          "color": "#C2547B",
           "text_align": "left"
         }
       ]
@@ -354,6 +354,28 @@ ATTENTION: All coordinates must satisfy:
            top + height <= canvas_height.
 ATTENTION: Strictly obey all hard_constraints.
 ATTENTION: For text elements, also output font_family, font_size, font_weight, color, text_align.
+ATTENTION: Typography direction (Step 49a, 2026-06-10). Designer ground truths
+           almost never use default black sans-serif titles; a layout that does
+           loses the typography_color axis automatically. Choose font_family
+           DELIBERATELY per text element:
+             - The renderer supports four families; pick via these tokens:
+                 "sans-serif" | "serif" | "cursive" (flowing script) |
+                 "display" (heavy decorative headline face)
+             - Map the design mood (style_keywords + the attached background
+               image) to a TITLE family:
+                 festive / floral / feminine / wedding / thank-you -> "cursive"
+                 promo / sale / sporty / loud / youthful          -> "display"
+                 editorial / luxury / classic / formal            -> "serif"
+                 corporate / tech / minimal / clean               -> "sans-serif"
+             - Body/caption text stays "sans-serif" or "serif" for legibility;
+               reserve "cursive"/"display" for title / subtitle / cta.
+             - Title color MUST come from the design's palette: pick a dominant
+               or complementary hue from the background image / dominant
+               palette. Use near-black (#000000-#222222) ONLY when the mood is
+               corporate/minimal AND the background is a light neutral.
+           Across the 5 candidates use at least TWO different (title
+           font_family, title color) combinations -- five identical black
+           sans-serif titles is an automatic fail.
 ATTENTION: For image elements, output geometry only -- no visual style fields needed.
 ATTENTION: Each candidate must take a distinctly different compositional approach.
            Do not repeat similar layouts across candidates.
@@ -368,6 +390,20 @@ ATTENTION: Canvas vertical coverage. The layout MUST occupy the full canvas
            is short, distribute them with larger inter-element gaps so the
            bottom edge still hits 0.85 of canvas_height -- do NOT cluster
            everything in the top half and leave a giant white band below.
+ATTENTION: Horizontal balance / dead-space (Step 49b, 2026-06-11). Vertical
+           coverage alone is not enough -- a layout where all elements hug
+           one half of the canvas and leave a full-height empty band on the
+           other side reads as unbalanced dead space and loses design_layout.
+           Either:
+             a) the union of non-background elements spans most of the width
+                (min(left) <= 0.15 * canvas_width AND
+                 max(left + width) >= 0.85 * canvas_width), OR
+             b) you deliberately build a single text column beside the
+                background's focal subject (photo / product). In that case
+                centre the column inside its safe zone and keep the column's
+                own left/right margins within 2x of each other -- do NOT
+                push an off-centre cluster against one edge while a wide
+                empty band sits next to it.
 ATTENTION: Decorative-image underlays. An element with
            semantic_type=="decorative_image" is a pre-classified shape plate
            (low colour complexity / transparent edges, not a photo). Treat
@@ -376,9 +412,13 @@ ATTENTION: Decorative-image underlays. An element with
                subtitle, body_text, caption, product_image, logo, icon, cta
                and pricetag element. A typical good assignment is
                background_image=1, decorative_image=2, image/logo/text=3+.
-             - The underlay should typically sit BEHIND a paired text/product
-               element with bbox extending 10-20% beyond that element on each
-               side (so the underlay frames the foreground, not the reverse).
+             - PAIRING IS MANDATORY (Step 49b, 2026-06-11): every
+               decorative_image MUST fully contain the bbox of at least one
+               text element (title / subtitle / body_text / caption / cta),
+               with the underlay extending 10-20% beyond that text on each
+               side (so the underlay frames the text, not the reverse).
+               A free-floating plate with no text on top of it reads as
+               random clutter and loses design_layout.
              - Do NOT make decorative_image cover >=95% of the canvas; that is
                background territory. Keep its area below 60% of canvas.
 ATTENTION: If feedback is provided, satisfy every structured_suggestion in at
@@ -399,12 +439,17 @@ ATTENTION: Step 46 (2026-06-10) -- ATTACHED IMAGE IS THE CANVAS BACKGROUND.
              - is there a vertical / horizontal axis the composition naturally
                wants you to align to?
            Use these visual observations to pick concrete (left, top, width,
-           height) values. The safe_zones JSON is only useful where the image
-           shows the same thing -- if the image reveals an empty region the
-           safe_zones missed, you ARE allowed to place primary text there as
-           long as you stay inside the canvas. If the image shows a face or
-           focal element inside what the safe_zones call "safe", you must
-           NOT cover it.
+           height) values. HOWEVER (Step 49b clarification, 2026-06-11): the
+           automated Quality Checker enforces rule 6 NUMERICALLY against the
+           listed safe_zones -- a primary element overlapping < 50% with
+           every listed safe_zone is rejected no matter how good it looks
+           visually. So use the image to decide WHICH listed safe_zone hosts
+           each primary element and to fine-position WITHIN it, NOT as a
+           licence to abandon the listed zones. Only decorative / secondary
+           elements may occupy image-revealed empty regions outside the
+           listed safe_zones. If the image shows a face or focal element
+           inside what the safe_zones call "safe", pick a different listed
+           safe_zone for your primary -- do NOT cover the face.
 ATTENTION: If the "# Previous Attempt" block is non-empty (refinement mode),
            every element's (left, top, width, height) must stay within +/-10%
            of its previous value unless a structured_suggestion explicitly

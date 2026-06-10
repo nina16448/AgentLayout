@@ -3505,4 +3505,104 @@ step41 GT-anchored pairwise oracle，樣本 = Step 34/40 同一批 `step13_drawn
 
 ---
 
-*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/10*
+## Step 49（2026-06-10 深夜～06-11）— Generator 端攻擊主要失分軸：per-axis 量尺 + typography 通道 + balance/placement 約束
+
+依 Step 48 方向建議執行，順序 49c（先有量尺）→ 49a → N=5 smoke → 49b → N=20 總驗證。
+
+### 49c — oracle 補 per-axis 勝負彙總（量尺）
+
+`output/step41_layout_aware_oracle.py`：main() 迴圈彙總所有 judge call 的 5 軸
+winner，終端印出 per-axis A/B/tie 表，並寫入 `step41_layout_aware_results.json`
+的 `axis_summary` 欄位。rounds_log 本來就逐 call 存軸別結果，因此可回溯計算
+**Step 48 baseline（31 judge calls）**：
+
+| 軸 | A | B | tie |
+|---|---|---|---|
+| design_layout | 0 | 31 | 0 |
+| typography_color | 0 | 28 | 3 |
+| graphics_images | 0 | 26 | 5 |
+| content_relevance | 0 | 13 | 18 |
+| innovation_originality | 0 | 4 | 27 |
+
+→ 主要失分軸 = design_layout 與 typography_color，正當化 49a/49b 的選擇。
+
+### 49a — Typography 決策通道（prompt-only，不動 schema）
+
+`metagpt/ext/agentlayout/actions/generate_layout.py`：
+- PROMPT_TEMPLATE 新增 typography ATTENTION 區塊：四個 font_family token
+  （sans-serif/serif/cursive/display）、mood→family 對映表（festive→cursive、
+  promo→display、editorial→serif、corporate→sans-serif）、標題色必須取自
+  palette（近黑只允許 corporate+淺底）、5 候選至少兩種 (family,color) 組合。
+- FORMAT_EXAMPLE_JSON cand_02 headline 改為 cursive + `#C2547B`（去除全 sans 示範偏置）。
+
+**N=5 smoke（`output/step49a_N5_smoke_typography.log`）**：
+- 行為面有效：候選 font_family 分布 cursive 38 / display 35 / sans-serif 20 / serif 11，
+  顏色出現 `#E02E70`、`#FDBB44` 等 palette 色（#111111 仍 40 次）。
+- 接受率 0/5；只有 4 次 judge call（typography_color B=4/4，樣本太小無法做軸別歸因）。
+- **QC 拒絕率 73%（11/15 attempts）**。更正先前誤判：Step 48 並非零拒絕——
+  log 字串是 `QC: N primary_outside_safe_zone violation(s)`，Step 48 實為
+  28 拒絕/59 attempts ≈ 47%。49a 後 +26pp（N 小，不能排除雜訊）。
+- 11 次拒絕中 **9 次是 `safe_zone '<none>' ratio=0.00`**（title 完全沒碰任何
+  safe zone）→ 根因找到：Step 46 vision block 寫明「影像顯示 safe_zones 漏掉的
+  空白區可以放 primary text」，與 QC rule 6（數值強制 ≥50% overlap）自相矛盾；
+  49a 又叫 Generator 多看影像，放大了這個衝突。
+
+### 49b — balance/placement 生成時約束（prompt-only，不加 QC 硬 gate）
+
+`generate_layout.py` PROMPT_TEMPLATE 三段修改：
+1. **Step 46 矛盾修正**：vision block 改寫——QC 數值強制 rule 6，影像用途降級為
+   「選哪個 listed safe_zone + zone 內微調」；只有 decorative/次要元素可用 zone 外
+   空白區；臉部衝突改選別的 zone 而非放棄 zone。直接針對 ratio=0.00 拒絕根因。
+2. **Underlay 配對強制化**："should typically" → "PAIRING IS MANDATORY"：每個
+   decorative_image 必須完整包含至少一個文字元素 bbox（外擴 10-20%）；
+   free-floating plate（Step 48 `59158b4f` 失衡案例）明示為扣分項。
+3. **水平 balance 指引**：與 vertical coverage 對稱但留兩個合法出口——
+   (a) 元素聯集橫跨大部分寬度，或 (b) 刻意單欄構圖（欄在 safe zone 內置中、
+   左右 margin 差 <2x）；禁止「貼邊小簇＋整條空帶」。
+
+驗證：agentlayout 測試套件 **244 passed**（2026-06-11）。
+
+### N=20 總驗證（2026-06-11，`output/step49_N20_validation.log`）
+
+同 Step 48 樣本（`step13_drawn_ids.json`）、同 gpt-4o。
+
+| 指標 | Step 48 baseline | Step 49（49a+49b 後） |
+|---|---|---|
+| 接受率 | 0/20 | **0/20**（全 round1_exhausted） |
+| Judge calls | 31 | 32 |
+| QC 拒絕 | 28/59 ≈ 47% | **22/54 ≈ 41%**（smoke 的 73% 回落） |
+| 其中 ratio=0.00（完全沒碰 zone） | — | 仍 15/22 |
+
+**Per-axis 對比（A / B / tie）**：
+
+| 軸 | Step 48 | Step 49 | 變化 |
+|---|---|---|---|
+| design_layout | 0/31/0 | 0/32/0 | 不變（B 100%） |
+| typography_color | 0/28/3 | 0/29/3 | **不變** |
+| graphics_images | 0/26/5 | 0/19/13 | **tie 16%→41%**（Fisher p=0.050） |
+| content_relevance | 0/13/18 | 0/13/19 | 不變 |
+| innovation_originality | 0/4/27 | 0/4/28 | 不變 |
+
+Typography 行為持續生效：font_family 分布 display 131 / cursive 95 / sans-serif 92 /
+serif 42；palette 色出現（#E64A52、#E02E70、#FDBB44…）但 #F4F4F4/#111111 仍占大宗。
+
+### 解讀
+
+1. **graphics_images 是唯一移動的軸**（tie 率 2.6×，p≈0.05 邊緣顯著）：49b underlay
+   配對強制化 + Step 47 渲染修正的組合讓 A 側圖像處理常與 GT 打平。
+2. **typography_color 完全沒動，儘管 Generator 行為確實改變了**——judge 落敗理由
+   全是 "better contrast"、"size hierarchy"，不是字型選擇。49a 解決了 family 選擇，
+   但 binding constraint 是**對比度與字級層級**，不是字族。
+3. **design_layout 仍 B 100%**，理由仍是 "more balanced composition / better use of
+   space"——prompt 層級的水平 balance 指引不足以讓 LLM 產出設計師等級的空間配置。
+4. QC 拒絕率 47%→41%，Step 46 矛盾修正有效（smoke 73% 確認是 49a prompt 稀釋 +
+   矛盾放大的暫時尖峰），但 ratio=0.00 仍占 15/22——Generator 對 safe_zone 的
+   數值服從天花板大約就在這裡。
+5. **結論：prompt-only 干預可以動 graphics 軸，動不了 design_layout / typography_color
+   的核心失分**。Generator-bounded 結論進一步強化：剩餘 gap 需要的是生成時的數值
+   能力（精確 balance、對比計算），不是更多指令。論文可把 Step 49 列為「prompt
+   engineering 上限」的 ablation 證據。
+
+---
+
+*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/11*
