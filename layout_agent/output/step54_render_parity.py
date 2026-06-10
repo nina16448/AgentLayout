@@ -32,6 +32,7 @@ Usage:
   conda activate meta && python layout_agent/output/step54_render_parity.py
 """
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -59,7 +60,7 @@ from metagpt.ext.agentlayout.tools.background_analyzer import (  # noqa: E402
 from metagpt.ext.agentlayout.tools.renderer import render_to_file  # noqa: E402
 
 
-def build_gt_spec_and_candidate(meta: dict, descriptors: list):
+def build_gt_spec_and_candidate(meta: dict, descriptors: list, center_align: bool = False):
     bg_ref = _composite_background_plates(meta, descriptors)
     promoted_idx = None
     if bg_ref is None:
@@ -121,6 +122,14 @@ def build_gt_spec_and_candidate(meta: dict, descriptors: list):
                 8, int(float(d["height"]) / n_lines * 0.75)
             )
             layout_kwargs["color"] = text_color
+            if center_align:
+                # Step 55: geometry-derived alignment (still zero LLM / zero
+                # hand tuning). A text bbox whose horizontal centre sits
+                # within +-5% of the canvas centre encodes the designer's
+                # centring intent in the geometry itself.
+                bbox_cx = float(d["left"]) + float(d["width"]) / 2
+                if abs(bbox_cx - canvas.width / 2) <= 0.05 * canvas.width:
+                    layout_kwargs["text_align"] = "center"
         layout_elements.append(LayoutElement(**layout_kwargs))
 
     spec = DesignSpec(canvas=canvas, elements=spec_elements)
@@ -129,6 +138,10 @@ def build_gt_spec_and_candidate(meta: dict, descriptors: list):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--prefix", default="step54_render_parity")
+    parser.add_argument("--center-align", action="store_true")
+    args = parser.parse_args()
     ids = json.load(open(HERE / "step13_drawn_ids.json"))["ids"]
     n_ok = 0
     for sid in ids:
@@ -138,8 +151,10 @@ def main():
             continue
         meta, descriptors = load_crello_sample(sample_dir)
         try:
-            spec, cand = build_gt_spec_and_candidate(meta, descriptors)
-            out = HERE / f"step54_render_parity_crello_{sid}_r1a1.png"
+            spec, cand = build_gt_spec_and_candidate(
+                meta, descriptors, center_align=args.center_align
+            )
+            out = HERE / f"{args.prefix}_crello_{sid}_r1a1.png"
             render_to_file(cand, spec, out)
             n_ok += 1
             print(

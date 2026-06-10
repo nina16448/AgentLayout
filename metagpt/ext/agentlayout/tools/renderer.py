@@ -12,16 +12,19 @@ Public API::
     render_to_file(candidate, spec, path) -> Path       # render + save PNG
     image_to_base64(img, format='PNG') -> str           # for vision LLM input
 
-Phase 1 limitations (deliberate, paper-worthy):
-  * Text does not auto-wrap; overflow is allowed and shows up as overflow in
-    the rendered image (Aesthetic Judge can penalise it).
-  * Only image elements respect ``angle``; text rotation is not implemented.
-  * Font resolution depends on system fonts (DejaVu / Noto CJK on Ubuntu);
-    if none are found, falls back to PIL's bitmap default.
+Step 55 (2026-06-11) lifted the former Phase 1 limitations, motivated by the
+step54 render-parity decomposition (render channel = majority of the blind
+gap vs designer GT):
+  * Text auto-wraps to the bbox width and shrinks to fit (floor 8px); manual
+    newlines in content are respected verbatim.
+  * Text elements honour ``angle`` (same convention as images).
+  * Bundled OFL fonts include variable fonts; bold is selected via named
+    instances. System fonts / PIL bitmap default remain the fallback chain.
 """
 from __future__ import annotations
 
 import base64
+import math
 from io import BytesIO
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
@@ -60,12 +63,17 @@ PROJECT_FONT_DIR: Path = Path(__file__).resolve().parent / "fonts"
 # search path. Missing files are skipped silently (graceful degradation), so
 # listing optional fonts here is safe.
 FONT_CANDIDATES: Dict[Tuple[str, str], List[str]] = {
+    # Step 55 (2026-06-11): Montserrat first. Step 54 render-parity showed the
+    # render channel (incl. DejaVu's "engineering mockup" look) accounts for
+    # the majority of the blind design_layout/typography gap vs designer GT.
     ("sans-serif", "regular"): [
+        "Montserrat-Variable.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "DejaVuSans.ttf",
     ],
     ("sans-serif", "bold"): [
+        "Montserrat-Variable.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
         "DejaVuSans-Bold.ttf",
@@ -93,8 +101,12 @@ FONT_CANDIDATES: Dict[Tuple[str, str], List[str]] = {
         "/usr/share/fonts/opentype/urw-base35/Z003-MediumItalic.otf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf",
     ],
+    # Step 55: DancingScript-Bold.ttf / Oswald-Bold.ttf never existed in
+    # PROJECT_FONT_DIR -- bold requests silently fell back to regular faces.
+    # The bundled DancingScript/Oswald files are VARIABLE fonts with a Bold
+    # named instance, applied at load time by _apply_weight_variation.
     ("script", "bold"): [
-        "DancingScript-Bold.ttf",
+        "DancingScript-Regular.ttf",
         "GreatVibes-Regular.ttf",
         "Pacifico-Regular.ttf",
         "/usr/share/fonts/opentype/urw-base35/Z003-MediumItalic.otf",
@@ -102,12 +114,16 @@ FONT_CANDIDATES: Dict[Tuple[str, str], List[str]] = {
     ],
     ("display", "regular"): [
         "Lobster-Regular.ttf",
+        "BebasNeue-Regular.ttf",
         "Oswald-Regular.ttf",
         "/usr/share/fonts/opentype/urw-base35/C059-Roman.otf",
         "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
     ],
+    # Baloo2 bold-rounded first: the face class designer GT titles use most
+    # (step54 spot-check), previously unrepresented in the bundle.
     ("display", "bold"): [
-        "Oswald-Bold.ttf",
+        "Baloo2-Variable.ttf",
+        "Oswald-Regular.ttf",
         "Lobster-Regular.ttf",
         "/usr/share/fonts/opentype/urw-base35/C059-Bold.otf",
         "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
@@ -258,25 +274,91 @@ def _paint_image_element(
 # ============================================================
 
 
+# 1x1 dummy surface used only for text measurement (never painted on).
+_MEASURE_DRAW = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+
+MIN_FONT_SIZE: int = 8
+"""Step 55: shrink-to-fit floor. Below this text is unreadable; overflow is
+allowed instead (graceful degradation, never clipped)."""
+
+
+def _wrap_to_width(text: str, font: ImageFont.ImageFont, max_width: int) -> str:
+    """Greedy word-wrap to a pixel width. A word that alone exceeds
+    ``max_width`` gets its own line (the shrink loop deals with it)."""
+    lines: List[str] = []
+    for paragraph in text.split("\n"):
+        words = paragraph.split()
+        if not words:
+            lines.append("")
+            continue
+        cur = words[0]
+        for word in words[1:]:
+            trial = f"{cur} {word}"
+            if _MEASURE_DRAW.textlength(trial, font=font) <= max_width:
+                cur = trial
+            else:
+                lines.append(cur)
+                cur = word
+        lines.append(cur)
+    return "\n".join(lines)
+
+
+def _fit_text(
+    text: str, layout_el: LayoutElement
+) -> Tuple[ImageFont.ImageFont, str]:
+    """Make text fit its bbox: wrap first, then shrink the font.
+
+    Step 55 (motivated by the step54 render-parity decomposition): designer
+    GT never overflows its box, so every overflow on our side is a pure
+    render-channel loss in pairwise judging. Manual newlines in the content
+    are respected verbatim (the author's line-break intent); only unbroken
+    text is auto-wrapped. The declared font_size acts as an upper bound.
+    """
+    family = layout_el.font_family or "sans-serif"
+    weight = layout_el.font_weight or "regular"
+    manual_breaks = "\n" in text
+    size = max(MIN_FONT_SIZE, layout_el.font_size or 32)
+    # Rotated text must fit AFTER rotation: its axis-aligned extent is
+    # (w cos + h sin, w sin + h cos). For 90deg this swaps width/height --
+    # e.g. a vertical hashtag's line length is constrained by bbox HEIGHT.
+    ang = math.radians(layout_el.angle or 0)
+    cos_a, sin_a = abs(math.cos(ang)), abs(math.sin(ang))
+    wrap_width = int(layout_el.width * cos_a + layout_el.height * sin_a)
+    while True:
+        font = _resolve_font(family, weight, size)
+        fitted = text if manual_breaks else _wrap_to_width(text, font, wrap_width)
+        bbox = _MEASURE_DRAW.multiline_textbbox((0, 0), fitted, font=font)
+        text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        fits = (
+            text_w * cos_a + text_h * sin_a <= layout_el.width
+            and text_w * sin_a + text_h * cos_a <= layout_el.height
+        )
+        if fits or size <= MIN_FONT_SIZE:
+            return font, fitted
+        size = max(MIN_FONT_SIZE, int(size * 0.9))
+
+
 def _paint_text_element(
     canvas: Image.Image, spec_el: Element, layout_el: LayoutElement
 ) -> None:
     """Draw text inside the layout element's bbox.
 
-    No auto-wrap (Phase 1 limitation): overflowing text is left as-is so the
-    Aesthetic Judge can flag the visual imbalance.
+    Step 55: text is wrapped/shrunk to fit the bbox (see _fit_text); the
+    pre-55 behaviour let overflow through, which the step54 render-parity
+    experiment identified as a render-channel penalty vs designer GT.
     """
     text = spec_el.content or ""
     if not text:
         return
     draw = ImageDraw.Draw(canvas)
-    font = _resolve_font(
-        layout_el.font_family or "sans-serif",
-        layout_el.font_weight or "regular",
-        layout_el.font_size or 32,
-    )
+    font, text = _fit_text(text, layout_el)
     color = _parse_color(layout_el.color or "#000000")
     align = (layout_el.text_align or "left").lower()
+    if layout_el.angle:
+        # Step 55: rotated text (pre-55: only images honoured angle). Drawn
+        # on its own transparent layer, rotated about the bbox centre.
+        _paint_rotated_text(canvas, text, font, color, align, layout_el)
+        return
     # PIL note: draw.text(anchor=...) does NOT work when the string contains
     # newlines -- anchor is only valid for single-line text. For multiline we
     # measure the text block's bbox and position it manually to emulate the
@@ -317,13 +399,48 @@ def _paint_text_element(
         )
 
 
+def _paint_rotated_text(
+    canvas: Image.Image,
+    text: str,
+    font: ImageFont.ImageFont,
+    color: Tuple[int, int, int, int],
+    align: str,
+    layout_el: LayoutElement,
+) -> None:
+    """Draw text on a transparent layer, rotate it, paste at the bbox centre.
+
+    Schema angle is clockwise-positive; PIL.rotate is counter-clockwise
+    (same convention as _paint_image_element). ``align`` only controls
+    line alignment inside the text block -- the block itself is centred on
+    the bbox, which is the natural reading of a rotated element.
+    """
+    pil_align = align if align in ("center", "right") else "left"
+    pad = 4
+    bbox = _MEASURE_DRAW.multiline_textbbox((0, 0), text, font=font, align=pil_align)
+    layer = Image.new(
+        "RGBA",
+        (bbox[2] - bbox[0] + 2 * pad, bbox[3] - bbox[1] + 2 * pad),
+        (0, 0, 0, 0),
+    )
+    ImageDraw.Draw(layer).multiline_text(
+        (pad - bbox[0], pad - bbox[1]), text, fill=color, font=font, align=pil_align
+    )
+    layer = layer.rotate(-layout_el.angle, expand=True, resample=Image.BICUBIC)
+    paste_left = layout_el.left + (layout_el.width - layer.width) // 2
+    paste_top = layout_el.top + (layout_el.height - layer.height) // 2
+    canvas.paste(layer, (paste_left, paste_top), layer)
+
+
 # ============================================================
 # Font resolution
 # ============================================================
 
 
 _SCRIPT_KEYWORDS = ("script", "cursive", "hand", "callig", "brush", "vibes", "pacifico")
-_DISPLAY_KEYWORDS = ("display", "slab", "poster", "decorative", "condensed", "lobster", "oswald", "impact")
+_DISPLAY_KEYWORDS = (
+    "display", "slab", "poster", "decorative", "condensed",
+    "lobster", "oswald", "impact", "bebas", "baloo", "rounded",
+)
 
 
 def _normalize_family(family: str) -> str:
@@ -350,6 +467,29 @@ def _candidate_paths(name: str) -> List[str]:
     return [str(PROJECT_FONT_DIR / name), name]
 
 
+def _apply_weight_variation(
+    font: ImageFont.FreeTypeFont, weight_norm: str
+) -> ImageFont.FreeTypeFont:
+    """Select the named weight instance on a variable font.
+
+    Step 55: Montserrat/Baloo2/DancingScript/Oswald ship as variable fonts.
+    The default instance is NOT always Regular (Montserrat defaults to Thin),
+    so both weights must be selected explicitly. Static fonts raise OSError
+    on get_variation_names() and pass through unchanged.
+    """
+    target = "Bold" if weight_norm == "bold" else "Regular"
+    try:
+        names = [
+            n.decode("utf-8", "ignore") if isinstance(n, bytes) else n
+            for n in font.get_variation_names()
+        ]
+        if target in names:
+            font.set_variation_by_name(target)
+    except (OSError, IOError):
+        pass
+    return font
+
+
 def _resolve_font(family: str, weight: str, size: int) -> ImageFont.ImageFont:
     """Try family/weight-specific fonts, then graceful fallbacks.
 
@@ -373,7 +513,8 @@ def _resolve_font(family: str, weight: str, size: int) -> ImageFont.ImageFont:
 
     for path in candidates:
         try:
-            return ImageFont.truetype(path, size=size)
+            font = ImageFont.truetype(path, size=size)
+            return _apply_weight_variation(font, weight_norm)
         except (OSError, IOError):
             continue
     return ImageFont.load_default()

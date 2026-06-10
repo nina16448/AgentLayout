@@ -3876,4 +3876,61 @@ order-flip：5/20（step53 為 2/17）——pairs 確實更接近。
 
 ---
 
+## Step 55：Renderer 天花板提升（2026/06/11）
+
+### 動機
+
+Step 54 證實 render channel 佔 blind gap 61–68%、renderer 天花板僅
+~22.5%——任何 Generator/prompt/gate 改進都打不破。本步直接補 renderer。
+
+### 改動（`metagpt/ext/agentlayout/tools/renderer.py`）
+
+1. **字型升級（55a）**：bundled 新增 Montserrat-Variable（sans 首選，取代
+   DejaVu「工程 mockup」臉）、Baloo2-Variable（粗圓 display bold，GT 標題
+   最常見字類）、BebasNeue（縮體 display）；全 OFL。新增
+   `_apply_weight_variation`：variable font 以 named instance 顯式選
+   Bold/Regular。**修掉兩個靜默 bug**：(a) `DancingScript-Bold.ttf` /
+   `Oswald-Bold.ttf` 從未存在於 fonts/，bold 請求一直 fallback 成細體；
+   (b) Montserrat variable 預設 instance 是 Thin，不顯式設 Regular 會
+   渲染極細體。
+2. **Auto-wrap + shrink-to-fit（55b）**：新 `_fit_text`／`_wrap_to_width`。
+   無手動換行 → 按像素寬逐詞 wrap；仍溢出 → font_size × 0.9 遞減
+   （下限 `MIN_FONT_SIZE=8`），到底仍溢出就照畫（不裁切）。手動 `\n`
+   原樣保留（作者斷行意圖）。Generator 的 font_size 語意變為上限。
+   Phase 1「故意讓溢出給 Judge 罰」設計正式移除。
+3. **Text rotation（55c）**：`_paint_rotated_text`——文字畫到透明圖層 →
+   `rotate(-angle, expand)`（schema 順時針正，與 image 同慣例）→ 以 bbox
+   中心 paste。`_fit_text` 用旋轉後軸對齊外接框檢查（90° 直幅的行長
+   受 bbox **高度**約束）。angle=0 路徑行為不變。
+4. **Parity 腳本（55e）**：`step54_render_parity.py` 加 `--prefix` /
+   `--center-align`（text bbox 水平中心落在 canvas 中心 ±5% →
+   `text_align="center"`，純幾何推導、零 LLM）。
+
+測試：新增 `test_renderer_step55.py` 17 項（variation/wrap/fit/rotation，
+含兩個 bug 的 regression guard）；全套 **261 passed / 12 skipped** 零回歸。
+
+### 驗證（step54 protocol 重跑：our-render(GT) vs GT 原圖，N=20、40 判）
+
+| 軸 | Step 54（舊 renderer） | **Step 55（新 renderer）** | parity=50% |
+|---|---|---|---|
+| design_layout | 22.5%（9/31/0） | **55%（22/18/0）** | **超過 parity** |
+| typography_color | 17.5%（7/31/2） | **30%（12/27/1）** | 殘餘 gap |
+| overall | 22.5%（9/31） | **45%（18/40）** | 接近 parity |
+| order-flip | 5/20 | 8/20（40%） | pairs 近不可分 |
+
+### 解讀
+
+1. **design_layout 的 render channel gap 關閉**：幾何相同下 judge 已無法
+   穩定區分我們的 render 與 GT 原圖（55% ≈ 隨機；5 樣本雙順序皆判 cand 勝；
+   40% order-flip）。
+2. **typography 殘餘 30%**：GT meta 無 font/color metadata，推導是
+   heuristic——殘餘屬資料層限制，非 renderer 限制，接近不可再縮。
+3. **Step 51 的 A blind 5% 須重測**：該數字是舊 renderer 量的。新天花板
+   design_layout ~55% / typography ~30%，Generator 真實構圖差距待
+   新 renderer 下的 live N=20 重跑（下一步）。
+4. 已知缺口：crello cache 的 meta.json 未存 `angle`，parity 重渲染吃不到
+   rotation 效益（renderer 已支援）——天花板量測偏低估方向。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/11*
