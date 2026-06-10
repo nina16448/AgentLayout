@@ -3473,4 +3473,36 @@ A 側 render 系統性承受 (1) 素材缺失 (2) 字型降級 (3) 素材糊化 
 
 ---
 
+## Step 48（2026-06-10 深夜）— 去 confound 後 N=20 重跑：Generator-bounded 結論在乾淨條件下成立
+
+**設計**：用 Step 47 修正後的 renderer（複合背景 + script/display 字型 + 2× 放大上限）重跑
+step41 GT-anchored pairwise oracle，樣本 = Step 34/40 同一批 `step13_drawn_ids.json`（N=20），
+模型 gpt-4o。log：`output/step48_N20_postfix_rerun.log`。
+
+### 結果
+
+| 指標 | Step 47 前（Step 40/44/45/46） | Step 48（post-fix） |
+|---|---|---|
+| 接受率 | 0/N | **0/20**（全 round1_exhausted） |
+| Judge overall_winner | B 全勝 | **B 31/31 全勝** |
+| vision refusal | 21 連拒（單一樣本） | 0 次 |
+| A 側 render 品質 | 缺背景框／DejaVu 全字型／糊素材 | 目視確認三項全部修復 |
+
+### 解讀
+
+1. **Generator-bounded 結論這次站得住**：渲染端 handicap 全部移除後 GT 仍全勝，
+   Step 40 的歸因從「premature」升級為「de-confounded 下驗證成立」。論文可引用
+   Step 48 作為 robust negative result，並以 Step 47→48 的對照說明 confound 控制方法。
+2. **殘餘 gap 全是 Generator 行為**（judge summary 高頻詞：balance、use of space、typography）：
+   - 排版失衡／大塊 dead space（例：`59158b4f` 橫幅左側懸空白板）；
+   - **字型「選擇」而非「能力」**：renderer 已能畫 Great Vibes/Lobster，但 Generator
+     仍預設 sans-serif + 黑字（GT 多為 script + 主題色）——可從 GenerateLayout prompt 下手；
+   - 部分樣本其實已接近可用（例：`5f4e0040` Home Decor Mall），但 pairwise vs 設計師 GT 的
+     門檻極高，judge 永遠能找到 B 較優的理由。
+3. **方向建議**：接受率若要突破，下一步應改 Generator 端——(a) typography 主動選擇
+   script/display + 主題色、(b) dead-space／balance 的生成時約束；而非繼續加 Judge 回饋通道
+   （Step 41–46 已證明回饋通道增益為零）。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/10*
