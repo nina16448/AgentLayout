@@ -107,6 +107,10 @@ class SuggestionKind(str, Enum):
     TYPOGRAPHY = "typography"      # font_size / font_weight (numeric)
     COLOR = "color"                # hex color string
     ZORDER = "zorder"              # explicit z_index (numeric int)
+    PLACE_IN_BBOX = "place_in_bbox"  # Step 44: Judge saw the image and emits an
+                                   # absolute pixel target_bbox=[L,T,R,B]. Generator
+                                   # sets the element's (left,top,width,height) directly,
+                                   # bypassing the +/-10% refinement drift cap.
     OTHER = "other"                # fallback; prompt discourages but allows
 
 
@@ -468,10 +472,14 @@ _NUMERIC_KINDS = frozenset(
         SuggestionKind.RESIZE,
         SuggestionKind.MOVE,
         SuggestionKind.SPACING,
-        SuggestionKind.TYPOGRAPHY,
         SuggestionKind.ZORDER,
+        # TYPOGRAPHY is handled separately (Step 45): font_size requires numeric
+        # but font_family / text_align / named font_weight are strings.
     }
 )
+
+_TYPOGRAPHY_METRICS = frozenset({"font_size", "font_weight", "font_family", "text_align"})
+_TEXT_ALIGN_VALUES = frozenset({"left", "center", "right", "justify"})
 
 
 class Suggestion(BaseModel):
@@ -501,6 +509,16 @@ class Suggestion(BaseModel):
     value: Union[int, float, str] = Field(
         ..., description="Numeric target, hex color, or other typed value matching `kind`."
     )
+    target_bbox: Optional[List[int]] = Field(
+        default=None,
+        description=(
+            "Step 44: absolute pixel bbox [L, T, R, B] in canvas coords. "
+            "REQUIRED iff kind=place_in_bbox; ignored otherwise. Generator sets "
+            "the target element to (left=L, top=T, width=R-L, height=B-T)."
+        ),
+        min_length=4,
+        max_length=4,
+    )
     rationale: Optional[str] = Field(
         default=None,
         description="Short explanation of why this change helps; optional.",
@@ -524,6 +542,64 @@ class Suggestion(BaseModel):
                 raise ValueError(
                     f"Suggestion(kind=color, target_id={self.target_id}) requires a "
                     f"hex string like '#RGB' / '#RRGGBB' / '#RRGGBBAA'; got {self.value!r}."
+                )
+        if self.kind == SuggestionKind.TYPOGRAPHY:
+            if self.metric not in _TYPOGRAPHY_METRICS:
+                raise ValueError(
+                    f"Suggestion(kind=typography, target_id={self.target_id}) "
+                    f"metric must be one of {sorted(_TYPOGRAPHY_METRICS)}; "
+                    f"got {self.metric!r}."
+                )
+            if self.metric == "font_size":
+                if not isinstance(self.value, (int, float)):
+                    raise ValueError(
+                        f"Suggestion(kind=typography, metric=font_size, "
+                        f"target_id={self.target_id}) requires numeric value; "
+                        f"got {type(self.value).__name__}={self.value!r}."
+                    )
+            elif self.metric == "font_weight":
+                if not isinstance(self.value, (int, float, str)):
+                    raise ValueError(
+                        f"Suggestion(kind=typography, metric=font_weight, "
+                        f"target_id={self.target_id}) requires numeric or named "
+                        f"weight (e.g. 700 or 'bold'); got {self.value!r}."
+                    )
+            elif self.metric == "font_family":
+                if not isinstance(self.value, str) or not self.value.strip():
+                    raise ValueError(
+                        f"Suggestion(kind=typography, metric=font_family, "
+                        f"target_id={self.target_id}) requires a non-empty "
+                        f"string (e.g. 'serif', 'Inter'); got {self.value!r}."
+                    )
+            elif self.metric == "text_align":
+                if not isinstance(self.value, str) or self.value not in _TEXT_ALIGN_VALUES:
+                    raise ValueError(
+                        f"Suggestion(kind=typography, metric=text_align, "
+                        f"target_id={self.target_id}) value must be one of "
+                        f"{sorted(_TEXT_ALIGN_VALUES)}; got {self.value!r}."
+                    )
+        if self.kind == SuggestionKind.PLACE_IN_BBOX:
+            if self.target_bbox is None:
+                raise ValueError(
+                    f"Suggestion(kind=place_in_bbox, target_id={self.target_id}) "
+                    f"requires target_bbox=[L, T, R, B]; got None."
+                )
+            l, t, r, b = self.target_bbox
+            if not (isinstance(l, int) and isinstance(t, int)
+                    and isinstance(r, int) and isinstance(b, int)):
+                raise ValueError(
+                    f"Suggestion(kind=place_in_bbox, target_id={self.target_id}) "
+                    f"target_bbox must be 4 ints; got {self.target_bbox!r}."
+                )
+            if r <= l or b <= t:
+                raise ValueError(
+                    f"Suggestion(kind=place_in_bbox, target_id={self.target_id}) "
+                    f"target_bbox=[L,T,R,B] requires R>L and B>T; got {self.target_bbox!r}."
+                )
+            if l < 0 or t < 0:
+                raise ValueError(
+                    f"Suggestion(kind=place_in_bbox, target_id={self.target_id}) "
+                    f"target_bbox must have L>=0 and T>=0; got {self.target_bbox!r}."
                 )
         return self
 

@@ -21,6 +21,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from metagpt.ext.agentlayout.schema import (
+    BackgroundAnalysis,
     Candidate,
     DesignSpec,
     HardConstraint,
@@ -112,6 +113,13 @@ class ViolationType(str, Enum):
     DECORATIVE_IMAGE_OVERSIZED = "decorative_image_oversized"
     TITLE_UNDERSIZED = "title_undersized"
     TITLE_PERIPHERAL = "title_peripheral"
+    # Step 43 (2026-06-10): primary content (title/subtitle/body_text/
+    # product_image/logo) must overlap with at least one of the safe_zones
+    # provided by BackgroundAnalyzer. The saliency-low safe_zones are where
+    # the background subject is NOT; primary content placed elsewhere
+    # obscures both background and content. Active only when the caller
+    # passes a BackgroundAnalysis to check_candidate.
+    PRIMARY_OUTSIDE_SAFE_ZONE = "primary_outside_safe_zone"
 
 
 class Violation(BaseModel):
@@ -135,12 +143,22 @@ class CheckResult(BaseModel):
 # ============================================================
 
 
-def check_candidate(candidate: Candidate, spec: DesignSpec) -> CheckResult:
+def check_candidate(
+    candidate: Candidate,
+    spec: DesignSpec,
+    bg: "Optional[BackgroundAnalysis]" = None,
+) -> CheckResult:
     """Run all three validation phases and aggregate violations.
 
     Phases run sequentially but every phase always runs — we want a *full*
     violation list for analytics, not a fail-fast bool. ``passed`` is True
     iff no violation was recorded.
+
+    Step 43 (2026-06-10): an optional ``bg`` BackgroundAnalysis enables the
+    PRIMARY_OUTSIDE_SAFE_ZONE check. Callers that already resolve a
+    BackgroundAnalysis (Generator's QC pipeline, Step 41/43 oracle driver)
+    should pass it; callers that do not (legacy tests, scripts) keep the
+    default and silently skip the new check.
     """
     violations: List[Violation] = []
     violations.extend(_check_completeness(candidate, spec))
@@ -154,6 +172,8 @@ def check_candidate(candidate: Candidate, spec: DesignSpec) -> CheckResult:
     violations.extend(_check_decorative_image_oversized(candidate, spec))
     violations.extend(_check_title_undersized(candidate, spec))
     violations.extend(_check_title_peripheral(candidate, spec))
+    # Step 43 (2026-06-10): primary content must overlap a safe_zone.
+    violations.extend(_check_primary_in_safe_zone(candidate, spec, bg))
     return CheckResult(
         candidate_id=candidate.candidate_id,
         passed=not violations,
@@ -692,6 +712,83 @@ def _check_title_peripheral(candidate: Candidate, spec: DesignSpec) -> List[Viol
 
 
 # ----- end Step 36 rules -------------------------------------------------
+
+
+# ----- Step 43 rule ------------------------------------------------------
+
+PRIMARY_SEMANTIC_TYPES = frozenset(
+    {
+        SemanticType.TITLE,
+        SemanticType.SUBTITLE,
+        SemanticType.BODY_TEXT,
+        SemanticType.PRODUCT_IMAGE,
+        SemanticType.LOGO,
+    }
+)
+
+PRIMARY_SAFE_ZONE_MIN_OVERLAP: float = 0.50
+"""Step 43 (2026-06-10): a PRIMARY element (title/subtitle/body_text/
+product_image/logo) MUST overlap by at least 50% of its own area with at
+least one of the safe_zones returned by BackgroundAnalyzer. Less than
+50% means the primary content is mostly sitting on top of the
+background saliency subject, obscuring both the background and the
+content itself."""
+
+
+def _check_primary_in_safe_zone(
+    candidate: Candidate,
+    spec: DesignSpec,
+    bg: Optional[BackgroundAnalysis],
+) -> List[Violation]:
+    if bg is None or not bg.safe_zones:
+        return []
+    types = _spec_semantic_map(spec)
+    out: List[Violation] = []
+    for el in candidate.elements:
+        if types.get(el.id) not in PRIMARY_SEMANTIC_TYPES:
+            continue
+        elem_area = float(el.width) * float(el.height)
+        if elem_area <= 0:
+            continue
+        # Step 43 bug-fix (2026-06-10): SafeZone.bbox is [left, top, RIGHT,
+        # BOTTOM] (absolute coords) per schema docstring, NOT
+        # [left, top, width, height]. The first cut of this rule treated
+        # the last two entries as width/height, which extended the zone's
+        # right/bottom by `left + right` (e.g. r0c2 at [1000, 0, 1500, 166]
+        # was treated as covering x in [1000, 2500] instead of [1000,
+        # 1500]). Decoding as LTRB fixes the overlap math.
+        el_left = float(el.left)
+        el_top = float(el.top)
+        el_right = el_left + float(el.width)
+        el_bottom = el_top + float(el.height)
+        best_overlap = 0.0
+        best_zone = None
+        for sz in bg.safe_zones:
+            sl, st, sr, sb = sz.bbox  # LTRB
+            ix = max(0.0, min(el_right, float(sr)) - max(el_left, float(sl)))
+            iy = max(0.0, min(el_bottom, float(sb)) - max(el_top, float(st)))
+            overlap = (ix * iy) / elem_area
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_zone = sz.region
+        if best_overlap < PRIMARY_SAFE_ZONE_MIN_OVERLAP:
+            out.append(
+                Violation(
+                    type=ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE,
+                    targets=[el.id],
+                    detail=(
+                        f"primary '{el.id}' ({types[el.id].value}) overlaps "
+                        f"best safe_zone '{best_zone or '<none>'}' at "
+                        f"ratio={best_overlap:.2f} < "
+                        f"{PRIMARY_SAFE_ZONE_MIN_OVERLAP}; place primary "
+                        "content inside background-saliency-low safe_zones"
+                    ),
+                )
+            )
+    return out
+
+
+# ----- end Step 43 rule --------------------------------------------------
 
 
 def _check_text_contrast(candidate: Candidate, spec: DesignSpec) -> List[Violation]:

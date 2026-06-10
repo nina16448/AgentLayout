@@ -150,28 +150,30 @@ FORMAT_EXAMPLE_REJECT = """{
     ],
     "structured_suggestions": [
       {
+        "kind": "place_in_bbox",
+        "target_id": "headline_1",
+        "metric": "bbox",
+        "op": "set_to",
+        "value": "[80, 200, 720, 480]",
+        "target_bbox": [80, 200, 720, 480],
+        "rationale": "Upper-left negative-space band (sky region) is empty; move and enlarge headline_1 to occupy it so it visually anchors the design."
+      },
+      {
+        "kind": "place_in_bbox",
+        "target_id": "product_img_1",
+        "metric": "bbox",
+        "op": "set_to",
+        "value": "[260, 540, 540, 820]",
+        "target_bbox": [260, 540, 540, 820],
+        "rationale": "Pull the product up so it sits ~40px below the headline, forming a tight semantic group within the same safe zone."
+      },
+      {
         "kind": "typography",
         "target_id": "headline_1",
         "metric": "font_size",
         "op": ">=",
         "value": 72,
         "rationale": "Currently ~32px, too small to anchor the design_layout hierarchy."
-      },
-      {
-        "kind": "spacing",
-        "target_id": "product_img_1",
-        "metric": "gap_to:headline_1",
-        "op": "<=",
-        "value": 40,
-        "rationale": "Currently ~180px apart, weakens semantic grouping."
-      },
-      {
-        "kind": "resize",
-        "target_id": "headline_1",
-        "metric": "width",
-        "op": ">=",
-        "value": 600,
-        "rationale": "Width must dominate the canvas band to read as the title."
       }
     ]
   }
@@ -244,6 +246,13 @@ The semantics differ by decision:
 Each structured suggestion is a JSON object with these fields:
 
   - kind: one of
+        "place_in_bbox" -> [STRONGLY PREFERRED for position/size fixes]
+                           set the element to an absolute canvas bbox
+                           [L, T, R, B] in pixels. Use this whenever you can
+                           SEE the candidate image and know exactly which
+                           region of the canvas the element should occupy.
+                           This bypasses Generator drift caps and is the
+                           highest-bandwidth way to convey a visual decision.
         "resize"      -> change an element's width or height (numeric pixels)
         "move"        -> change an element's top-left position (numeric pixels)
         "spacing"     -> change a gap between two elements (numeric pixels)
@@ -256,6 +265,7 @@ Each structured suggestion is a JSON object with these fields:
     has `left`, `top`, `width`, `height`, `font_size`, `font_weight`, `color`,
     `z_index`. There is NO `right` or `bottom` field. The allowed metric
     string is determined by `kind`:
+        kind=place_in_bbox -> "bbox"  (with op="set_to" and target_bbox=[L,T,R,B])
         kind=resize     -> "width" or "height"
         kind=move       -> "left" or "top"   (NOT "right" / "bottom" / "x" / "y";
                                               if you want the element pushed to
@@ -264,19 +274,45 @@ Each structured suggestion is a JSON object with these fields:
                                               from canvas_width / canvas_height
                                               and emit TWO move suggestions)
         kind=spacing    -> "gap_to:OTHER_ID"  (OTHER_ID is an element id)
-        kind=typography -> "font_size" or "font_weight"
+        kind=typography -> ONE of "font_size" | "font_weight" |
+                                  "font_family" | "text_align"
+                           Value typing per metric:
+                             font_size   -> integer pixels (e.g. 96)
+                             font_weight -> integer (e.g. 700) OR string
+                                            ("regular" / "bold")
+                             font_family -> string (e.g. "serif", "Inter",
+                                            "Playfair Display")
+                             text_align  -> one of "left" / "center" /
+                                            "right" / "justify"
         kind=color      -> "color"
         kind=zorder     -> "z_index"
         kind=other      -> any string (use sparingly)
   - op: a comparator or action, one of ">=", "<=", "==", "set_to",
         "increase_by", "decrease_by".
+        For kind=place_in_bbox, op MUST be "set_to".
   - value: the target value. MUST be numeric (int or float) when kind is
-        resize / move / spacing / typography / zorder. MUST be a hex string
-        like "#FFFFFF" when kind is color.
+        resize / move / spacing / zorder. MUST be a hex string like "#FFFFFF"
+        when kind is color. For typography, value type depends on metric (see
+        per-metric typing in the kind=typography entry above). For
+        place_in_bbox, value mirrors target_bbox as a string like
+        "[L, T, R, B]" (the authoritative source is target_bbox; value is
+        descriptive only).
+  - target_bbox: REQUIRED iff kind=place_in_bbox. A list of 4 ints
+        [L, T, R, B] in canvas pixel coords (L>=0, T>=0, R>L, B>T).
+        Generator will set the element to (left=L, top=T, width=R-L, height=B-T).
+        For all other kinds, omit this field.
   - rationale: optional one-line explanation.
 
-Numeric example:  {{"kind":"resize","target_id":"headline_1","metric":"height","op":">=","value":80}}
-Color example:    {{"kind":"color","target_id":"bg_1","metric":"color","op":"set_to","value":"#1A1A2E"}}
+Place-in-bbox example (PREFERRED when you can see the image):
+  {{"kind":"place_in_bbox","target_id":"headline_1","metric":"bbox",
+    "op":"set_to","value":"[80, 200, 720, 480]",
+    "target_bbox":[80, 200, 720, 480],
+    "rationale":"Upper-left sky region is empty -- anchor headline there."}}
+Numeric example:    {{"kind":"resize","target_id":"headline_1","metric":"height","op":">=","value":80}}
+Color example:      {{"kind":"color","target_id":"bg_1","metric":"color","op":"set_to","value":"#1A1A2E"}}
+Typography family:  {{"kind":"typography","target_id":"headline_1","metric":"font_family","op":"set_to","value":"Playfair Display","rationale":"GT uses a serif display face that conveys editorial weight; AL's sans-serif looks generic."}}
+Typography align:   {{"kind":"typography","target_id":"subtitle_1","metric":"text_align","op":"set_to","value":"center","rationale":"GT centres the subtitle for visual balance with the symmetric headline."}}
+Typography weight:  {{"kind":"typography","target_id":"headline_1","metric":"font_weight","op":"set_to","value":"bold","rationale":"GT headline is visibly heavier; AL's regular weight reads as body text."}}
 
 # Format examples (output one JSON matching whichever case applies)
 
@@ -314,6 +350,30 @@ ATTENTION: Hard-constraint `size_preference` with hint "prominent" is enforced
                {{"kind":"resize","target_id":"title_1","metric":"width","op":">=","value":600}}
                {{"kind":"resize","target_id":"title_1","metric":"height","op":">=","value":180}}
            600 * 180 = 108000 >= 96000, so QC will pass.
+ATTENTION: Step 45 (2026-06-10) -- TYPOGRAPHY parity with the reference.
+           place_in_bbox solves "is the element in the right region"; it does
+           NOT fix "does the text read like the reference design". When you
+           can see a candidate text element that LOSES on typography_color
+           against the GT image (smaller weight, generic family, wrong
+           alignment, awkward size), emit ONE OR MORE kind="typography"
+           suggestions targeting the failing dimension(s). Inspect ALL FOUR
+           typography metrics on every text element:
+             1. font_size    -- is the title big enough to dominate?
+             2. font_weight  -- does the GT look heavier or lighter?
+             3. font_family  -- serif vs sans, display vs body face?
+             4. text_align   -- does the GT centre / left-align differently?
+           Emit one suggestion PER failing metric so the Generator can apply
+           them independently. Do NOT bundle multiple metrics into one
+           suggestion. Typography fixes are how AL closes the visual quality
+           gap to the designer GT once layout positions are already right.
+ATTENTION: For ANY suggestion that involves moving or resizing an element,
+           prefer kind="place_in_bbox" with an explicit target_bbox=[L,T,R,B]
+           over a chain of resize/move suggestions. You are looking at the
+           candidate image -- you can identify the empty visual region better
+           than the Generator can. Bbox values are absolute canvas pixels;
+           confirm they fit (L>=0, T>=0, R<=canvas_width, B<=canvas_height,
+           R>L, B>T). The Generator will obey target_bbox verbatim and skip
+           its +/-10% drift cap for that element.
 ATTENTION: Prefer kind != "other"; aim for at most one "other" per response.
 ATTENTION: best_candidate_id must be the candidate with the highest total score.
 ATTENTION: Each evaluation's "total" must equal the sum of its four scores.

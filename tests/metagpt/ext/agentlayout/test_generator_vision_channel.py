@@ -1,0 +1,191 @@
+"""Step 46 unit tests for GenerateLayout vision channel.
+
+These tests do NOT hit a real LLM; they install a fake llm onto the action
+and verify the image-payload plumbing only. The end-to-end LLM behaviour is
+covered by the requires_llm gated suite (test_generator_corner.py) and the
+live step41 oracle smoke runs.
+"""
+from __future__ import annotations
+
+import base64
+import json
+from io import BytesIO
+from typing import Any, List, Optional
+
+import pytest
+from PIL import Image
+
+from metagpt.ext.agentlayout.actions.generate_layout import GenerateLayout
+from metagpt.ext.agentlayout.pipeline import default_white_background
+from metagpt.ext.agentlayout.schema import (
+    Canvas,
+    DesignSpec,
+    Element,
+    LayoutTree,
+    LayoutTreeNode,
+    SemanticType,
+    VisualType,
+)
+
+
+def _bg_png_to_path(path) -> None:
+    img = Image.new("RGB", (64, 96), color=(200, 220, 240))
+    img.save(path, format="PNG")
+
+
+def _make_spec(bg_path: Optional[str]) -> DesignSpec:
+    el = Element(
+        id="title_1",
+        semantic_type=SemanticType.TITLE,
+        visual_type=VisualType.TEXT,
+        content="HELLO",
+        inferred=False,
+        importance=5,
+        semantic_relevance=0.9,
+    )
+    return DesignSpec(
+        canvas=Canvas(width=600, height=400, background_asset_ref=bg_path),
+        elements=[el],
+        hard_constraints=[],
+        style_keywords=["bold"],
+        language="en",
+    )
+
+
+def _flat_tree(spec: DesignSpec) -> LayoutTree:
+    return LayoutTree(
+        root=LayoutTreeNode(
+            id="root",
+            children=[LayoutTreeNode(id=el.id) for el in spec.foreground_elements()],
+        )
+    )
+
+
+class _FakeLLM:
+    """Records every aask call so the test can assert on (prompt, images)."""
+
+    def __init__(self, *, supports_vision: bool, canned_response: str):
+        self.supports_vision = supports_vision
+        self.canned_response = canned_response
+        self.calls: List[dict] = []
+        self.model = "fake-vision-mock"
+
+    def support_image_input(self) -> bool:
+        return self.supports_vision
+
+    async def aask(self, prompt: str, images: Optional[List[str]] = None, **kwargs: Any) -> str:
+        self.calls.append({"prompt_head": prompt[:80], "images": images, "kwargs": kwargs})
+        return self.canned_response
+
+
+_CANNED_BATCH_JSON = json.dumps(
+    {
+        "candidates": [
+            {
+                "candidate_id": "cand_01",
+                "elements": [
+                    {
+                        "id": "title_1",
+                        "left": 50,
+                        "top": 50,
+                        "width": 500,
+                        "height": 100,
+                        "angle": 0,
+                        "z_index": 3,
+                        "font_family": "sans-serif",
+                        "font_size": 48,
+                        "font_weight": "bold",
+                        "color": "#111111",
+                        "text_align": "center",
+                    }
+                ],
+            }
+        ]
+    }
+)
+
+
+def test_render_bg_image_returns_none_when_no_ref():
+    spec = _make_spec(bg_path=None)
+    assert GenerateLayout._render_bg_image(spec) is None
+
+
+def test_render_bg_image_returns_none_when_path_missing(tmp_path):
+    spec = _make_spec(bg_path=str(tmp_path / "does_not_exist.png"))
+    assert GenerateLayout._render_bg_image(spec) is None
+
+
+def test_render_bg_image_returns_base64_for_existing_png(tmp_path):
+    bg = tmp_path / "bg.png"
+    _bg_png_to_path(bg)
+    spec = _make_spec(bg_path=str(bg))
+    b64 = GenerateLayout._render_bg_image(spec)
+    assert isinstance(b64, str)
+    assert len(b64) > 0
+    raw = base64.b64decode(b64)
+    decoded = Image.open(BytesIO(raw))
+    decoded.verify()
+
+
+def test_render_bg_image_caps_longest_edge_at_768(tmp_path):
+    big = Image.new("RGB", (2000, 1500), color=(120, 90, 60))
+    big_path = tmp_path / "big_bg.png"
+    big.save(big_path, format="PNG")
+    spec = _make_spec(bg_path=str(big_path))
+    b64 = GenerateLayout._render_bg_image(spec)
+    assert b64 is not None
+    decoded = Image.open(BytesIO(base64.b64decode(b64)))
+    assert max(decoded.size) == 768
+    assert min(decoded.size) == 576  # 1500 * (768/2000) rounded
+
+
+@pytest.mark.asyncio
+async def test_run_attaches_image_when_llm_supports_vision_and_bg_exists(tmp_path):
+    bg = tmp_path / "bg.png"
+    _bg_png_to_path(bg)
+    spec = _make_spec(bg_path=str(bg))
+    tree = _flat_tree(spec)
+    bg_analysis = default_white_background(spec.canvas)
+
+    fake = _FakeLLM(supports_vision=True, canned_response=_CANNED_BATCH_JSON)
+    gen = GenerateLayout()
+    object.__setattr__(gen, "llm", fake)  # bypass pydantic frozen field
+
+    batch = await gen.run(spec=spec, tree=tree, bg=bg_analysis, feedback=None)
+    assert len(batch.candidates) == 1
+    assert len(fake.calls) == 1
+    assert isinstance(fake.calls[0]["images"], list)
+    assert len(fake.calls[0]["images"]) == 1
+    assert isinstance(fake.calls[0]["images"][0], str)
+
+
+@pytest.mark.asyncio
+async def test_run_skips_image_when_llm_lacks_vision_support(tmp_path):
+    bg = tmp_path / "bg.png"
+    _bg_png_to_path(bg)
+    spec = _make_spec(bg_path=str(bg))
+    tree = _flat_tree(spec)
+    bg_analysis = default_white_background(spec.canvas)
+
+    fake = _FakeLLM(supports_vision=False, canned_response=_CANNED_BATCH_JSON)
+    gen = GenerateLayout()
+    object.__setattr__(gen, "llm", fake)
+
+    await gen.run(spec=spec, tree=tree, bg=bg_analysis, feedback=None)
+    assert len(fake.calls) == 1
+    assert fake.calls[0]["images"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_skips_image_when_bg_unavailable_even_with_vision_llm(tmp_path):
+    spec = _make_spec(bg_path=None)
+    tree = _flat_tree(spec)
+    bg_analysis = default_white_background(spec.canvas)
+
+    fake = _FakeLLM(supports_vision=True, canned_response=_CANNED_BATCH_JSON)
+    gen = GenerateLayout()
+    object.__setattr__(gen, "llm", fake)
+
+    await gen.run(spec=spec, tree=tree, bg=bg_analysis, feedback=None)
+    assert len(fake.calls) == 1
+    assert fake.calls[0]["images"] is None

@@ -1225,3 +1225,127 @@ def test_step36c_title_pinned_to_top_edge_flags():
     peri = [v for v in result.violations if v.type == ViolationType.TITLE_PERIPHERAL]
     assert len(peri) == 1, f"top-edge title must flag peripheral, got {result.violations}"
     assert peri[0].targets == ["title_1"]
+
+
+# ============================================================
+# 12. Step 43 PRIMARY_OUTSIDE_SAFE_ZONE
+# ============================================================
+
+
+def _step43_spec_and_candidate(
+    title_left: int = 0,
+    title_top: int = 100,
+    title_w: int = 400,
+    title_h: int = 200,
+):
+    from metagpt.ext.agentlayout.schema import (
+        BackgroundAnalysis,
+        Candidate,
+        Canvas,
+        DesignSpec,
+        Element,
+        LayoutElement,
+        SafeZone,
+        SemanticType,
+        VisualType,
+    )
+
+    spec = DesignSpec(
+        canvas=Canvas(width=1000, height=1000),
+        elements=[
+            Element(
+                id="title_1",
+                semantic_type=SemanticType.TITLE,
+                visual_type=VisualType.TEXT,
+                content="HELLO",
+                importance=5,
+                semantic_relevance=0.9,
+            ),
+        ],
+        hard_constraints=[],
+        soft_constraints=[],
+        style_keywords=[],
+        language="en",
+        inferred_fields={},
+    )
+    cand = Candidate(
+        candidate_id="cand_step43",
+        elements=[
+            LayoutElement(
+                id="title_1",
+                left=title_left,
+                top=title_top,
+                width=title_w,
+                height=title_h,
+                z_index=3,
+                font_family="sans-serif",
+                font_size=48,
+                font_weight="bold",
+                color="#111111",
+                text_align="center",
+            ),
+        ],
+    )
+    # One safe zone occupying the left half of the canvas. SafeZone.bbox
+    # is LTRB (left, top, right, bottom), not LTWH; for the left-half
+    # zone on a 1000x1000 canvas that means right=500, bottom=1000.
+    bg = BackgroundAnalysis(
+        safe_zones=[SafeZone(region="r1c0", bbox=[0, 0, 500, 1000], confidence=0.9)],
+        dominant_palette=["#FFFFFF"],
+        recommended_text_color="#111111",
+    )
+    return spec, cand, bg
+
+
+def test_step43_primary_inside_safe_zone_passes():
+    """Step 43: a title that sits entirely inside a safe_zone must NOT trigger
+    PRIMARY_OUTSIDE_SAFE_ZONE."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        ViolationType,
+        check_candidate,
+    )
+
+    # title at (100, 100, 300x300) fully inside r1c0 = (0, 0, 500x1000)
+    spec, cand, bg = _step43_spec_and_candidate(
+        title_left=100, title_top=100, title_w=300, title_h=300
+    )
+    result = check_candidate(cand, spec, bg=bg)
+    out = [v for v in result.violations if v.type == ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE]
+    assert out == [], f"in-zone title must pass; got {out}"
+
+
+def test_step43_primary_outside_safe_zone_flags():
+    """Step 43: a title centred in the saliency-high region (no safe-zone
+    overlap) MUST trigger PRIMARY_OUTSIDE_SAFE_ZONE. Replicates the 5928
+    'title centred at x=500-950 outside any safe_zone' failure observed
+    under Step 42 before this rule was wired in."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        ViolationType,
+        check_candidate,
+    )
+
+    # title at (600, 400, 300x200): entirely outside r1c0 (x in [0,500])
+    spec, cand, bg = _step43_spec_and_candidate(
+        title_left=600, title_top=400, title_w=300, title_h=200
+    )
+    result = check_candidate(cand, spec, bg=bg)
+    out = [v for v in result.violations if v.type == ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE]
+    assert len(out) == 1, f"outside-zone title must flag; got {result.violations}"
+    assert out[0].targets == ["title_1"]
+
+
+def test_step43_skipped_when_bg_is_none():
+    """Step 43: callers that do not resolve a BackgroundAnalysis (legacy
+    tests, scripts) keep the default bg=None and the new rule is
+    silently inert -- preserving backward compatibility."""
+    from metagpt.ext.agentlayout.tools.quality_checker import (
+        ViolationType,
+        check_candidate,
+    )
+
+    spec, cand, _bg = _step43_spec_and_candidate(
+        title_left=600, title_top=400, title_w=300, title_h=200
+    )
+    result = check_candidate(cand, spec)  # no bg passed
+    out = [v for v in result.violations if v.type == ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE]
+    assert out == [], f"bg=None must skip the rule; got {out}"

@@ -29,8 +29,13 @@ The Action keeps validation 1 only; layers 2/3 belong to downstream modules.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional, Tuple
+from io import BytesIO
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
+import base64
+
+from PIL import Image
 from pydantic import ValidationError
 
 from metagpt.actions import Action
@@ -43,6 +48,12 @@ from metagpt.ext.agentlayout.schema import (
 )
 from metagpt.logs import logger
 from metagpt.utils.common import CodeParser
+
+# Step 46 (2026-06-10): the Generator now attaches the canvas background to
+# its LLM call so it can SEE the focal subject and empty space. We cap the
+# longest edge at this size to keep per-call cost in check while preserving
+# enough detail for the model to identify negative-space regions.
+_BG_MAX_EDGE_PX: int = 768
 
 
 # ============================================================
@@ -179,16 +190,32 @@ The feedback object has two parts:
 
 Translate each structured suggestion into a concrete adjustment as follows:
 
-  | kind         | what to change                                                  |
-  | ------------ | --------------------------------------------------------------- |
-  | resize       | the element's `width` and/or `height`                           |
-  | move         | the element's `left` / `top` (or `right` / `bottom` derived)    |
-  | spacing      | the gap between `target_id` and the element named in `metric`   |
-  |              |   (metric format: 'gap_to:OTHER_ID')                            |
-  | typography   | the element's `font_size` or `font_weight`                      |
-  | color        | the element's `color` (use the exact hex string in `value`)     |
-  | zorder       | the element's `z_index` (integer)                               |
-  | other        | apply the operator/value to the named `metric` field            |
+  | kind           | what to change                                                       |
+  | -------------- | -------------------------------------------------------------------- |
+  | place_in_bbox  | OVERRIDE the element's (left,top,width,height) to                    |
+  |                | (target_bbox[0], target_bbox[1],                                     |
+  |                |  target_bbox[2]-target_bbox[0], target_bbox[3]-target_bbox[1]).      |
+  |                | This kind BYPASSES the +/-10% refinement drift cap for target_id    |
+  |                | because the Judge looked at the rendered image and decided the      |
+  |                | exact region this element should occupy.                            |
+  | resize         | the element's `width` and/or `height`                                |
+  | move           | the element's `left` / `top` (or `right` / `bottom` derived)         |
+  | spacing        | the gap between `target_id` and the element named in `metric`        |
+  |                |   (metric format: 'gap_to:OTHER_ID')                                 |
+  | typography     | One of FOUR text-style metrics on the target element:                |
+  |                |   metric=font_size    -> set `font_size` (int pixels, e.g. 96)       |
+  |                |   metric=font_weight  -> set `font_weight` (int 100-900 or named     |
+  |                |                          string like "bold" / "regular")            |
+  |                |   metric=font_family  -> set `font_family` (string e.g. "serif",    |
+  |                |                          "Inter", "Playfair Display")               |
+  |                |   metric=text_align   -> set `text_align` (one of "left" /          |
+  |                |                          "center" / "right" / "justify")            |
+  |                | Apply each typography suggestion verbatim; do NOT skip. These are   |
+  |                | how the Judge closes the visual gap to the reference once layout    |
+  |                | positions are correct. Apply to AT LEAST 4 of 5 candidates.         |
+  | color          | the element's `color` (use the exact hex string in `value`)          |
+  | zorder         | the element's `z_index` (integer)                                    |
+  | other          | apply the operator/value to the named `metric` field                 |
 
 Operators:
   ">="     -> the field MUST be at least `value`. Aim for value to value*1.2;
@@ -252,6 +279,66 @@ these. Generate candidates that already comply so retries are not wasted:
    render "RESOURCES" above "HUMAN" when the source had "HUMAN" before
    "RESOURCES").
 
+6. PRIMARY ELEMENTS (semantic_type in title / subtitle / body_text /
+   product_image / logo) MUST overlap >= 50% with at least one of the
+   provided `safe_zones`. The safe_zones list is the CV-derived
+   background-saliency-low regions; everything OUTSIDE them is occupied
+   by the background subject (faces, products, focal imagery). Placing a
+   primary element outside the safe_zones means obscuring the background
+   subject AND making the element hard to read.
+
+   bbox format inside `safe_zones` is [left, top, RIGHT, BOTTOM]
+   (absolute pixel coords; NOT width/height). To verify rule 6, test:
+       primary.left   >= safe_left   AND primary.left  + primary.width   <= safe_right
+       primary.top    >= safe_top    AND primary.top   + primary.height  <= safe_bottom
+   A primary fully inside a safe zone passes; partial overlap counts the
+   intersection-over-element-area which must be >= 0.50.
+
+   Decorative elements may straddle safe / unsafe boundaries since their
+   job is to anchor text, but the primary text/photo MUST sit inside a
+   safe zone. Use the provided safe zones; do not invent your own.
+
+# Reasoning checklist (Step 42, 2026-06-10): walk through these steps
+# mentally BEFORE you emit the JSON. The checklist is your scratchpad --
+# do NOT include the reasoning in your output, just produce the
+# candidates that satisfy what you concluded.
+
+  Step 1 -- SAFE-ZONE PLAN:
+    Read `safe_zones`. For each safe zone note: region label, bbox
+    (left, top, width, height), area_ratio = w*h / (canvas_w * canvas_h).
+    Decide which safe_zone will host the title, which will host the body
+    text, which will host any logo / product image. The hero element
+    goes in the largest safe zone.
+
+  Step 2 -- ASSET INVENTORY:
+    From the spec, list every element id + semantic_type + the asset
+    behind it (text content for text elements, image asset_ref for image
+    elements). Decide which element is THE focal point of this
+    composition.
+
+  Step 3 -- HIERARCHY:
+    Set sizes so the importance ordering is visually obvious:
+      title.font_size >= 1.5 * subtitle.font_size
+      title area_ratio >= 0.025  (rule 2 above)
+      decorative_image area_ratio < 0.40  (rule 1 above)
+
+  Step 4 -- COLOR:
+    Default text color = `recommended_text_color`. Override only if a
+    hard_constraint demands it OR if dominant_palette suggests a clearly
+    better choice. Mentally check WCAG AA contrast vs canvas
+    background_color.
+
+  Step 5 -- FEEDBACK APPLICATION (only when feedback != None):
+    For every structured_suggestion, write down (mentally) the EXACT
+    target_id and the EXACT new value you will apply. Do not paraphrase
+    suggestions; apply them verbatim.
+
+  Step 6 -- DIVERSITY CHECK:
+    Plan 5 candidates that each anchor the title in a different
+    safe_zone (or vary the focal element's safe_zone if only one
+    text exists). Different safe_zone anchors = "5 distinct
+    compositional approaches" as required below.
+
 # Format example
 {format_example}
 
@@ -299,12 +386,36 @@ ATTENTION: If feedback is provided, satisfy every structured_suggestion in at
            supplementary context. Do not ignore the structured list, but also
            do not over-apply: a ">=" constraint is a LOWER bound, not a target
            you must exceed by 2x.
+ATTENTION: Step 46 (2026-06-10) -- ATTACHED IMAGE IS THE CANVAS BACKGROUND.
+           The first (and only) attached image is the literal background PNG
+           the renderer will composite your layout on top of. The numeric
+           `safe_zones` you see in this prompt are a COARSE summary computed
+           from that image. WHEN YOUR EYE AND THE NUMBERS DISAGREE, BELIEVE
+           THE IMAGE. Look at the image and decide:
+             - where is the focal subject (face / product / hero element)?
+             - which negative-space regions are actually empty?
+             - what colour band sits behind your candidate text positions
+               (this affects WCAG contrast)?
+             - is there a vertical / horizontal axis the composition naturally
+               wants you to align to?
+           Use these visual observations to pick concrete (left, top, width,
+           height) values. The safe_zones JSON is only useful where the image
+           shows the same thing -- if the image reveals an empty region the
+           safe_zones missed, you ARE allowed to place primary text there as
+           long as you stay inside the canvas. If the image shows a face or
+           focal element inside what the safe_zones call "safe", you must
+           NOT cover it.
 ATTENTION: If the "# Previous Attempt" block is non-empty (refinement mode),
            every element's (left, top, width, height) must stay within +/-10%
            of its previous value unless a structured_suggestion explicitly
            demands a larger change for that element id. Element ids must be
            reused verbatim. The 5 candidates must remain anchored to
            prev_best_layout; do NOT relocate elements to entirely new regions.
+           EXCEPTION: any element appearing in a kind="place_in_bbox"
+           structured_suggestion has its drift cap LIFTED for that element
+           only. Set its (left,top,width,height) directly from target_bbox
+           verbatim, even if the move exceeds +/-10%. The Judge saw the
+           image and made this call deliberately; do not partially apply.
 Output carefully referenced "format example" in JSON format, nothing else.
 """
 
@@ -353,9 +464,31 @@ class GenerateLayout(Action):
             spec, tree, bg, feedback, prev_best_layout, prev_best_subscores
         )
 
+        # Step 46: attach the canvas background image so the LLM can see the
+        # focal subject and the real empty regions, not just the coarse
+        # safe_zones summary. Silently fall back to text-only when the model
+        # lacks vision support or the background asset is missing/unreadable.
+        images: List[str] = []
+        if self.llm.support_image_input():
+            bg_b64 = self._render_bg_image(spec)
+            if bg_b64 is not None:
+                images = [bg_b64]
+            else:
+                logger.debug(
+                    "GenerateLayout: no usable background image; using text-only call."
+                )
+        else:
+            logger.debug(
+                f"GenerateLayout: LLM '{getattr(self.llm, 'model', '?')}' lacks "
+                f"vision support; using text-only call."
+            )
+
         last_err: Optional[Exception] = None
         for attempt in range(1, MAX_RETRIES + 1):
-            rsp = await self.llm.aask(prompt)
+            if images:
+                rsp = await self.llm.aask(prompt, images=images)
+            else:
+                rsp = await self.llm.aask(prompt)
             try:
                 return self._parse_response(rsp)
             except (ValueError, ValidationError) as err:
@@ -368,6 +501,39 @@ class GenerateLayout(Action):
             f"GenerateLayout: could not produce a valid CandidatesBatch after "
             f"{MAX_RETRIES} attempts. Last error: {last_err}"
         )
+
+    @staticmethod
+    def _render_bg_image(spec: DesignSpec) -> Optional[str]:
+        """Load spec.canvas.background_asset_ref, downscale, return base64 PNG.
+
+        Returns None when no usable image exists (path missing, corrupt file,
+        no background_asset_ref set). The caller falls back to text-only.
+        Longest edge is capped at ``_BG_MAX_EDGE_PX`` to keep token cost low
+        while preserving enough detail for the LLM to locate the focal
+        subject and identify negative-space bands.
+        """
+        bg_ref = spec.canvas.background_asset_ref
+        if not bg_ref:
+            return None
+        bg_path = Path(bg_ref)
+        if not bg_path.exists():
+            return None
+        try:
+            img = Image.open(bg_path).convert("RGB")
+        except (OSError, IOError) as err:
+            logger.warning(
+                f"GenerateLayout._render_bg_image: cannot open {bg_ref!r}: {err}"
+            )
+            return None
+        w, h = img.size
+        longest = max(w, h)
+        if longest > _BG_MAX_EDGE_PX:
+            scale = _BG_MAX_EDGE_PX / float(longest)
+            new_size = (max(1, int(round(w * scale))), max(1, int(round(h * scale))))
+            img = img.resize(new_size, Image.LANCZOS)
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode("ascii")
 
     def _build_prompt(
         self,

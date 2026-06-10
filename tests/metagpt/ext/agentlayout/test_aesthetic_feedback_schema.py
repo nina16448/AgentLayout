@@ -130,12 +130,16 @@ def test_structured_suggestions_round_trip():
         SuggestionKind.RESIZE,
         SuggestionKind.MOVE,
         SuggestionKind.SPACING,
-        SuggestionKind.TYPOGRAPHY,
         SuggestionKind.ZORDER,
     ],
 )
 def test_numeric_kind_rejects_string_value(kind):
-    """Numeric kinds must reject string values (would otherwise mask 'bigger' / 'larger')."""
+    """Numeric kinds must reject string values (would otherwise mask 'bigger' / 'larger').
+
+    Step 45 (2026-06-10): TYPOGRAPHY is removed from this set because metric=font_family
+    / text_align / named font_weight legitimately take string values. The per-metric
+    branch in the validator enforces type by metric.
+    """
     with pytest.raises(ValidationError):
         Suggestion(
             kind=kind,
@@ -183,6 +187,150 @@ def test_color_kind_accepts_3_6_or_8_digit_hex(good_hex):
         value=good_hex,
     )
     assert s.value == good_hex
+
+
+def test_typography_font_size_requires_numeric():
+    """Step 45: font_size keeps the numeric contract (LLM 'big' must fail)."""
+    Suggestion(
+        kind=SuggestionKind.TYPOGRAPHY,
+        target_id="title_1",
+        metric="font_size",
+        op=">=",
+        value=96,
+    )
+    with pytest.raises(ValidationError):
+        Suggestion(
+            kind=SuggestionKind.TYPOGRAPHY,
+            target_id="title_1",
+            metric="font_size",
+            op=">=",
+            value="big",
+        )
+
+
+@pytest.mark.parametrize("value", [700, "bold", "regular", "semibold"])
+def test_typography_font_weight_accepts_int_or_str(value):
+    """Step 45: font_weight accepts both integer (100-900) and named weights."""
+    s = Suggestion(
+        kind=SuggestionKind.TYPOGRAPHY,
+        target_id="title_1",
+        metric="font_weight",
+        op="set_to",
+        value=value,
+    )
+    assert s.value == value
+
+
+@pytest.mark.parametrize("family", ["serif", "sans-serif", "Inter", "Playfair Display"])
+def test_typography_font_family_accepts_string(family):
+    """Step 45: font_family takes a non-empty string."""
+    s = Suggestion(
+        kind=SuggestionKind.TYPOGRAPHY,
+        target_id="headline_1",
+        metric="font_family",
+        op="set_to",
+        value=family,
+    )
+    assert s.value == family
+
+
+def test_typography_font_family_rejects_non_string():
+    with pytest.raises(ValidationError):
+        Suggestion(
+            kind=SuggestionKind.TYPOGRAPHY,
+            target_id="headline_1",
+            metric="font_family",
+            op="set_to",
+            value=42,
+        )
+
+
+@pytest.mark.parametrize("align", ["left", "center", "right", "justify"])
+def test_typography_text_align_accepts_valid_values(align):
+    s = Suggestion(
+        kind=SuggestionKind.TYPOGRAPHY,
+        target_id="body_1",
+        metric="text_align",
+        op="set_to",
+        value=align,
+    )
+    assert s.value == align
+
+
+@pytest.mark.parametrize("bad", ["centered", "middle", "", "top"])
+def test_typography_text_align_rejects_invalid(bad):
+    with pytest.raises(ValidationError):
+        Suggestion(
+            kind=SuggestionKind.TYPOGRAPHY,
+            target_id="body_1",
+            metric="text_align",
+            op="set_to",
+            value=bad,
+        )
+
+
+def test_typography_unknown_metric_rejected():
+    """Step 45: only the 4 whitelisted metrics are valid for typography."""
+    with pytest.raises(ValidationError):
+        Suggestion(
+            kind=SuggestionKind.TYPOGRAPHY,
+            target_id="title_1",
+            metric="letter_spacing",
+            op="set_to",
+            value=2,
+        )
+
+
+def test_place_in_bbox_happy_path():
+    """Step 44: place_in_bbox accepts a valid LTRB target_bbox and ignores numeric-value check."""
+    s = Suggestion(
+        kind=SuggestionKind.PLACE_IN_BBOX,
+        target_id="headline_1",
+        metric="bbox",
+        op="set_to",
+        value="[80, 200, 720, 480]",
+        target_bbox=[80, 200, 720, 480],
+        rationale="anchor in empty upper-left sky band",
+    )
+    assert s.target_bbox == [80, 200, 720, 480]
+    assert s.kind == SuggestionKind.PLACE_IN_BBOX
+
+
+@pytest.mark.parametrize(
+    "bad_bbox",
+    [
+        None,                    # required
+        [80, 200, 720],          # too short
+        [80, 200, 720, 480, 1],  # too long
+        [200, 200, 80, 480],     # R <= L
+        [80, 480, 720, 200],     # B <= T
+        [-1, 200, 720, 480],     # negative L
+        [80, -1, 720, 480],      # negative T
+    ],
+)
+def test_place_in_bbox_rejects_invalid_bbox(bad_bbox):
+    """Step 44: validator rejects malformed target_bbox so Generator never sees garbage."""
+    with pytest.raises(ValidationError):
+        Suggestion(
+            kind=SuggestionKind.PLACE_IN_BBOX,
+            target_id="headline_1",
+            metric="bbox",
+            op="set_to",
+            value="[80, 200, 720, 480]",
+            target_bbox=bad_bbox,
+        )
+
+
+def test_non_place_kinds_dont_require_target_bbox():
+    """Step 44: existing kinds (resize/color/...) must keep working without target_bbox."""
+    s = Suggestion(
+        kind=SuggestionKind.RESIZE,
+        target_id="x",
+        metric="width",
+        op=">=",
+        value=100,
+    )
+    assert s.target_bbox is None
 
 
 def test_other_kind_accepts_anything():
