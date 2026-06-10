@@ -10,8 +10,13 @@ Baseline (cond1, labeled CANDIDATE/GROUND-TRUTH) = step49 N=20 run: B 32/32.
 
 Usage:
   python layout_agent/output/step51_blind_judge_audit.py
+  # Step 53 gate-off renders, no GT control (position bias already proven 0):
+  python layout_agent/output/step51_blind_judge_audit.py \
+      --render-prefix step53_gate_off_oracle \
+      --out step53_blind_judge_results.json --gt-control 0
 """
 
+import argparse
 import asyncio
 import base64
 import glob
@@ -125,6 +130,12 @@ def _norm(winner: str, cand_position: str) -> str:
 
 
 async def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--render-prefix", default="step41_layout_aware_oracle")
+    parser.add_argument("--out", default="step51_blind_judge_results.json")
+    parser.add_argument("--gt-control", type=int, default=N_GT_CONTROL)
+    args = parser.parse_args()
+
     cfg = yaml.safe_load(CONFIG2.read_text())
     llm = cfg.get("llm", {})
     if not llm.get("api_key"):
@@ -136,7 +147,7 @@ async def main():
     ids = json.load(open(HERE / "step13_drawn_ids.json"))["ids"]
     pairs = []
     for i in ids:
-        pngs = sorted(glob.glob(str(HERE / f"step41_layout_aware_oracle_crello_{i}_r1a*.png")))
+        pngs = sorted(glob.glob(str(HERE / f"{args.render_prefix}_crello_{i}_r1a*.png")))
         gt = HERE / f"crello_{i}" / "ground_truth_preview.jpg"
         if pngs and gt.exists():
             pairs.append((i, Path(pngs[-1]), gt))
@@ -168,7 +179,7 @@ async def main():
             print(f"  {sid[:8]} cand_{cand_position:6s} -> overall={row['overall']}")
 
     # ---- cond3: GT vs GT control ------------------------------------------
-    for sid, _, gt in pairs[:N_GT_CONTROL]:
+    for sid, _, gt in pairs[: args.gt_control]:
         verdict = await _judge(client, gt, gt)
         if verdict is None:
             continue
@@ -210,7 +221,7 @@ async def main():
     both = sum(1 for v in by_id.values() if len(v) == 2)
     print(f"\n  order-flip inconsistency: {flips}/{both} pairs change overall verdict when order swaps")
 
-    out = HERE / "step51_blind_judge_results.json"
+    out = HERE / args.out
     out.write_text(json.dumps(results, indent=2, ensure_ascii=False))
     print(f"\nwrote {out}")
 

@@ -3751,4 +3751,59 @@ gpt-5.x 同樣拒收 `max_tokens` 且 temperature 只接受 1。擴充為
 
 ---
 
+## Step 53（2026-06-11 凌晨）— Gate-off ablation：QC gate 不是 design_layout gap 的成因（negative result）
+
+### 動機
+
+Step 52 證實 gate 不對稱（GT 70% 會被退件），自然假說：gate 把 A 壓進
+GT 不佔據的擺位子空間 → 造成 blind judge 扣分的 dead-space/失衡。
+直接檢驗：關掉 hard gate 重跑 N=20，blind 重判，看 design_layout 是否改善。
+
+### 方法
+
+1. `step41_layout_aware_oracle.py` 加 CLI 開關（預設行為不變）：
+   `--no-safe-zone-gate`（違規只記 log、照常送 judge）、`--render-prefix`、
+   `--results-json`（獨立輸出名，記取 Step 50 覆蓋檔案的教訓）。
+   Generator prompt 的 rule 6 safe-zone 指引**保留**——只隔離「硬退件」單一變因
+   （Step 49 已證 prompt 指引約束力弱，41–47% 違規率，所以關 gate 即釋放大部分約束）。
+2. `step51_blind_judge_audit.py` 參數化（`--render-prefix`/`--out`/`--gt-control`），
+   同一套 blind protocol 實作避免 prompt 漂移。
+3. 跑 `--no-safe-zone-gate` N=20（gpt-4o，`step53_gate_off_oracle_*`），
+   blind 重判（中性標籤、雙順序、`--gt-control 0`，position bias 已證為 0）。
+
+### 結果（N=17；3 樣本 5f56075f/5bbcb749/5dad776a 持續 vision refusal 全滅，
+9/9 呼叫拒絕——既有 deferred item，step51 的 20 對是靠舊前綴累積 renders）
+
+- **Manipulation check 通過**：18 次 attempt 帶違規送審；被 blind 評的末次
+  render 7/17（41%）帶著舊 gate 會退件的違規——gate-off 確實改變了行為分布。
+- **Blind 判決與 gate-on（step51 同 17 ids）完全相同**：
+
+| 軸 | step51 gate-ON（c/g/t） | step53 gate-OFF（c/g/t） |
+|---|---|---|
+| design_layout | 2/32/0 | **2/32/0**（一模一樣） |
+| typography_color | 1/31/2 | 2/30/2 |
+| graphics_images | 6/4/24 | 7/7/20 |
+| content_relevance | 2/5/27 | 2/8/24 |
+| innovation_originality | 23/4/7 | 15/6/13 |
+| **overall** | 2/32/0 | **2/32/0** |
+
+- VIOL vs clean 分組：design_layout c=1/g=13 vs c=1/g=19——等比例，違規
+  renders 沒有比較好也沒有比較差。
+
+### 解讀
+
+1. **Gate 不對稱是真的（Step 52），但不是 design_layout gap 的成因**：
+   即使讓 A 自由踩進 saliency 區（41% 真的踩了），blind judge 對
+   balance/hierarchy 的判決一票未變。gap 在 Generator 的構圖品質本身，
+   不在擺位自由度。
+2. **Generator-bounded 結論再度存活**第三次系統性因素檢驗
+  （Step 47 render confound → Step 51 label bias → Step 53 gate asymmetry）。
+3. innovation 軸 23→15（cand）方向變差但 tie 增加，樣本小、不宜過度解讀；
+   該軸的可主張性仍以 Step 51 的乾淨重做為準。
+4. 論文寫法：gate 不對稱列為 limitation（Step 52），附 gate-off ablation
+   證明它不驅動 headline gap（Step 53）——這是審稿人必問的對照。
+5. 尚未檢驗的剩餘因素：render parity 分解（實驗 C）、元素數量對等。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/11*
