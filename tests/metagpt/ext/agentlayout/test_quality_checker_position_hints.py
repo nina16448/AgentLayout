@@ -522,10 +522,12 @@ def _zorder_spec(hint=None, above=None, with_bg=True):
 
 def _mk_zorder_candidate(fg_z, bg_z=None):
     """Candidate with fg_1 (and bg_1 when bg_z is given), all in-bounds so only
-    the z_order rule can fire."""
+    the z_order rule can fire. fg_1 spans most of the canvas so the Step 57
+    coverage / dead-band guardrails stay quiet (the old 200x80 sliver was a
+    genuinely degenerate layout that the new rules correctly flag)."""
     from metagpt.ext.agentlayout.schema import Candidate, LayoutElement
 
-    els = [LayoutElement(id="fg_1", left=100, top=100, width=200, height=80, z_index=fg_z)]
+    els = [LayoutElement(id="fg_1", left=50, top=50, width=500, height=500, z_index=fg_z)]
     if bg_z is not None:
         els.append(LayoutElement(id="bg_1", left=0, top=0, width=600, height=600, z_index=bg_z))
     return Candidate(candidate_id="zt", elements=els)

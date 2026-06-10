@@ -120,6 +120,12 @@ class ViolationType(str, Enum):
     # obscures both background and content. Active only when the caller
     # passes a BackgroundAnalysis to check_candidate.
     PRIMARY_OUTSIDE_SAFE_ZONE = "primary_outside_safe_zone"
+    # Step 57 (2026-06-11): coverage / dead-space guardrails. Step 56 blind
+    # re-measure isolated a ~41-pt pure Generator composition gap whose
+    # visible failure modes are degenerate layouts (all elements crammed in
+    # one region, entire canvas bands left blank).
+    CANVAS_COVERAGE_LOW = "canvas_coverage_low"
+    DEAD_BAND_EXCESSIVE = "dead_band_excessive"
 
 
 class Violation(BaseModel):
@@ -174,6 +180,8 @@ def check_candidate(
     violations.extend(_check_title_peripheral(candidate, spec))
     # Step 43 (2026-06-10): primary content must overlap a safe_zone.
     violations.extend(_check_primary_in_safe_zone(candidate, spec, bg))
+    # Step 57 (2026-06-11): coverage / dead-space degenerate-layout guardrails.
+    violations.extend(_check_canvas_coverage(candidate, spec))
     return CheckResult(
         candidate_id=candidate.candidate_id,
         passed=not violations,
@@ -789,6 +797,131 @@ def _check_primary_in_safe_zone(
 
 
 # ----- end Step 43 rule --------------------------------------------------
+
+
+# ----- Step 57 rules -------------------------------------------------------
+
+CANVAS_COVERAGE_MIN: float = 0.10
+"""Step 57 (2026-06-11): minimum union-area fraction of the canvas that the
+foreground elements (everything except background_image) must cover.
+
+Calibrated offline against the 20 step13 designer GT layouts
+(layout_agent/output/step57_coverage_calibration.py): designer minimum is
+0.129 (minimalist layouts where the background photo carries the design are
+legitimate), so 0.10 passes every designer layout with margin. This is a
+DEGENERATE-LAYOUT GUARDRAIL, not an aesthetic rule: in the step56 live run,
+10/70 generated candidates fell below it (e.g. 5f56075f at 0.050 -- all
+content shrunk into a sliver) while zero designer layouts do."""
+
+DEAD_BAND_MAX: float = 0.60
+"""Step 57: maximum allowed contiguous blank band (no foreground element)
+along either canvas axis, as a fraction of that axis, leading/trailing
+margins included.
+
+Designer GT maxima are v=0.503 / h=0.548 (a tall poster legitimately leaves
+half the height to the background subject), so 0.60 passes all 20 designer
+layouts. Step56 candidates regularly hit 0.66-0.79 (e.g. 589d7bd9 left 2/3
+of the canvas empty in all 5 candidates) -- those are the 'bottom half is
+blank' degenerate compositions the blind judge punishes on design_layout."""
+
+_COVERAGE_GRID: int = 100
+"""Raster resolution for the bbox-union coverage estimate. 1% cell size is
+well below the 3-point gap between threshold (0.10) and designer minimum
+(0.129); exact polygon union would be needless complexity."""
+
+
+def _foreground_elements(
+    candidate: Candidate, spec: DesignSpec
+) -> List[LayoutElement]:
+    types = _spec_semantic_map(spec)
+    return [
+        el
+        for el in candidate.elements
+        if types.get(el.id) != SemanticType.BACKGROUND_IMAGE
+    ]
+
+
+def _union_coverage_ratio(elements: List[LayoutElement], cw: float, ch: float) -> float:
+    grid = [[False] * _COVERAGE_GRID for _ in range(_COVERAGE_GRID)]
+    for el in elements:
+        x0 = max(0, int(el.left / cw * _COVERAGE_GRID))
+        x1 = min(_COVERAGE_GRID, int((el.left + el.width) / cw * _COVERAGE_GRID + 0.9999))
+        y0 = max(0, int(el.top / ch * _COVERAGE_GRID))
+        y1 = min(_COVERAGE_GRID, int((el.top + el.height) / ch * _COVERAGE_GRID + 0.9999))
+        for y in range(y0, y1):
+            row = grid[y]
+            for x in range(x0, x1):
+                row[x] = True
+    covered = sum(row.count(True) for row in grid)
+    return covered / (_COVERAGE_GRID * _COVERAGE_GRID)
+
+
+def _max_dead_band(intervals: List[Tuple[float, float]], total: float) -> float:
+    """Largest fraction of [0, total] not covered by any (start, end) interval."""
+    clipped = sorted(
+        (max(0.0, s), min(total, e)) for s, e in intervals if e > 0 and s < total
+    )
+    if not clipped:
+        return 1.0
+    best = clipped[0][0]  # leading margin
+    cur_end = clipped[0][1]
+    for s, e in clipped[1:]:
+        if s > cur_end:
+            best = max(best, s - cur_end)
+        cur_end = max(cur_end, e)
+    best = max(best, total - cur_end)  # trailing margin
+    return best / total
+
+
+def _check_canvas_coverage(candidate: Candidate, spec: DesignSpec) -> List[Violation]:
+    cw = max(1.0, float(spec.canvas.width))
+    ch = max(1.0, float(spec.canvas.height))
+    fg = _foreground_elements(candidate, spec)
+    out: List[Violation] = []
+    coverage = _union_coverage_ratio(fg, cw, ch)
+    if coverage < CANVAS_COVERAGE_MIN:
+        out.append(
+            Violation(
+                type=ViolationType.CANVAS_COVERAGE_LOW,
+                targets=[el.id for el in fg],
+                detail=(
+                    f"foreground union covers {coverage:.1%} of the canvas < "
+                    f"{CANVAS_COVERAGE_MIN:.0%}; spread/enlarge elements so the "
+                    "composition fills the canvas (designer layouts never go "
+                    "below 13%)"
+                ),
+            )
+        )
+    v_dead = _max_dead_band([(el.top, el.top + el.height) for el in fg], ch)
+    h_dead = _max_dead_band([(el.left, el.left + el.width) for el in fg], cw)
+    if v_dead > DEAD_BAND_MAX:
+        out.append(
+            Violation(
+                type=ViolationType.DEAD_BAND_EXCESSIVE,
+                targets=[el.id for el in fg],
+                detail=(
+                    f"vertical blank band spans {v_dead:.1%} of canvas height > "
+                    f"{DEAD_BAND_MAX:.0%}; distribute elements along the full "
+                    "height instead of stacking them in one band"
+                ),
+            )
+        )
+    if h_dead > DEAD_BAND_MAX:
+        out.append(
+            Violation(
+                type=ViolationType.DEAD_BAND_EXCESSIVE,
+                targets=[el.id for el in fg],
+                detail=(
+                    f"horizontal blank band spans {h_dead:.1%} of canvas width > "
+                    f"{DEAD_BAND_MAX:.0%}; distribute elements along the full "
+                    "width instead of stacking them in one band"
+                ),
+            )
+        )
+    return out
+
+
+# ----- end Step 57 rules ----------------------------------------------------
 
 
 def _check_text_contrast(candidate: Candidate, spec: DesignSpec) -> List[Violation]:

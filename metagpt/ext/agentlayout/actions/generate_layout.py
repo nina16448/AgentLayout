@@ -298,6 +298,17 @@ these. Generate candidates that already comply so retries are not wasted:
    job is to anchor text, but the primary text/photo MUST sit inside a
    safe zone. Use the provided safe zones; do not invent your own.
 
+7. COVERAGE / DEAD SPACE (Step 57, 2026-06-11). Counting every element
+   EXCEPT background_image as foreground:
+     a) the union of foreground bounding boxes MUST cover >= 10% of the
+        canvas area. Do not shrink all content into one small sliver.
+     b) no contiguous blank band (a horizontal strip or vertical strip
+        containing NO foreground element, canvas margins included) may
+        exceed 60% of the canvas height or width. Do not stack every
+        element in one third of the canvas and leave the rest empty.
+   Distribute elements so the composition engages the whole canvas; use
+   the safe_zones across the canvas, not just the first one.
+
 # Reasoning checklist (Step 42, 2026-06-10): walk through these steps
 # mentally BEFORE you emit the JSON. The checklist is your scratchpad --
 # do NOT include the reasoning in your output, just produce the

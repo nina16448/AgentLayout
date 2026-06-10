@@ -3983,4 +3983,58 @@ order-flip 2/18（判決穩定；對照 step55 parity 的 8/20 近不可分）�
 
 ---
 
+## Step 57：Coverage / Dead-Space QC Guardrails（2026/06/11）
+
+**動機**：Step 56 確認 ~41 pts 純 Generator 構圖差距，目視失敗模式是
+「內容縮在一角／整條畫布空白」。既有 QC 已有元素完整性
+（MISSING_ELEMENT）與 primary-in-safe-zone，但對退化構圖（coverage
+過低、大面積死帶）沒有任何硬性檢查。
+
+**校準（先於實作）**：`layout_agent/output/step57_coverage_calibration.py`
+離線零 LLM，對 20 個 step13 設計師 GT 版面計算三個訊號（前景＝排除
+background_image 的 bbox）：
+
+| 訊號 | GT 範圍（N=20） | step56 candidate 範圍（N=70） |
+|---|---|---|
+| coverage（bbox 聯集/canvas） | 0.129–0.898 | 0.048–0.865 |
+| 最大垂直/水平死帶 | ≤0.503 / ≤0.548 | 至 0.794 / 0.764 |
+| safe-zone 利用率 | 0.026–0.898 | 0.000–1.000 |
+
+關鍵發現：**設計師合法版面本身就有 coverage 0.13、死帶 0.55 的極簡
+構圖**（背景照片撐畫面），任何更緊的門檻都會誤殺 GT。因此門檻只能
+是「退化防護」（degenerate guardrail）語意，不是美學規則：
+- `CANVAS_COVERAGE_MIN = 0.10`（GT min 0.129，margin 23%）
+- `DEAD_BAND_MAX = 0.60`（GT max 0.548，margin 9%）
+- safe-zone 利用率**不採用**——低值樣本已被 Step 43
+  PRIMARY_OUTSIDE_SAFE_ZONE 逐元素覆蓋，且 GT min 0.026 無法設門檻。
+
+**實作**：
+1. `quality_checker.py`：新增 `ViolationType.CANVAS_COVERAGE_LOW` /
+   `DEAD_BAND_EXCESSIVE`；`_check_canvas_coverage`（覆蓋率用 100×100
+   grid 光柵化 bbox 聯集；死帶用一維區間合併求最大 gap，含首尾
+   margin，垂直/水平各自判定）。掛入 `check_candidate`，純幾何、
+   不需 BackgroundAnalysis。
+2. `generate_layout.py` PROMPT_TEMPLATE：hard rules 第 7 條同步
+   描述兩條規則，讓 Generator 一次生成就合規、不浪費 retry。
+3. 測試：新增 `test_quality_checker_coverage.py`（8 tests：縮角落、
+   設計師式極簡通過、background 排除、單軸死帶、0.55 envelope 通過、
+   僅背景候選、門檻 pin）。`test_quality_checker_position_hints.py`
+   的 z_order fixture 從 200×80 sliver（coverage 4.4%，本身就是
+   退化版面）放大為 500×500——非回歸，是新規則正確抓到舊 fixture。
+
+**驗證**：
+- 全套 agentlayout 測試 269 passed / 12 skipped，零回歸。
+- 端到端重放：step56 log 的 70 個 candidate 餵入新 `check_candidate`
+  → **24/70（34%）被抓**（5f56075f×5 coverage 0.05、589d7bd9×5 死帶
+  0.667、592c2135×8、5f9917ea×5、5f4e0040×1）；GT 20/20 全過。
+- 誠實註記：5e8d966a（Step 56 目視確認的失敗樣本）coverage 0.27 /
+  死帶 ≤0.37，**不會被本規則抓到**——它的根因是元素數量
+  （candidate fg=2 vs GT fg=4），屬「元素數量對等」（方向 c）範疇。
+
+**下一步**：live N=20 重跑驗證 guardrail 對 acceptance 與 blind
+design_layout 的實際影響（24/70 在 reject-retry loop 裡會觸發重生成，
+效果須實測）。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/11*
