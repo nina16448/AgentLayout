@@ -19,6 +19,7 @@
 | `miriadas_university` | `5eec7b19` | "Miriadas University / Revolutionary Approach" | 寬橫幅、photo + 黃/白 panel + text。AL 構圖跟 GT 同概念 |
 | `pet_grooming` | `59535be5` | "Grand Sale of Pet Grooming Supplies" | 紫底橫幅、貓咪插圖。AL 替代構圖：title 在頂部置中 + cats 在中央（vs GT 的 title 在左 + cats 在右）、視覺合理 |
 | `silk_linen` | `58b43313` | "Nothing Feels As Good As Luxury Silk Linen" | 寬橫幅、人像背景 + 文字 panel + pink accent。AL 用白底框中央，比 GT 對應的右側 text、視覺競爭力 OK |
+| `join_volunteering` | `5888cded` | "Join Volunteering Now! Let's Fight Against Cruelty To Animals Together!" | Step 43 LTRB-fix 之後新出的 paper-grade 樣本。藍底 + 紅 panel + 白色 T-shape 構圖跟 GT 同概念；AL 紅 panel 置中（vs GT 靠左）、文字置中對齊（vs GT 左對齊）、屬替代構圖 |
 
 ## Paper 用法建議
 
