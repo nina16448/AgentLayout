@@ -8,23 +8,22 @@
 選擇標準：**人工視覺檢查**判定為與 designer GT 大致對等或可比的構圖。
 不是「pairwise judge 通過」的 14% 全部，而是進一步人工 filter 後的 paper-figure-grade。
 
-## 7 個樣本詳細
+## 樣本詳細（2026-06-11 人工複篩後保留 2 組）
 
 | 檔名前綴 | Crello id (8 char) | 主題 | 觀察 |
 |---|---|---|---|
-| `quarantine_airhead` | `5e72455e` | "Don't be an airhead, air out your room" | Step 36b metadata fix 救起來的範例。AL 用 text snippet「Don't be an airhead」當主標、不再誤用 metadata 描述「Quarantine concept...」。構圖跟 GT 幾乎一樣（藍底、窗景插圖、頂部白標題） |
-| `art_being_creative_v1` | `592c2135` | "ART / Being Creative is not a hobby" | 寬橫幅、ART 字母分散頂部、文字 body 置中白底框（vs GT 透明 right-align）。AL 替代構圖、視覺品質對等 |
-| `art_being_creative_v2` | `5a22883e` | 同上主題不同 sample | 同樣寬橫幅、品質一致 |
-| `nurse_stay_at_work` | `5e8d966a` | "We stay at work for you. Stay at home for us." | 方形 banner、藍底、護士插圖、白色標題。AL 跟 GT 幾乎一樣（小差別：缺 #StayHome 側標） |
-| `miriadas_university` | `5eec7b19` | "Miriadas University / Revolutionary Approach" | 寬橫幅、photo + 黃/白 panel + text。AL 構圖跟 GT 同概念 |
 | `pet_grooming` | `59535be5` | "Grand Sale of Pet Grooming Supplies" | 紫底橫幅、貓咪插圖。AL 替代構圖：title 在頂部置中 + cats 在中央（vs GT 的 title 在左 + cats 在右）、視覺合理 |
-| `silk_linen` | `58b43313` | "Nothing Feels As Good As Luxury Silk Linen" | 寬橫幅、人像背景 + 文字 panel + pink accent。AL 用白底框中央，比 GT 對應的右側 text、視覺競爭力 OK |
 | `join_volunteering` | `5888cded` | "Join Volunteering Now! Let's Fight Against Cruelty To Animals Together!" | Step 43 LTRB-fix 之後新出的 paper-grade 樣本。藍底 + 紅 panel + 白色 T-shape 構圖跟 GT 同概念；AL 紅 panel 置中（vs GT 靠左）、文字置中對齊（vs GT 左對齊）、屬替代構圖 |
+
+> 歷史紀錄：本資料夾曾收 8 組（quarantine_airhead、art_being_creative v1/v2、
+> nurse_stay_at_work、miriadas_university、silk_linen 等），2026-06-11 二次人工
+> 視覺複篩後剔除 6 組、僅保留上表 2 組最高標準樣本。被剔除的圖檔可從 git 歷史
+> （commit `1d454e70` / `a2fa3c43`）取回。
 
 ## Paper 用法建議
 
 - **Figure: "AgentLayout-vs-Designer comparison"**：用 2-3 個 GT|AL 並排格、ARTICLE 文中 caption「AgentLayout matches designer composition on these representative samples」
-- **重要 disclaimer**：這 7 個是**人工挑出的 paper-grade 樣本**、不代表 system 平均水準。N=100 Step 37 strict pairwise = **2% AL wins**；N=20 calibrated Smean AL=3.73 vs GT=4.75。整體 success rate 數字寫在 paper main result。
+- **重要 disclaimer**：這 2 個是**人工挑出的 paper-grade 樣本**、不代表 system 平均水準。N=100 Step 37 strict pairwise = **2% AL wins**；N=20 calibrated Smean AL=3.73 vs GT=4.75。整體 success rate 數字寫在 paper main result。
 
 ## 來源
 
@@ -36,4 +35,4 @@
 每個樣本的 trace + 評分細節見 `IMPLEMENTATION_LOG.md` Step 36c / 37 章節。
 
 ---
-*最後更新：2026/06/10*
+*最後更新：2026/06/11*
