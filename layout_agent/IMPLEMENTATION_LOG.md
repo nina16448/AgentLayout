@@ -4411,4 +4411,62 @@ AI 構圖師」＋ QC 衝突採「條件豁免」（text-on-photo 模板下改�
 
 ---
 
+## Step 63：directive 存在時 safe-zone 全面讓位（2026/06/12）
+
+**動機**：解 Step 62 的雙重束縛。使用者裁示走選項 (a)：「解雙重束
+縛，走 (a) directive 存在時 safe-zone 讓位」——構圖師選模板時已看
+過渲染後的背景圖，directive 是 informed override，不該再被
+saliency 推算的 safe-zone 規則否決。
+
+**實作（quality_checker.py + test_composition_step62.py）**：
+- `_check_primary_in_safe_zone`：`spec.composition is not None` 時
+  直接回傳 `[]`（全面讓位），取代 step62 較窄的 text-on-photo
+  豁免；`_text_on_photo_exempt_ids` 整個函式刪除（死碼）。
+- busy-texture 規則刻意保留——它要求的是可執行的 underlay 修正，
+  不構成位置矛盾，且 step62 已把焦點照片從梯度遮罩中扣除。
+- `composition=None` 行為位元級不變；測試替換 2 支：
+  `test_safe_zone_defers_when_directive_present`、
+  `test_safe_zone_defers_for_text_only_directive`（直接重現 step62
+  雙束縛場景）；全套件 308 passed / 12 skipped。
+
+**Smoke N=5（step63_smoke.log）**：safe-zone 違規 0、judge 曝光 7
+（已超過 step62 整個 live N=20 的 6）、composition 合約照常開火
+（5 次 mismatch）、step62 乒乓樣本 5e72455e 正常拿到
+hero-center-overlay。注意 oracle 的 `--results-json` 只能給檔名不
+能給路徑（driver 會自己加 `OUT/` 前綴，給路徑會 doubling 然後
+FileNotFoundError——smoke 因此沒寫出 JSON，數據都在 log）。
+
+**Live N=20 結果（step63_live.log / step63_live_results.json）**：
+- **雙束縛確認解除**：safe-zone 違規 0；judge 曝光 18（step62=6、
+  step60d=20、step58=28），9/20 樣本進過 judge；5e72455e 進 judge
+  2 次。composition 合約沒有因讓位而失守，mismatch 持續攔截。
+- **acceptance 1/20**——Step 48 以來第一個非零。`589d7bd995a7` 在
+  attempt 2 拿 overall tie 過關：content_relevance A 勝（B 漏字）、
+  typography A 勝（B 低對比）、design_layout/graphics B 勝、
+  innovation 雙 generic→tie，五軸 2A-2B-1tie。
+- **核心負結果：4 個 text-on-photo 樣本第二次 0 進 judge**，死因
+  已換位——5e6a3440 = composition_mismatch ×3；5f4f5e15 =
+  mismatch + text_on_busy_texture ×3；5bbcb749 = LLM 拒答 ×3（
+  GenerateLayout 全 crash）；5e7a3506 = 拒答＋mismatch 混合。瓶頸
+  從「QC 兩門互相矛盾」移到「Generator 滿足不了構圖合約本身＋拒答
+  噪音」。「GT 式 text-on-photo 構圖能否贏 design_layout」仍未被
+  測到。
+- **per-axis**：design_layout A=0 B=18（樣本量足夠、仍全敗，與
+  Generator-bounded 一致）；typography A=1、content A=1（皆來自接
+  受樣本）；graphics B=11 tie=7；innovation tie 18/18。
+- **拒答 140 行**（step58=74、59=80、60d=59、62=118）——背景噪音
+  持續，且這次直接殺掉一個 hero 樣本（5bbcb749）。
+- 模板分布 text-centered 13 / text-column-right 3 /
+  hero-center-overlay 4，與 step62 一致（分類器穩定）。
+
+**結論**：選項 (a) 達成設計目標——judge 曝光恢復、乒乓消失、首見
+非零 acceptance（靠 content/typography 兩軸拉成 tie，不是
+design_layout 贏）。但 text-on-photo 假設連兩步未被測到，下一個
+瓶頸是 (1) Generator 對 hero 合約（photo_size=large）的執行力、
+(2) 拒答噪音（已升至 140，開始直接消滅樣本）。產物：
+`step63_{smoke,live}.log`、`step63_live_results.json`（均
+gitignored）。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/12*

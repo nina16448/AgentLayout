@@ -43,7 +43,6 @@ from metagpt.ext.agentlayout.tools.composition_templates import (
 from metagpt.ext.agentlayout.tools.quality_checker import (
     ViolationType,
     _classify_relation,
-    _text_on_photo_exempt_ids,
     check_candidate,
 )
 
@@ -322,12 +321,14 @@ def test_qc_underlay_rule_skipped_when_spec_has_no_decorative_image():
     )
 
 
-# ------------------------------------------------ QC: safe-zone exemption
+# ------------------------------------------------ QC: safe-zone deference (Step 63)
 
 
-def test_safe_zone_exempts_focal_photo_and_riders():
-    """Conditional exemption (user decision): under a text-on-photo directive
-    the focal photo and text riding it are exempt from PRIMARY_OUTSIDE_SAFE_ZONE."""
+def test_safe_zone_defers_when_directive_present():
+    """Step 63 (user decision, option a): the Composition Director picked the
+    template while looking at the background, so a directive supersedes the
+    saliency-based safe-zone rule entirely; without a directive the Step 43
+    rule keeps firing (zero regression)."""
     spec = _photo_spec()
     bg = BackgroundAnalysis(
         safe_zones=[SafeZone(region="top-band", bbox=[0, 0, 900, 90], confidence=0.9)]
@@ -345,41 +346,43 @@ def test_safe_zone_exempts_focal_photo_and_riders():
     }
     assert {"photo_1", "title_1"} <= flagged
 
-    # With the directive both are exempt.
+    # With the directive the safe-zone rule defers entirely.
     spec.composition = _hero_directive()
-    exempt = _text_on_photo_exempt_ids(cand, spec)
-    assert {"photo_1", "title_1", "underlay_1"} <= set(exempt)
     after = check_candidate(cand, spec, bg=bg)
     assert not any(
         v.type == ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE for v in after.violations
     )
 
 
-def test_safe_zone_still_fires_for_non_riders():
-    """A primary NOT riding the photo keeps the Step 43 safe-zone rule."""
+def test_safe_zone_defers_for_text_only_directive():
+    """Direct repro of the step62 double-bind, now resolved: a text-only
+    directive demands the text mass at MC while the only safe zone is a thin
+    top band -- under Step 63 the directive wins and the centered text is no
+    longer rejected."""
     spec = _spec(
         [
             _el("title_1", SemanticType.TITLE, VisualType.TEXT),
             _el("subtitle_1", SemanticType.SUBTITLE, VisualType.TEXT),
-            _el("photo_1", SemanticType.PRODUCT_IMAGE, VisualType.IMAGE),
-            _el("underlay_1", SemanticType.DECORATIVE_IMAGE, VisualType.IMAGE),
         ]
     )
-    spec.composition = _hero_directive()
+    spec.composition = CompositionDirective(
+        template_id="text-centered",
+        relation=None,
+        photo_cell=None,
+        photo_size=None,
+        text_cell="MC",
+    )
     bg = BackgroundAnalysis(
         safe_zones=[SafeZone(region="top-band", bbox=[0, 0, 900, 90], confidence=0.9)]
     )
     cand = Candidate(
-        candidate_id="c_mixed",
+        candidate_id="c_text_mc",
         elements=[
-            _le("photo_1", 100, 100, 700, 700),
-            _le("underlay_1", 280, 380, 360, 160),
-            _le("title_1", 300, 400, 300, 120),  # rides the photo -> exempt
-            _le("subtitle_1", 300, 830, 300, 60),  # off the photo, off the zone
+            _le("title_1", 300, 360, 300, 120),  # centered, outside the band
+            _le("subtitle_1", 300, 500, 300, 60),
         ],
     )
     result = check_candidate(cand, spec, bg=bg)
-    sz = [
-        v for v in result.violations if v.type == ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE
-    ]
-    assert [v.targets for v in sz] == [["subtitle_1"]]
+    assert not any(
+        v.type == ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE for v in result.violations
+    )

@@ -788,16 +788,20 @@ def _check_primary_in_safe_zone(
 ) -> List[Violation]:
     if bg is None or not bg.safe_zones:
         return []
+    # Step 63 (2026-06-12): when a CompositionDirective exists the safe-zone
+    # rule defers entirely. The Composition Director picked the template
+    # while looking at the rendered background, so the directive is an
+    # informed override; enforcing both gates reproduced the step62
+    # double-bind (text-only directives demand a centered text mass while
+    # safe zones push text to the edges -- the Generator ping-pongs between
+    # the two until attempts are exhausted and the sample never reaches the
+    # judge). Supersedes the narrower step62 text-on-photo exemption.
+    if spec.composition is not None:
+        return []
     types = _spec_semantic_map(spec)
-    # Step 62 (2026-06-12): under a text-on-photo directive the focal photo
-    # is the safe surface -- the photo itself and primaries riding it are
-    # exempt (the old rule rejected the GT-dominant composition, Step 58/61).
-    exempt = _text_on_photo_exempt_ids(candidate, spec)
     out: List[Violation] = []
     for el in candidate.elements:
         if types.get(el.id) not in PRIMARY_SEMANTIC_TYPES:
-            continue
-        if el.id in exempt:
             continue
         elem_area = float(el.width) * float(el.height)
         if elem_area <= 0:
@@ -1355,26 +1359,6 @@ def _check_text_on_photo_underlay(candidate: Candidate, spec: DesignSpec) -> Lis
                 )
             )
     return out
-
-
-def _text_on_photo_exempt_ids(candidate: Candidate, spec: DesignSpec) -> frozenset:
-    """Element ids exempt from safe-zone rejection under text-on-photo.
-
-    The focal photo IS the directive (it must cover the canvas center, which
-    safe zones rarely include), and elements riding it sit on the photo, not
-    on the background subject -- rejecting either kills the GT-dominant
-    composition (Step 58/61 finding)."""
-    comp = spec.composition
-    if comp is None or comp.relation != "text-on-photo":
-        return frozenset()
-    focal = _focal_photo(candidate, spec)
-    if focal is None:
-        return frozenset()
-    ids = {focal.id}
-    for el in candidate.elements:
-        if el.id != focal.id and _overlap_ratio(el, focal) >= TEXT_ON_PHOTO_MIN_OVERLAP:
-            ids.add(el.id)
-    return frozenset(ids)
 
 
 # ----- end Step 62 rules --------------------------------------------------------
