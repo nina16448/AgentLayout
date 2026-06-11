@@ -278,11 +278,41 @@ class SoftConstraint(BaseModel):
     params: Dict[str, Any] = Field(default_factory=dict)
 
 
+class CompositionDirective(BaseModel):
+    """Sketch-level composition picked by the Composition Director (Step 62).
+
+    Vocabulary matches the Step 61 GT calibration: 3x3 grid cells (TL..BR),
+    photo size buckets (small/medium/large/bleed) and photo-text relations.
+    ``photo_*`` fields are None for photo-less layouts.
+    """
+
+    template_id: str
+    relation: Optional[str] = Field(
+        default=None, description="text-on-photo | stacked | side-by-side | centered-mix"
+    )
+    photo_cell: Optional[str] = Field(
+        default=None, description="3x3 grid cell hosting the focal photo center, e.g. 'MC'."
+    )
+    photo_size: Optional[str] = Field(
+        default=None, description="Photo area-ratio bucket: small | medium | large | bleed."
+    )
+    text_cell: Optional[str] = Field(
+        default=None, description="3x3 grid cell hosting the area-weighted text-mass center."
+    )
+    rationale: Optional[str] = Field(
+        default=None, description="One-sentence reason the Director picked this template."
+    )
+
+
 class DesignSpec(BaseModel):
     """Structured contract produced by Analyst and enriched by Asset Analyzer."""
 
     canvas: Canvas
     elements: List[Element]
+    composition: Optional[CompositionDirective] = Field(
+        default=None,
+        description="Sketch-level composition directive (Composition Director, Step 62).",
+    )
     hard_constraints: List[HardConstraint] = Field(default_factory=list)
     soft_constraints: List[SoftConstraint] = Field(default_factory=list)
     style_keywords: List[str] = Field(default_factory=list)

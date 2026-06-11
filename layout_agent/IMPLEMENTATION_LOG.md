@@ -4353,6 +4353,62 @@ crello_*/meta.json（同 step60 過濾），候選來源五份 live N=20 log
 達構圖指令，並同步檢視 QC 規則與 text-on-photo 模板的衝突。產物：
 `step61_composition_calibration.{py,json}`。
 
+### Step 62（2026-06-12）：AI 構圖師（Composition Director）——機制成功、假設未測到（雙重束縛）
+
+**動機**：使用者指出系統初衷是「像真人設計師一樣分步驟工作，應該
+要有人畫草稿」；Step 61 量化證實草稿層級差距後，使用者拍板「乙案：
+AI 構圖師」＋ QC 衝突採「條件豁免」（text-on-photo 模板下改要求文
+字下墊 underlay，而非直接退件）。
+
+**實作（62a–62d）**：
+- `tools/composition_templates.py`：GT 校準模板庫——8 個有照模板
+  ＋3 個純文字模板（id/relation/photo_cell/photo_size/text_cell/
+  gt_share），`RELATION_PRIOR_BY_ASPECT`（landscape/portrait/square
+  三組 GT 先驗）、`cell_bounds` 九宮格數學、`template_menu` 依
+  (relation_prior, gt_share) 排序。
+- `actions/compose_sketch.py`：`ComposeSketch`（Agent 2.5）——art
+  director persona，看背景圖＋元素清單＋safe zones＋模板選單，輸出
+  JSON directive；3 次 retry 失敗則 fallback 最高先驗模板；結果存
+  `spec.composition`（schema 新增 `CompositionDirective`）。
+- `actions/generate_layout.py`：prompt 新增 directive 區段（逐 canvas
+  換算 cell 像素界線＋面積 px² 區間）＋尾端 ATTENTION（Step 60 驗證
+  過的最高遵從通道）。
+- `tools/quality_checker.py`：`_check_composition`（photo cell±5% 容
+  差／size bucket±0.02／文字質心 cell／relation 分類四項數值合約，
+  分類器一比一複製 step61 signature）＋`_check_text_on_photo_underlay`
+  （騎照片的文字須 underlay 蓋 ≥80%；spec 無 decorative_image 則跳過
+  避免無解門）＋ safe-zone／busy-texture 條件豁免。`spec.composition
+  =None` 時行為位元級不變（308 passed / 12 skipped 零回歸；新增
+  `test_composition_step62.py` 19 測試）。
+- step41 oracle：Stage 2.5 插入 ComposeSketch；gate 白名單加
+  COMPOSITION_MISMATCH / TEXT_ON_PHOTO_NO_UNDERLAY（Step 60 教訓）。
+
+**Live N=20 結果（step62_live.log / step62_live_results.json）**：
+- **構圖師機制 20/20 成功**：4 個有照樣本全選 hero-center-overlay
+  （text-on-photo, large）、純文字樣本分流 text-centered 12／
+  text-column-right 4，零 fallback。
+- **QC 合約有效且 feedback 可執行**：hero 樣本照片面積 attempt 間
+  0.111→0.333 朝 large 移動；underlay 規則正確抓到騎照片無墊的 cta。
+- **但 acceptance 0/20、design_layout A=0 B=6 未移動**——關鍵是
+  **judge 曝光崩潰：28（step58）→20（step60d）→6**。4 個
+  text-on-photo 樣本一個都沒進 judge，假設（GT 式構圖能贏
+  design_layout）實際上未被測到。
+- **根因＝雙重束縛**：text-only 模板（directive 文字質心 MC）與
+  safe-zone 規則（文字推往 saliency-low 邊緣）直接矛盾，Generator
+  乒乓至耗盡（例 5e72455e：a1 違 directive→a2 違 safe-zone→a3 又違
+  directive）。條件豁免只涵蓋 text-on-photo，未涵蓋 text-only。
+- **拒答更正**：LLM 安全拒答（"I'm sorry, I can't assist"）並非本步
+  新回歸——step58=74、step59=80、step60d=59、step62=118 次；Step 47
+  的「拒答消失」結論未持續成立，是 step58 起的背景噪音。
+
+**結論**：構圖師管線機制全數驗證成功，但 gate 疊加過度約束使實驗
+未能回答核心問題。下一步三個槓桿：(1) directive 與 safe-zone 和解
+——構圖師選模板時已看過背景圖，directive 存在時 safe-zone 規則應讓
+位（或構圖師被要求選 safe-zone 相容的 text_cell）；(2) 拒答噪音調
+查（佔 25% generate 失敗）；(3) 雙束縛解除後重跑 live N=20 才算真
+正測過假設。產物：`step62_{smoke,live}.log`、
+`step62_{smoke,live}_results.json`（均 gitignored）。
+
 ---
 
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/12*

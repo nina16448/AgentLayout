@@ -30,6 +30,10 @@ from metagpt.ext.agentlayout.schema import (
     SemanticType,
     VisualType,
 )
+from metagpt.ext.agentlayout.tools.composition_templates import (
+    SIZE_BUCKET_RANGES,
+    cell_bounds,
+)
 
 
 # ============================================================
@@ -143,6 +147,15 @@ class ViolationType(str, Enum):
     # element 0.0454 + 0.02 margin; 8/20 GT layouts shield every text with
     # an underlay).
     TEXT_ON_BUSY_TEXTURE = "text_on_busy_texture"
+    # Step 62 (2026-06-12): Composition Director contract. Step 61 quantified
+    # the sketch-level gap (photo large+bleed GT 45% vs candidate 0%;
+    # text-on-photo GT 43% vs 4%); the directive on spec.composition is the
+    # designer-GT template the Generator must execute.
+    COMPOSITION_MISMATCH = "composition_mismatch"
+    # Under a text-on-photo directive the old safe-zone / busy-texture
+    # rejections are waived for text riding the focal photo, but readability
+    # must then be protected the designer way: an underlay beneath the text.
+    TEXT_ON_PHOTO_NO_UNDERLAY = "text_on_photo_no_underlay"
 
 
 class Violation(BaseModel):
@@ -201,6 +214,12 @@ def check_candidate(
     violations.extend(_check_canvas_coverage(candidate, spec))
     # Step 59 (2026-06-11): text on busy background texture (Rea deficit).
     violations.extend(_check_text_on_busy_texture(candidate, spec))
+    # Step 62 (2026-06-12): Composition Director contract + the conditional
+    # underlay requirement that replaces safe-zone/busy-texture rejection
+    # for text riding the focal photo. Both no-op when spec.composition is
+    # None, keeping pre-62 callers bit-identical.
+    violations.extend(_check_composition(candidate, spec))
+    violations.extend(_check_text_on_photo_underlay(candidate, spec))
     return CheckResult(
         candidate_id=candidate.candidate_id,
         passed=not violations,
@@ -770,9 +789,15 @@ def _check_primary_in_safe_zone(
     if bg is None or not bg.safe_zones:
         return []
     types = _spec_semantic_map(spec)
+    # Step 62 (2026-06-12): under a text-on-photo directive the focal photo
+    # is the safe surface -- the photo itself and primaries riding it are
+    # exempt (the old rule rejected the GT-dominant composition, Step 58/61).
+    exempt = _text_on_photo_exempt_ids(candidate, spec)
     out: List[Violation] = []
     for el in candidate.elements:
         if types.get(el.id) not in PRIMARY_SEMANTIC_TYPES:
+            continue
+        if el.id in exempt:
             continue
         elem_area = float(el.width) * float(el.height)
         if elem_area <= 0:
@@ -1036,6 +1061,17 @@ def _check_text_on_busy_texture(candidate: Candidate, spec: DesignSpec) -> List[
     if not text_boxes:
         return []
 
+    # Step 62 (2026-06-12): under a text-on-photo directive the focal photo
+    # covers the background wherever text rides it -- the background gradient
+    # under the photo bbox is invisible, so subtract it like an underlay.
+    comp = spec.composition
+    if comp is not None and comp.relation == "text-on-photo":
+        focal = _focal_photo(candidate, spec)
+        if focal is not None:
+            fbox = _clip_box_px(focal, cw, ch)
+            if fbox is not None:
+                underlay_boxes.append(fbox)
+
     grad = _bg_gradient_map(bg_ref, cw, ch)
     if grad is None:
         return []
@@ -1070,6 +1106,278 @@ def _check_text_on_busy_texture(candidate: Candidate, spec: DesignSpec) -> List[
 
 
 # ----- end Step 59 rule -------------------------------------------------------
+
+
+# ----- Step 62 rules (2026-06-12) ---------------------------------------------
+
+COMPOSITION_CELL_TOLERANCE: float = 0.05
+"""Slack, as a fraction of each canvas axis, added around the directive's 3x3
+grid cell when checking element centers. A center sitting 2% outside the cell
+boundary is the same sketch; Step 58 taught us that gates hugging exact
+boundaries kill GT-style solutions."""
+
+COMPOSITION_SIZE_MARGIN: float = 0.02
+"""Slack on the photo area-ratio bucket bounds, same rationale."""
+
+TEXT_ON_PHOTO_MIN_OVERLAP: float = 0.30
+"""A text element 'rides' the focal photo when >= 30% of its own area overlaps
+the photo bbox. Identical to the Step 61 calibration signature
+(layout_agent/output/step61_composition_calibration.py::signature) so QC
+classifies candidates with exactly the rule that produced the GT priors."""
+
+RELATION_AXIS_FRACTION: float = 1.0 / 6.0
+"""Centroid-offset threshold (fraction of the canvas axis) separating
+stacked / side-by-side from centered-mix. Mirrors the Step 61 signature."""
+
+TEXT_ON_PHOTO_UNDERLAY_MIN_COVER: float = 0.80
+"""Under a text-on-photo directive, each text element riding the focal photo
+must have a decorative_image underlay covering >= 80% of its own bbox. This is
+the designer defense (8/20 GT layouts shield every text element with an
+underlay); 100% is not demanded because GT underlays often inset slightly."""
+
+
+def _focal_photo(candidate: Candidate, spec: DesignSpec) -> Optional[LayoutElement]:
+    """Largest candidate element whose spec semantic_type is product_image."""
+    types = _spec_semantic_map(spec)
+    photos = [
+        el
+        for el in candidate.elements
+        if types.get(el.id) == SemanticType.PRODUCT_IMAGE
+    ]
+    if not photos:
+        return None
+    return max(photos, key=lambda el: float(el.width) * float(el.height))
+
+
+def _overlap_ratio(el: LayoutElement, other: LayoutElement) -> float:
+    """Intersection area as a fraction of ``el``'s own area."""
+    area = float(el.width) * float(el.height)
+    if area <= 0:
+        return 0.0
+    ix = max(
+        0.0,
+        min(float(el.left) + float(el.width), float(other.left) + float(other.width))
+        - max(float(el.left), float(other.left)),
+    )
+    iy = max(
+        0.0,
+        min(float(el.top) + float(el.height), float(other.top) + float(other.height))
+        - max(float(el.top), float(other.top)),
+    )
+    return (ix * iy) / area
+
+
+def _candidate_text_elements(candidate: Candidate, spec: DesignSpec) -> List[LayoutElement]:
+    spec_by_id = {e.id: e for e in spec.elements}
+    out: List[LayoutElement] = []
+    for el in candidate.elements:
+        spec_el = spec_by_id.get(el.id)
+        if spec_el is not None and spec_el.visual_type == VisualType.TEXT:
+            out.append(el)
+    return out
+
+
+def _text_mass_center(texts: List[LayoutElement]) -> Optional[Tuple[float, float]]:
+    """Area-weighted centroid of the text elements (Step 61 convention)."""
+    total = 0.0
+    tx = ty = 0.0
+    for el in texts:
+        a = float(el.width) * float(el.height)
+        total += a
+        tx += a * (float(el.left) + float(el.width) / 2.0)
+        ty += a * (float(el.top) + float(el.height) / 2.0)
+    if total <= 0:
+        return None
+    return tx / total, ty / total
+
+
+def _classify_relation(
+    focal: LayoutElement, texts: List[LayoutElement], cw: float, ch: float
+) -> Optional[str]:
+    """Photo-text relation of a candidate, replicating the Step 61 signature."""
+    center = _text_mass_center(texts)
+    if center is None:
+        return None
+    total = sum(float(el.width) * float(el.height) for el in texts)
+    olap = sum(
+        _overlap_ratio(el, focal) * float(el.width) * float(el.height) for el in texts
+    )
+    if olap / total >= TEXT_ON_PHOTO_MIN_OVERLAP:
+        return "text-on-photo"
+    px = float(focal.left) + float(focal.width) / 2.0
+    py = float(focal.top) + float(focal.height) / 2.0
+    dx = abs(center[0] - px) / cw
+    dy = abs(center[1] - py) / ch
+    if max(dx, dy) < RELATION_AXIS_FRACTION:
+        return "centered-mix"
+    return "stacked" if dy >= dx else "side-by-side"
+
+
+def _check_composition(candidate: Candidate, spec: DesignSpec) -> List[Violation]:
+    """Verify the candidate executes the Composition Director's directive.
+
+    Inactive (returns []) when ``spec.composition`` is None, keeping pre-62
+    behavior bit-identical for every existing caller. Detail strings carry
+    concrete numbers because they feed the Generator's retry feedback.
+    """
+    comp = spec.composition
+    if comp is None:
+        return []
+    cw = max(1.0, float(spec.canvas.width))
+    ch = max(1.0, float(spec.canvas.height))
+    tol_x = COMPOSITION_CELL_TOLERANCE * cw
+    tol_y = COMPOSITION_CELL_TOLERANCE * ch
+    focal = _focal_photo(candidate, spec)
+    texts = _candidate_text_elements(candidate, spec)
+    out: List[Violation] = []
+
+    if comp.photo_cell and focal is not None:
+        xl, yt, xr, yb = cell_bounds(comp.photo_cell, cw, ch)
+        cx = float(focal.left) + float(focal.width) / 2.0
+        cy = float(focal.top) + float(focal.height) / 2.0
+        if not (xl - tol_x <= cx <= xr + tol_x and yt - tol_y <= cy <= yb + tol_y):
+            out.append(
+                Violation(
+                    type=ViolationType.COMPOSITION_MISMATCH,
+                    targets=[focal.id],
+                    detail=(
+                        f"photo '{focal.id}' center ({cx:.0f}, {cy:.0f}) outside "
+                        f"directive cell '{comp.photo_cell}' (x in [{xl:.0f}, "
+                        f"{xr:.0f}], y in [{yt:.0f}, {yb:.0f}]); move the photo "
+                        "so its center falls inside the directive cell"
+                    ),
+                )
+            )
+
+    bucket = SIZE_BUCKET_RANGES.get(comp.photo_size) if comp.photo_size else None
+    if bucket is not None and focal is not None:
+        lo, hi = bucket
+        ratio = (float(focal.width) * float(focal.height)) / (cw * ch)
+        if not (lo - COMPOSITION_SIZE_MARGIN <= ratio <= hi + COMPOSITION_SIZE_MARGIN):
+            out.append(
+                Violation(
+                    type=ViolationType.COMPOSITION_MISMATCH,
+                    targets=[focal.id],
+                    detail=(
+                        f"photo '{focal.id}' area_ratio={ratio:.3f} outside "
+                        f"directive size bucket '{comp.photo_size}' "
+                        f"[{lo}, {hi}]; resize the photo to "
+                        f"[{lo * cw * ch:,.0f} .. {hi * cw * ch:,.0f}] px^2"
+                    ),
+                )
+            )
+
+    if comp.text_cell and texts:
+        center = _text_mass_center(texts)
+        if center is not None:
+            xl, yt, xr, yb = cell_bounds(comp.text_cell, cw, ch)
+            tx, ty = center
+            if not (xl - tol_x <= tx <= xr + tol_x and yt - tol_y <= ty <= yb + tol_y):
+                out.append(
+                    Violation(
+                        type=ViolationType.COMPOSITION_MISMATCH,
+                        targets=[el.id for el in texts],
+                        detail=(
+                            f"text mass center ({tx:.0f}, {ty:.0f}) outside "
+                            f"directive cell '{comp.text_cell}' (x in [{xl:.0f}, "
+                            f"{xr:.0f}], y in [{yt:.0f}, {yb:.0f}]); shift the "
+                            "text block so its area-weighted center falls "
+                            "inside the directive cell"
+                        ),
+                    )
+                )
+
+    if comp.relation and focal is not None and texts:
+        actual = _classify_relation(focal, texts, cw, ch)
+        if actual is not None and actual != comp.relation:
+            out.append(
+                Violation(
+                    type=ViolationType.COMPOSITION_MISMATCH,
+                    targets=[focal.id] + [el.id for el in texts],
+                    detail=(
+                        f"candidate photo-text relation classifies as "
+                        f"'{actual}' but the directive requires "
+                        f"'{comp.relation}'"
+                        + (
+                            "; overlap >= 30% of the text area with the photo "
+                            "bbox is required -- place the text ON the photo"
+                            if comp.relation == "text-on-photo"
+                            else "; adjust the photo-vs-text-mass offset to "
+                            "match the directive"
+                        )
+                    ),
+                )
+            )
+    return out
+
+
+def _check_text_on_photo_underlay(candidate: Candidate, spec: DesignSpec) -> List[Violation]:
+    """Designer-style readability protection under a text-on-photo directive.
+
+    The conditional exemption deal (user decision, Step 62): text riding the
+    focal photo is no longer rejected by safe-zone / busy-texture rules, but
+    each such text must sit on a decorative_image underlay. Skipped when the
+    spec has no decorative_image at all -- completeness forbids inventing
+    elements, so the demand would be unsatisfiable; _check_text_contrast still
+    guards readability there.
+    """
+    comp = spec.composition
+    if comp is None or comp.relation != "text-on-photo":
+        return []
+    focal = _focal_photo(candidate, spec)
+    if focal is None:
+        return []
+    types = _spec_semantic_map(spec)
+    underlays = [
+        el
+        for el in candidate.elements
+        if types.get(el.id) == SemanticType.DECORATIVE_IMAGE
+    ]
+    if not underlays:
+        return []
+    out: List[Violation] = []
+    for el in _candidate_text_elements(candidate, spec):
+        if _overlap_ratio(el, focal) < TEXT_ON_PHOTO_MIN_OVERLAP:
+            continue
+        best = max(_overlap_ratio(el, u) for u in underlays)
+        if best < TEXT_ON_PHOTO_UNDERLAY_MIN_COVER:
+            out.append(
+                Violation(
+                    type=ViolationType.TEXT_ON_PHOTO_NO_UNDERLAY,
+                    targets=[el.id],
+                    detail=(
+                        f"text '{el.id}' rides the focal photo but its best "
+                        f"underlay covers only {best:.0%} < "
+                        f"{TEXT_ON_PHOTO_UNDERLAY_MIN_COVER:.0%} of its bbox; "
+                        "place a decorative_image underlay beneath this text "
+                        "(the designer norm for text-on-photo compositions)"
+                    ),
+                )
+            )
+    return out
+
+
+def _text_on_photo_exempt_ids(candidate: Candidate, spec: DesignSpec) -> frozenset:
+    """Element ids exempt from safe-zone rejection under text-on-photo.
+
+    The focal photo IS the directive (it must cover the canvas center, which
+    safe zones rarely include), and elements riding it sit on the photo, not
+    on the background subject -- rejecting either kills the GT-dominant
+    composition (Step 58/61 finding)."""
+    comp = spec.composition
+    if comp is None or comp.relation != "text-on-photo":
+        return frozenset()
+    focal = _focal_photo(candidate, spec)
+    if focal is None:
+        return frozenset()
+    ids = {focal.id}
+    for el in candidate.elements:
+        if el.id != focal.id and _overlap_ratio(el, focal) >= TEXT_ON_PHOTO_MIN_OVERLAP:
+            ids.add(el.id)
+    return frozenset(ids)
+
+
+# ----- end Step 62 rules --------------------------------------------------------
 
 
 def _check_text_contrast(candidate: Candidate, spec: DesignSpec) -> List[Violation]:

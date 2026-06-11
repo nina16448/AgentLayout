@@ -62,6 +62,7 @@ from run_role_team_live_crello import (  # noqa: E402
 )
 
 from metagpt.ext.agentlayout.actions.analyze_brief import AnalyzeBrief  # noqa: E402
+from metagpt.ext.agentlayout.actions.compose_sketch import ComposeSketch  # noqa: E402
 from metagpt.ext.agentlayout.actions.generate_layout import GenerateLayout  # noqa: E402
 from metagpt.ext.agentlayout.actions.plan_assets import PlanAssets  # noqa: E402
 from metagpt.ext.agentlayout.schema import (  # noqa: E402
@@ -535,6 +536,15 @@ async def _process_sample(client: AsyncOpenAI, sample_id: str) -> Dict:
         print("  Stage 2: PlanAssets")
         tree = await PlanAssets().run(spec=spec)
         bg = resolve_background(spec.canvas)
+        # Step 62 (2026-06-12): Composition Director picks the GT-calibrated
+        # sketch template BEFORE pixel layout; the directive rides
+        # spec.composition into the Generator prompt and the QC contract.
+        print("  Stage 2.5: ComposeSketch (Composition Director)")
+        directive = await ComposeSketch().run(spec=spec, bg=bg)
+        print(
+            f"    directive: {directive.template_id} "
+            f"(relation={directive.relation}, photo_size={directive.photo_size})"
+        )
     except Exception as err:
         traceback.print_exc()
         return {"id": sample_id, "status": f"setup_crash: {err}"}
@@ -586,6 +596,9 @@ async def _process_sample(client: AsyncOpenAI, sample_id: str) -> Dict:
         # Step 59 (2026-06-11): TEXT_ON_BUSY_TEXTURE joins the gate alongside
         # the Step 57 guardrails (GT-calibrated T=0.065, detail directs the
         # Generator toward underlay shielding -- the designer-GT solution).
+        # Step 62 (2026-06-12): COMPOSITION_MISMATCH / TEXT_ON_PHOTO_NO_UNDERLAY
+        # join the gate (Step 60 lesson: violation types not whitelisted here
+        # are computed then silently discarded).
         cov_viols = [
             v
             for v in qc.violations
@@ -594,6 +607,8 @@ async def _process_sample(client: AsyncOpenAI, sample_id: str) -> Dict:
                 ViolationType.CANVAS_COVERAGE_LOW,
                 ViolationType.DEAD_BAND_EXCESSIVE,
                 ViolationType.TEXT_ON_BUSY_TEXTURE,
+                ViolationType.COMPOSITION_MISMATCH,
+                ViolationType.TEXT_ON_PHOTO_NO_UNDERLAY,
             )
         ]
         if sz_viols and not SAFE_ZONE_GATE:

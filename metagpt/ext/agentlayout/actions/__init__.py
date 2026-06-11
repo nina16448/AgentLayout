@@ -5,6 +5,7 @@ in ``layout_agent/README.md``:
 
     analyze_brief.py    -- Analyst         (user brief -> DesignSpec)
     plan_assets.py      -- Asset Planner   (DesignSpec -> LayoutTree)
+    compose_sketch.py   -- Composition Director (DesignSpec -> CompositionDirective)
     generate_layout.py  -- Layout Generator (DesignSpec + LayoutTree -> CandidatesBatch)
     judge_aesthetic.py  -- Aesthetic Judge (rendered images -> AestheticJudgement)
 

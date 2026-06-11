@@ -259,6 +259,9 @@ photo-prominent: >=20%  (GT-calibrated photo floor, Step 60)
 # GT-calibrated photo size prior (Step 60, 2026-06-11)
 {photo_size_prior}
 
+# Composition directive (Step 62, 2026-06-12; "None" when no director ran)
+{composition_directive}
+
 # Layout constraints (Step 37 hard rules, 2026-06-09)
 The Quality Checker downstream WILL reject candidates that violate any of
 these. Generate candidates that already comply so retries are not wasted:
@@ -414,6 +417,16 @@ ATTENTION: Photo sizing (Step 60, 2026-06-11). Every element under a
            needs >= 414,720 px^2 (e.g. 720x576, 648x640, 1080x384). Anchor
            the enlarged photo in the LARGEST safe zone; do NOT shrink it
            below the floor to dodge other constraints.
+ATTENTION: Composition directive (Step 62, 2026-06-12). When the
+           "# Composition directive" block above is not "None", it is the
+           art director's decision and OUTRANKS your own compositional
+           taste. ALL 5 candidates MUST satisfy its numeric contract
+           (photo-center cell, photo area range, text-mass cell, photo-text
+           relation) -- the Quality Checker verifies every bound and rejects
+           violators immediately. Compute the math per candidate BEFORE
+           emitting JSON. The "distinctly different approaches" rule applies
+           WITHIN the directive: vary alignment, typography, exact positions
+           and spacing -- never the coarse composition itself.
 ATTENTION: Each candidate must take a distinctly different compositional approach.
            Do not repeat similar layouts across candidates.
 ATTENTION: Canvas vertical coverage. The layout MUST occupy the full canvas
@@ -659,7 +672,75 @@ class GenerateLayout(Action):
             layout_tree=tree_str,
             format_example=FORMAT_EXAMPLE_JSON,
             photo_size_prior=self._format_area_hints(spec),
+            composition_directive=self._format_composition_directive(spec),
         )
+
+    @staticmethod
+    def _format_composition_directive(spec: DesignSpec) -> str:
+        """Render the `# Composition directive` block with per-canvas pixel math.
+
+        The Composition Director (Step 62) stores its template choice on
+        ``spec.composition``; this turns the abstract sketch (grid cells,
+        size bucket, relation) into concrete numeric bounds the LLM can obey
+        and the Quality Checker re-verifies. Returns "None" when no director
+        ran, keeping every pre-Step-62 caller unchanged.
+        """
+        from metagpt.ext.agentlayout.tools.composition_templates import (
+            SIZE_BUCKET_RANGES,
+            cell_bounds,
+        )
+
+        comp = spec.composition
+        if comp is None:
+            return "None"
+        cw, ch = spec.canvas.width, spec.canvas.height
+        lines = [
+            f"Template '{comp.template_id}' chosen by the art director"
+            + (f" -- {comp.rationale}" if comp.rationale else "")
+            + ". HARD numeric contract (QC-enforced):"
+        ]
+        if comp.photo_cell and comp.photo_size:
+            xl, yt, xr, yb = cell_bounds(comp.photo_cell, cw, ch)
+            lo, hi = SIZE_BUCKET_RANGES[comp.photo_size]
+            lines.append(
+                f"  - focal photo center (left + width/2, top + height/2) must fall in "
+                f"x in [{xl:.0f}, {xr:.0f}], y in [{yt:.0f}, {yb:.0f}] (grid cell {comp.photo_cell})."
+            )
+            lines.append(
+                f"  - focal photo area: width*height in [{lo:.2f}, {hi:.2f}] of canvas area "
+                f"= [{lo * cw * ch:,.0f} .. {hi * cw * ch:,.0f}] px^2 ('{comp.photo_size}')."
+            )
+        if comp.text_cell:
+            xl, yt, xr, yb = cell_bounds(comp.text_cell, cw, ch)
+            lines.append(
+                f"  - the AREA-WEIGHTED center of ALL text elements combined must fall in "
+                f"x in [{xl:.0f}, {xr:.0f}], y in [{yt:.0f}, {yb:.0f}] (grid cell {comp.text_cell})."
+            )
+        relation_rules = {
+            "text-on-photo": (
+                "  - relation 'text-on-photo': text boxes must overlap the focal photo by "
+                ">= 30% of total text area. Place text ON the photo like designers do; "
+                "protect readability with a decorative_image underlay or strong contrast, "
+                "NOT by moving the text off the photo."
+            ),
+            "stacked": (
+                f"  - relation 'stacked': the text mass and the photo center must be "
+                f"vertically separated by > {ch / 6:.0f}px (1/6 canvas height), with "
+                f"vertical offset dominating horizontal."
+            ),
+            "side-by-side": (
+                f"  - relation 'side-by-side': the text mass and the photo center must be "
+                f"horizontally separated by > {cw / 6:.0f}px (1/6 canvas width), with "
+                f"horizontal offset dominating vertical."
+            ),
+            "centered-mix": (
+                f"  - relation 'centered-mix': keep photo-center vs text-mass offsets "
+                f"below {cw / 6:.0f}px horizontally and {ch / 6:.0f}px vertically."
+            ),
+        }
+        if comp.relation in relation_rules:
+            lines.append(relation_rules[comp.relation])
+        return "\n".join(lines)
 
     @staticmethod
     def _format_area_hints(spec: DesignSpec) -> str:
