@@ -4203,6 +4203,52 @@ retry 能否真的學會遮蔽待 live N=20 驗證（未跑）。產物：
 `step59_text_gradient_calibration.{py,json}`、
 `step59b_qc_rule_consistency.py`。
 
+#### Step 59 live N=20 驗證 — 規則精準、retry 零修復、Rea 朝 GT 移動（2026/06/11）
+
+**設定**：`step41_layout_aware_oracle.py --ids-file step13_drawn_ids.json
+--render-prefix step59_live`，HEAD `f1de8cec`（TEXT_ON_BUSY_TEXTURE 已
+進 gate）。產物：`step59_live_N20.log`、`step59_live_results.json`、
+`step59_live_crello_*` renders（均 gitignored，與既往 live run 同）。
+
+**Acceptance：0/20（全 round1_exhausted），與 step58 持平＝預期。**
+判軸（19 次 judge 呼叫）：design_layout B=19/tie=0、typography B=16、
+graphics B=15、content tie=14、innovation tie=15——瓶頸仍是 Generator
+構圖，gate 非成因（**Generator-bounded 第六次確認**）。59158b4f 撞
+已知 vision refusal（「先不修」清單）。
+
+**規則行為（核心發現）**：
+1. **精準度完美**：live 開火 3/20 = 校準預測的同三個樣本
+   （5c94fa60 title_1 0.0655、5f56075f cta_1 0.0660、5f4f5e15 cta_1
+   0.0964–0.0975），梯度值與離線重放一致到第 3–4 位，無誤殺。
+2. **retry 零修復**：5c94fa60 三次 attempt 梯度一模一樣（文字原地
+   不動）；5f4f5e15 三次全踩 + safe-zone↔dead-band 打地鼠；5f56075f
+   a2/a3 generate_failed。
+3. **指引可執行但未執行**：三個 spec 都有 `underlay_1`
+   （decorative_image）可用——「加 underlay 遮蔽」不是不可能的指令，
+   是 Generator retry 根本不照 detail 行動（連移位都不做）。
+   detail-directs-underlay 的差異化賭注落空。
+
+**幾何指標（step58c 腳本重算，n=15 parse 成功）**：
+
+| run | Ali↓ | Ove↓ | Und_l↑ | Und_s↑ | Occ↓ | Rea↓ |
+|---|---|---|---|---|---|---|
+| step59_live | 0.0009 | 0.0000 | 0.5955 | 0.5556 | 0.0718 | **0.0085** |
+| 同子集 GT | 0.0021 | 0.0185 | 0.3528 | 0.2667 | 0.0470 | 0.0058 |
+
+Rea 0.0141（step58b，GT 2.1×）→ **0.0085（同子集 GT 1.47×）**——
+方向與 gate 預期一致，但 n=15、樣本組成不同、跨 run 差異曾定性為
+雜訊（58c 條目），**只可寫「與機制一致」不可宣稱因果**。注意
+`step58c_sega_from_log.py` 輸出路徑固定，本次執行覆寫
+`step58c_sega_from_log.json`——已用四 log（56/58/58b/59）重生成
+完整版。
+
+**結論**：與 Step 58 同型 negative-but-informative——機制全部成功
+（規則精準、gate 開火、feedback 送達），acceptance 0/20 不動；新增
+證據：**Generator retry 對明確、可執行的結構化修復指令（加 underlay）
+完全不回應**，把「QC feedback 措辭改進」這條路線進一步封死，殘餘
+選項收斂到 Step 58 條目候選 (b) GT 校準面積比 hint（直接改 Generator
+輸入而非 feedback）。
+
 ---
 
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/11*
