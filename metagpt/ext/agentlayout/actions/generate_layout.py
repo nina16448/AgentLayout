@@ -45,6 +45,7 @@ from metagpt.ext.agentlayout.schema import (
     CandidatesBatch,
     DesignSpec,
     LayoutTree,
+    SemanticType,
 )
 from metagpt.logs import logger
 from metagpt.utils.common import CodeParser
@@ -54,6 +55,17 @@ from metagpt.utils.common import CodeParser
 # longest edge at this size to keep per-call cost in check while preserving
 # enough detail for the model to identify negative-space regions.
 _BG_MAX_EDGE_PX: int = 768
+
+# Step 60 (2026-06-11): GT-calibrated photo size prior. Calibration over all
+# 1,902 locally cached Crello designer layouts (2,374 non-background photo
+# elements, clipped-to-canvas area / canvas area; see
+# layout_agent/output/step60_area_ratio_calibration.py). Candidate photos
+# cluster at 0.111 (= 1/3 x 1/3 canvas) -- the "size timidity" failure mode
+# identified in Step 58. The target range is GT p50..p75, deliberately NOT
+# p90, to limit collisions with the safe-zone rule (Step 58: safe-zone gate
+# kills oversized GT-style solutions).
+PHOTO_AREA_GT = {"p25": 0.063, "p50": 0.213, "p75": 0.445, "p90": 0.619}
+PHOTO_AREA_TARGET = (0.20, 0.45)
 
 
 # ============================================================
@@ -239,9 +251,13 @@ Elements closer to the leaves have lower visual importance.
 # size reference (element_area / canvas_area, must satisfy lower bound)
 full-canvas: >=95%  |  hero: >=60%   |  large: >=30%
 prominent:   >=20%  |  medium: >=15% |  small: >=8%   |  caption: >=3%
+photo-prominent: >=20%  (GT-calibrated photo floor, Step 60)
 (If hard_constraints contain a size_preference for a target with hint H,
  that target's width*height divided by canvas_width*canvas_height MUST be
  at or above the lower bound of H.)
+
+# GT-calibrated photo size prior (Step 60, 2026-06-11)
+{photo_size_prior}
 
 # Layout constraints (Step 37 hard rules, 2026-06-09)
 The Quality Checker downstream WILL reject candidates that violate any of
@@ -388,6 +404,16 @@ ATTENTION: Typography direction (Step 49a, 2026-06-10). Designer ground truths
            font_family, title color) combinations -- five identical black
            sans-serif titles is an automatic fail.
 ATTENTION: For image elements, output geometry only -- no visual style fields needed.
+ATTENTION: Photo sizing (Step 60, 2026-06-11). Every element under a
+           `size_preference: photo-prominent` hard constraint MUST have
+           width * height >= 0.20 * canvas_width * canvas_height. This floor
+           is the designer-ground-truth MEDIAN photo size -- producing a
+           1/3 x 1/3 tile (area_ratio 0.11) or smaller is the single most
+           common amateur tell and fails QC immediately. Compute the math
+           per photo BEFORE emitting JSON: on a 1080x1920 canvas the photo
+           needs >= 414,720 px^2 (e.g. 720x576, 648x640, 1080x384). Anchor
+           the enlarged photo in the LARGEST safe zone; do NOT shrink it
+           below the floor to dodge other constraints.
 ATTENTION: Each candidate must take a distinctly different compositional approach.
            Do not repeat similar layouts across candidates.
 ATTENTION: Canvas vertical coverage. The layout MUST occupy the full canvas
@@ -600,7 +626,7 @@ class GenerateLayout(Action):
         prev_best_layout: Optional[Dict[str, Tuple[float, float, float, float]]] = None,
         prev_best_subscores: Optional[Dict[str, int]] = None,
     ) -> str:
-        """Render PROMPT_TEMPLATE with all 8 substitutions.
+        """Render PROMPT_TEMPLATE with all 9 substitutions.
 
         ``previous_attempt`` is the new Refinement Loop block. It is "None"
         on cold-start (Round 0) and a compact JSON-ish description in
@@ -632,6 +658,41 @@ class GenerateLayout(Action):
             previous_attempt=previous_attempt_str,
             layout_tree=tree_str,
             format_example=FORMAT_EXAMPLE_JSON,
+            photo_size_prior=self._format_area_hints(spec),
+        )
+
+    @staticmethod
+    def _format_area_hints(spec: DesignSpec) -> str:
+        """Render the `# GT-calibrated photo size prior` block content.
+
+        Targets ONLY semantic_type == product_image: calibration showed photos
+        are the single size-timid class (candidate p50 0.111 vs GT p50 0.213 /
+        p75 0.445), while titles are already GT-aligned and underlays/other
+        text already run larger than GT -- hinting those would push the wrong
+        direction. Logos and icons are deliberately excluded (they should
+        stay small). Returns "None" when the spec has no photo element.
+        """
+        photo_ids = [
+            el.id
+            for el in spec.elements
+            if el.semantic_type == SemanticType.PRODUCT_IMAGE
+        ]
+        if not photo_ids:
+            return "None"
+        lo, hi = PHOTO_AREA_TARGET
+        id_lines = "\n".join(f"  - {pid}" for pid in photo_ids)
+        return (
+            f"Designer ground truths (N=1,902 Crello layouts) size non-background\n"
+            f"photos at area_ratio median {PHOTO_AREA_GT['p50']:.2f}, upper quartile "
+            f"{PHOTO_AREA_GT['p75']:.2f}\n"
+            f"(p90 {PHOTO_AREA_GT['p90']:.2f}). Layouts whose photos sit near 0.11 "
+            f"(a 1/3 x 1/3 tile)\nread as TIMID and lose the design_layout axis. "
+            f"For each photo element\nbelow, target area_ratio {lo:.2f}-{hi:.2f} of "
+            f"the canvas (the focal photo may go\nlarger):\n"
+            f"{id_lines}\n"
+            f"While enlarging, KEEP rule 6 satisfied: the photo must still overlap\n"
+            f"a safe zone by >= 50% of its own area -- anchor the enlarged photo in\n"
+            f"the LARGEST safe zone instead of shrinking it back down."
         )
 
     @staticmethod

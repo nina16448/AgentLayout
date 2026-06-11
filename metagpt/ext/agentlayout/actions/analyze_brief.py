@@ -233,6 +233,46 @@ Output carefully referenced "format example" in JSON format, nothing else.
 MAX_RETRIES: int = 3
 
 
+def inject_photo_size_prior(spec: DesignSpec) -> None:
+    """Step 60 (2026-06-11): GT-calibrated photo size floor as spec INPUT.
+
+    Designer GT photos have area_ratio p50 = 0.213 while Generator candidates
+    cluster at 0.083-0.111 ("size timidity", Step 58); the descriptive prompt
+    hint alone moved nothing (Step 60 smoke). This appends a hard constraint
+    `size_preference: photo-prominent` (lower bound 0.20, see
+    quality_checker.SIZE_HINT_LOWER_BOUND) for every product_image element,
+    so the floor rides the strongest prompt channel ("Strictly obey all
+    hard_constraints") AND is QC-enforced. Runs deterministically after the
+    Analyst LLM call -- every pipeline driver gets it for free. Photos the
+    Analyst already covered with its own size_preference are left alone.
+    """
+    from metagpt.ext.agentlayout.schema import (
+        HardConstraint,
+        HardConstraintRule,
+        SemanticType,
+    )
+
+    covered = {
+        tid
+        for hc in spec.hard_constraints
+        if hc.rule == HardConstraintRule.SIZE_PREFERENCE
+        for tid in hc.targets
+    }
+    photo_ids = [
+        el.id
+        for el in spec.elements
+        if el.semantic_type == SemanticType.PRODUCT_IMAGE and el.id not in covered
+    ]
+    if photo_ids:
+        spec.hard_constraints.append(
+            HardConstraint(
+                rule=HardConstraintRule.SIZE_PREFERENCE,
+                targets=photo_ids,
+                params={"hint": "photo-prominent"},
+            )
+        )
+
+
 # ============================================================
 # Action
 # ============================================================
@@ -267,7 +307,9 @@ class AnalyzeBrief(Action):
         for attempt in range(1, MAX_RETRIES + 1):
             rsp = await self.llm.aask(prompt)
             try:
-                return self._parse_response(rsp)
+                spec = self._parse_response(rsp)
+                inject_photo_size_prior(spec)
+                return spec
             except (ValueError, ValidationError) as err:
                 last_err = err
                 logger.warning(

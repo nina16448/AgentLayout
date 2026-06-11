@@ -80,6 +80,14 @@ SIZE_HINT_LOWER_BOUND: Dict[str, float] = {
     # 0.10 calibrated against vertical posters where headline is one line of bold text;
     # 0.20 was too strict (forced a 240px-tall banner on a 1200px canvas).
     "prominent": 0.10,
+    # Step 60 (2026-06-11): GT-calibrated PHOTO bucket. Designer GT photos
+    # have area_ratio p50 = 0.213 (N=2,374 elements over 1,902 layouts, see
+    # layout_agent/output/step60_area_ratio_calibration.py); candidates
+    # cluster at 0.083-0.111 ("size timidity", Step 58). 0.20 sits just
+    # under the GT median so median-style designer solutions stay legal.
+    # This bucket is injected programmatically for product_image elements
+    # (analyze_brief.inject_photo_size_prior); the Analyst never emits it.
+    "photo-prominent": 0.20,
     "medium": 0.08,
     "small": 0.08,
     "caption": 0.03,

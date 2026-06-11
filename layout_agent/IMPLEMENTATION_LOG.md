@@ -4249,6 +4249,71 @@ Rea 0.0141（step58b，GT 2.1×）→ **0.0085（同子集 GT 1.47×）**——
 選項收斂到 Step 58 條目候選 (b) GT 校準面積比 hint（直接改 Generator
 輸入而非 feedback）。
 
+#### Step 60 GT 校準照片面積 prior — 尺寸第一次移動、判決不動（2026/06/11）
+
+**動機**：Step 58 發現「尺寸膽怯」——候選照片固定 1/3×1/3
+（area_ratio 0.111）。Step 59 證實 feedback 路線封死後，本步改走
+**Generator 輸入端**：把 GT 校準的照片尺寸 prior 直接放進 prompt。
+
+**校準（`step60_area_ratio_calibration.py`，N=1,902 GT、零 LLM）**：
+clipped area_ratio 逐 class 統計——photo n=2374 **p50 0.213 / p75
+0.445**；title_text p50 0.080；underlay p50 0.009（雙峰）。對照
+候選端（step58b+59 log 同指標）：photo p50=p25=p75=**0.1111**（退化
+單點）、title 0.077（對齊 GT）、underlay/other_text 反而比 GT 大——
+**photo 是唯一尺寸膽怯 class**，prior 只鎖 product_image（推其他
+class 會反方向）。
+
+**程式改動（雙槓桿）**：
+1. `generate_layout.py`：`PHOTO_AREA_GT`/`PHOTO_AREA_TARGET=(0.20,
+   0.45)` 常數（目標=GT p50..p75，刻意不用 p90 限制 safe-zone 衝突）
+   ＋ `_format_area_hints()` 敘述型 hint slot ＋ prompt 尾端
+   ATTENTION 規則（含逐 canvas 的像素數學示例、anchor 在最大 safe
+   zone 的指示）。
+2. `analyze_brief.py`：`inject_photo_size_prior()` 在 `run()` 成功
+   路徑程式化注入 `size_preference: photo-prominent` hard constraint
+   （Analyst 自己的 size constraint 優先、logo/icon 排除）；
+   `quality_checker.py` 新 bucket `photo-prominent: 0.20`（剛好低於
+   GT p50 0.213，GT 式中位解合法——避開 Step 52/58 誤殺陷阱；既有
+   `prominent` 0.10 對 photo 無牙）。
+   測試 `test_generator_area_prior.py` 12 條，套件 289 passed 零回歸。
+
+**Smoke 兩輪**：#1（N=5 預設 ids）敘述型 hint 單獨上場＝零移動
+（5/5 候選照舊 360×480=0.083，呼應 Step 49 prompt ceiling）。
+#2（4 個 photo 樣本 targeted）雙槓桿後**尺寸第一次移動**：mean
+0.135–0.215、max 0.32、大量精確堆積在 0.200（Generator 真的照
+ATTENTION 算了數學）。
+
+**重要架構發現——oracle gate 白名單**：smoke log grep
+`photo-prominent` 零命中、零 size_preference 違規 ≠ 注入失敗。離線
+重放證明注入成功且 `check_candidate` 會開火（45 候選中 25 個
+sub-floor 全數正確產生違規），但 step41 oracle 的 gate 是白名單
+（`gate_viols = sz_viols + cov_viols`），**SIZE_PREFERENCE 算出後
+直接丟棄**——不進 gate、不進 log/results。故實際生效的只有 prompt
+槓桿；0.200 堆積是 Generator 自願服從，非 QC 退件逼出。依使用者
+決定**不加 gate**（Step 58/59 已證 retry feedback 無效，加 gate
+只燒 attempts）。
+
+**Live N=20（`--ids-file step13_drawn_ids.json`，prefix
+`step60d_live`；註：先誤跑一輪 DEFAULT_IDS N=5，產物改名
+`step60c_default5.*` 留存）**：
+- **尺寸持續移動**：photo 樣本 mean 0.156–0.278、max **0.444**
+  （= GT p75），≥0.20 比例 50%/50%/47%——機制在 live 完全成立。
+- **Acceptance 0/20（全 round1_exhausted）**；判軸：design_layout
+  B=20/tie=0、graphics B=18、typography B=16、content tie=13、
+  innovation tie=17——與 step59（B=19/15/16）統計上同位。
+- **逐 photo 樣本判決零移動**：4 樣本多數仍卡在
+  primary_outside_safe_zone/text_on_busy_texture QC 關卡；唯一被評
+  的 axes 與 step59 完全相同。
+
+**結論**：機制成功＋結果 negative 的第三連發（58/59/60）。照片尺寸
+這個自 Step 58 起追的失效模式**已被修復**（0.111 退化 → GT 區間），
+但 design_layout 判決一票未動——(1) pool 只有 4/20 樣本有 photo，
+聚合天花板本來就低；(2) 尺寸只是構圖差距的一小部分。
+**Generator-bounded 第七次確認**：單一可量化失效模式的修復不足以
+撼動整體構圖判決。產物：`step60_area_ratio_calibration.{py,json}`、
+`step60_photo_ids.json`、`step60{_smoke,b_photo,c_default5,d_live}`
+log/results/renders（live 產物 gitignored）。
+
 ---
 
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/11*
