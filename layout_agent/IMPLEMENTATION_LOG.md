@@ -4314,6 +4314,45 @@ sub-floor 全數正確產生違規），但 step41 oracle 的 gate 是白名單
 `step60_photo_ids.json`、`step60{_smoke,b_photo,c_default5,d_live}`
 log/results/renders（live 產物 gitignored）。
 
+### Step 61（2026-06-12）：GT vs 候選粗構圖統計——草稿層級差距量化確認
+
+**動機**：Steps 49–60 八連發收斂於 Generator-bounded。剩餘假說是
+**顆粒度**：Generator 在單一 LLM call 內同時決定草稿級構圖（照片放
+哪、文字塊放哪）與像素級細節，缺一個 thumbnail-sketch 階段。使用者
+提出關鍵洞察：「系統初衷是讓它像真人設計師一樣分步驟工作……應該要
+有人畫草稿的」。蓋「構圖師」Role 前先驗證前提：草稿層級到底有沒有
+可量測的差距？
+
+**方法（`step61_composition_calibration.py`，零 LLM call）**：每張
+版面壓成 squint-test 簽名——photo（最大 image/product_image）的
+3×3 格位置 + 尺寸桶（small <0.20 / medium / large / bleed >0.80）、
+全部文字的面積加權中心 3×3 格、photo-text 關係（text-on-photo
+重疊≥30% / stacked / side-by-side / centered-mix）。GT 來源
+crello_*/meta.json（同 step60 過濾），候選來源五份 live N=20 log
+（step56/58/58b/59/60d）經 parse_log_samples 全候選解析。
+
+**結果（GT n=1,168 vs 候選 n=205）**：
+- **照片尺寸是最大缺口**：GT large+bleed 45.1%、small 20.2%；候選
+  **small 92.7%、large/bleed 0%**。Step 60 修復只推到 medium 下緣。
+- **設計師最常用的招式候選幾乎不用**：text-on-photo GT **43.3%** vs
+  候選 **3.9%**；GT top-3 構圖全是「大照片置中＋文字疊上」
+  （合計 19.9%）。候選改以 stacked 44.9% / centered-mix 21.0% 補位。
+- **位置習慣相反**：GT photo MC 50.7%（中帶 78.6%）；候選 photo 散
+  落底帶 37.1%、文字被推到上下邊緣（TC 22.4%＋BC 30.2%）——「中間
+  讓給照片、文字閃旁邊」的迴避模式。
+- **多樣性**：GT 177 distinct patterns / entropy 6.23 bits；候選 51
+  / 4.98 bits——偏好集中但非單點崩潰；差距主因是「畫錯草稿」而非
+  「只會一種草稿」。
+- **QC 衝突線索**：text_on_busy_texture＋safe-zone 規則正好禁止 GT
+  最大宗的 text-on-photo 構圖（呼應 Step 58 safe-zone 誤殺觀察）。
+
+**結論**：草稿層級差距獲量化證實——設計師畫「大照片當主角、文字疊
+上去」，候選畫「小照片角落擺、文字繞著走」。構圖師（sketch）Role
+有明確數據支撐；設計時應以本步 GT 構圖統計為模板庫、用 Step 60 驗
+證過的 prompt 模式（尾端 ATTENTION＋數學＋spec hard constraint）下
+達構圖指令，並同步檢視 QC 規則與 text-on-photo 模板的衝突。產物：
+`step61_composition_calibration.{py,json}`。
+
 ---
 
-*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/11*
+*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/12*
