@@ -193,3 +193,99 @@ def test_prompt_template_formats_with_ten_substitutions():
     assert "{photo_size_prior}" not in rendered
     assert "# Composition directive (Step 62" in rendered
     assert "{composition_directive}" not in rendered
+
+
+# ============================================================
+# Step 64: directive outranks the historical prior
+# ============================================================
+
+
+def _hero_spec() -> DesignSpec:
+    from metagpt.ext.agentlayout.schema import CompositionDirective
+
+    spec = _spec(
+        [
+            _el("title_1", SemanticType.TITLE, VisualType.TEXT),
+            _el("product_image_1", SemanticType.PRODUCT_IMAGE, VisualType.IMAGE),
+        ]
+    )
+    spec.composition = CompositionDirective(
+        template_id="hero-center-overlay",
+        relation="text-on-photo",
+        photo_cell="MC",
+        photo_size="large",
+        text_cell="MC",
+    )
+    return spec
+
+
+def test_hint_defers_to_composition_directive_bucket():
+    hint = GenerateLayout._format_area_hints(_hero_spec())
+    assert "[0.45, 0.80]" in hint
+    assert "OVERRIDES" in hint
+    assert "- product_image_1" in hint
+    # the contradictory 0.20-0.45 anchor must be gone (step63: hero
+    # candidates stalled at 0.33, the compromise between prior and directive)
+    assert "0.20-0.45" not in hint
+
+
+def test_directive_includes_self_consistent_worked_example():
+    import re
+
+    from metagpt.ext.agentlayout.tools.composition_templates import (
+        SIZE_BUCKET_RANGES,
+        cell_bounds,
+    )
+
+    block = GenerateLayout._format_composition_directive(_hero_spec())
+    m = re.search(
+        r"WORKED EXAMPLE.*?left=(\d+), top=(\d+), width=(\d+), height=(\d+)",
+        block,
+    )
+    assert m, f"no worked example in directive block:\n{block}"
+    left, top, w, h = map(int, m.groups())
+    cw, ch = 600, 400
+    xl, yt, xr, yb = cell_bounds("MC", cw, ch)
+    lo, hi = SIZE_BUCKET_RANGES["large"]
+    cx, cy = left + w / 2.0, top + h / 2.0
+    assert xl <= cx <= xr and yt <= cy <= yb, "example center must sit in MC"
+    assert lo <= (w * h) / (cw * ch) <= hi, "example area must sit in bucket"
+    assert 0 <= left and 0 <= top and left + w <= cw and top + h <= ch
+
+
+# ============================================================
+# Step 64 third fix: text-on-photo underlay contract in the directive
+# ============================================================
+
+
+def test_text_on_photo_rule_names_spec_underlays():
+    spec = _hero_spec()
+    spec.elements.append(
+        _el("underlay_1", SemanticType.DECORATIVE_IMAGE, VisualType.IMAGE)
+    )
+    block = GenerateLayout._format_composition_directive(spec)
+    assert "underlay contract" in block
+    assert "underlay_1" in block
+    assert ">= 80%" in block
+    assert "photo < underlay < text" in block
+    # the dead narrative hint must be gone
+    assert "or strong contrast, NOT by moving" not in block
+
+
+def test_text_on_photo_rule_without_underlay_demands_containment():
+    block = GenerateLayout._format_composition_directive(_hero_spec())
+    assert "underlay contract" not in block
+    assert "no decorative_image underlay" in block
+    assert "FULLY inside" in block
+
+
+def test_non_text_on_photo_relation_has_no_underlay_contract():
+    spec = _hero_spec()
+    spec.elements.append(
+        _el("underlay_1", SemanticType.DECORATIVE_IMAGE, VisualType.IMAGE)
+    )
+    spec.composition.relation = "stacked"
+    spec.composition.template_id = "photo-top-text-bottom"
+    block = GenerateLayout._format_composition_directive(spec)
+    assert "underlay contract" not in block
+    assert "relation 'stacked'" in block

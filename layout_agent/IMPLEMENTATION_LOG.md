@@ -4469,4 +4469,74 @@ gitignored）。
 
 ---
 
+## Step 64：三修聯動——拒答 fallback＋面積訊號統一＋underlay 合約（2026/06/12）
+
+**動機**：Step 63 收尾後使用者裁示「兩個一起修再重跑」（64a 拒答
+＋64b hero 合約執行力）；smoke 發現第三面牆後追加裁示「加第三修再
+smoke 再 live」。
+
+**64a 拒答調查與 fallback（generate_layout.py + test_generator_vision_channel.py）**：
+- 調查排除三個假設：非人臉（最慘背景是食物/包裝照、零拒答樣本是
+  純色）、非 MIME（ComposeSketch 同樣送錯 MIME 卻從不被拒）、非模
+  板相關（13/20 樣本中招含 text-only）。觸發=長 prompt＋攝影類背
+  景，只發生在 GenerateLayout；retry 重送相同 payload 是放大器。
+- 實作 informed degradation：`_looks_like_refusal`（strip/lower、
+  長度 ≤200、含拒答 marker）偵測到視覺拒答時丟棄背景圖改純文字重
+  試（退回 pre-step46 模式），一次性 budget+1 補償。
+- base_llm.py:80 的 `data:image/jpeg` MIME 錯誤與 prompt "face" 措
+  辭已排除為觸因，依使用者先前裁示維持不動。
+
+**64b 面積訊號統一＋worked example（generate_layout.py + test_generator_area_prior.py）**：
+- 根因：prompt 同時送兩個矛盾面積訊號——step60 prior（0.20–0.45）
+  vs directive large bucket（0.45–0.80），step63 hero 候選全停在
+  0.333=兩訊號的妥協點。`_format_area_hints` 改為 directive 存在
+  時全面讓位（OVERRIDES 措辭、點名 0.11/0.33 兩個壞習慣）。
+- `_format_composition_directive` 加自洽 WORKED EXAMPLE bbox（
+  bucket 中點面積、畫布長寬比 √mid 縮放、cell 中心置中、clamp 後
+  自驗合約才輸出）——step60 教訓：具體數學贏過敘事提示。
+
+**64c underlay 合約（第三修，使用者追加核准）**：
+- Smoke 發現新牆：照片變大後文字騎上去，觸發
+  `text_on_photo_no_underlay`（要求 decorative_image 蓋住騎照文字
+  bbox ≥80%）＋`text_on_busy_texture`。調查證實規則可滿足——
+  5f4f5e15 spec 有 `underlay_1`，Generator 卻把它停在空角落。
+- text-on-photo relation 規則由敘事提示改為具體合約：點名 spec 的
+  decorative_image id、寫明 ≥80% 門檻、給配方（underlay bbox=騎照
+  文字外擴 10–20%、z_index 夾在照片與文字之間）；spec 無 underlay
+  時改要求文字完全留在照片 bbox 內（防 busy_texture）。
+- 測試 +8（refusal 偵測/降級/雙拒答、directive 讓位/worked
+  example 自洽、underlay 合約三態）；全套件 316 passed / 12
+  skipped。
+
+**Smoke ×2（step64_smoke / step64b_smoke，targeted N=5：4 hero＋拒答王）**：
+第一輪證實 64a 全效（拒答 6 vs ~23、零 crash）、64b 半效（
+composition 合約能過）、新牆=underlay；第二輪（含 64c）hero 首次
+進 judge（5e7a3506 a1、5bbcb749 a2，皆輸 B）→ 放行 live。
+
+**Live N=20 結果（step64_live.log / step64_live_results.json）**：
+- **拒答 32 行（step63=140，-77%）**，fallback 開火 16 次、
+  GenerateLayout 零全滅——step63 被拒答殺死的 5bbcb749 三攻全有
+  候選。
+- **judge 曝光 25 輪（6→18→25）**，12/20 樣本至少判一次。
+- **text-on-photo 首次進 judge**：5e7a3506 兩輪被判（step62=0、
+  step63=0）——核心假設第一次真正上場。
+- **判決全敗**：design_layout A=0 B=25、acceptance 0/20（step63
+  的 tie 未重現；589d7bd9 這次唯一判決輪輸 B）。typography A=0
+  B=25、graphics B=18 tie=7、content B=8 tie=17、innovation tie
+  24。GT 式構圖進場後 Generator-bounded 結論不變且更強。
+- 剩餘 3 hero 死因各異：5bbcb749=mismatch×3（文字質心出格）、
+  5f4f5e15=off-photo CTA 踩花背景（三攻位置不動，step59 已知死
+  路）、5e6a3440=mismatch＋no_underlay 混合。
+- 模板分布 hero 4 / text-centered 12 / column-right 3 /
+  column-left 1（hero 樣本集合與 step62/63 一致）。
+
+**結論**：QC 漏斗已疏通（三步曝光 6→18→25、拒答噪音壓到 32），
+判決端紋風不動——「GT 式構圖能否贏 design_layout」答案首次出現
+且為否（樣本量 2 輪，尚小）。歸因注意：本步三修同輪，引用時
+用 per-sample 死因分解（上表）拆解，勿整體歸因單一修正。產物：
+`step64{_smoke,b_smoke,_live}.log`、`step64*_results.json`、
+`step64_smoke_ids.json`（log/results gitignored）。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/12*

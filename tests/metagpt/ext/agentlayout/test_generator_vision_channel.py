@@ -189,3 +189,75 @@ async def test_run_skips_image_when_bg_unavailable_even_with_vision_llm(tmp_path
     await gen.run(spec=spec, tree=tree, bg=bg_analysis, feedback=None)
     assert len(fake.calls) == 1
     assert fake.calls[0]["images"] is None
+
+
+# ============================================================
+# Step 64: vision refusal fallback
+# ============================================================
+
+
+class _RefusingVisionLLM(_FakeLLM):
+    """Refuses whenever an image is attached; answers normally text-only."""
+
+    async def aask(self, prompt: str, images: Optional[List[str]] = None, **kwargs: Any) -> str:
+        self.calls.append({"prompt_head": prompt[:80], "images": images, "kwargs": kwargs})
+        if images:
+            return "I'm sorry, I can't assist with that."
+        return self.canned_response
+
+
+class _AlwaysRefusingLLM(_FakeLLM):
+    """Refuses every call, with or without an image."""
+
+    async def aask(self, prompt: str, images: Optional[List[str]] = None, **kwargs: Any) -> str:
+        self.calls.append({"prompt_head": prompt[:80], "images": images, "kwargs": kwargs})
+        return "I'm sorry, I can't assist with that."
+
+
+def test_looks_like_refusal_detection():
+    f = GenerateLayout._looks_like_refusal
+    assert f("I'm sorry, I can't assist with that.")
+    assert f("  I cannot assist with that request. ")
+    assert not f(_CANNED_BATCH_JSON)
+    assert not f("")
+    # length cap: a long response containing a refusal phrase is not a refusal
+    assert not f("x" * 300 + " i'm sorry")
+
+
+@pytest.mark.asyncio
+async def test_run_drops_image_after_vision_refusal(tmp_path):
+    bg = tmp_path / "bg.png"
+    _bg_png_to_path(bg)
+    spec = _make_spec(bg_path=str(bg))
+    tree = _flat_tree(spec)
+    bg_analysis = default_white_background(spec.canvas)
+
+    fake = _RefusingVisionLLM(supports_vision=True, canned_response=_CANNED_BATCH_JSON)
+    gen = GenerateLayout()
+    object.__setattr__(gen, "llm", fake)
+
+    batch = await gen.run(spec=spec, tree=tree, bg=bg_analysis, feedback=None)
+    assert len(batch.candidates) == 1
+    assert len(fake.calls) == 2
+    assert fake.calls[0]["images"], "first call must attach the background image"
+    assert not fake.calls[1]["images"], "fallback call must be text-only"
+
+
+@pytest.mark.asyncio
+async def test_run_raises_when_text_only_fallback_also_refuses(tmp_path):
+    bg = tmp_path / "bg.png"
+    _bg_png_to_path(bg)
+    spec = _make_spec(bg_path=str(bg))
+    tree = _flat_tree(spec)
+    bg_analysis = default_white_background(spec.canvas)
+
+    fake = _AlwaysRefusingLLM(supports_vision=True, canned_response=_CANNED_BATCH_JSON)
+    gen = GenerateLayout()
+    object.__setattr__(gen, "llm", fake)
+
+    with pytest.raises(ValueError, match="could not produce a valid CandidatesBatch"):
+        await gen.run(spec=spec, tree=tree, bg=bg_analysis, feedback=None)
+    # 1 vision refusal (grants +1 budget) + 3 text-only attempts = 4 calls
+    assert len(fake.calls) == 4
+    assert fake.calls[0]["images"]
+    assert all(not c["images"] for c in fake.calls[1:])

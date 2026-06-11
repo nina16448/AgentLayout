@@ -517,6 +517,25 @@ Output carefully referenced "format example" in JSON format, nothing else.
 
 MAX_RETRIES: int = 3
 
+# Step 64 (2026-06-12): vision-channel safety refusals ("I'm sorry, I can't
+# assist with that.") have been background noise in every live run since
+# step58 (74/80/59/118/140 lines) and killed whole samples in step63. They
+# only occur on this action's long prompt + photographic backgrounds
+# (ComposeSketch and the Judge attach the same images and never refuse), and
+# resending the identical payload usually refuses again. Detection is
+# deliberately narrow: a genuine refusal is one short sentence, while a valid
+# batch response is thousands of characters of JSON, so the length cap
+# prevents false positives on candidate text content.
+_REFUSAL_MARKERS: Tuple[str, ...] = (
+    "i'm sorry",
+    "i am sorry",
+    "i can't assist",
+    "i cannot assist",
+    "can't help with",
+    "cannot help with",
+)
+_REFUSAL_MAX_LEN: int = 200
+
 
 # ============================================================
 # Action
@@ -579,23 +598,48 @@ class GenerateLayout(Action):
             )
 
         last_err: Optional[Exception] = None
-        for attempt in range(1, MAX_RETRIES + 1):
+        attempt = 0
+        budget = MAX_RETRIES
+        while attempt < budget:
+            attempt += 1
             if images:
                 rsp = await self.llm.aask(prompt, images=images)
             else:
                 rsp = await self.llm.aask(prompt)
+            if images and self._looks_like_refusal(rsp):
+                # Step 64: informed degradation -- drop the background image
+                # and fall back to the pre-step46 text-only mode (the numeric
+                # safe_zones summary is still in the prompt). Grant one
+                # replacement attempt so a refusal cannot burn the whole
+                # budget. The `images and` guard makes this fire at most once.
+                logger.warning(
+                    f"GenerateLayout attempt {attempt}/{budget}: vision refusal "
+                    f"detected ({rsp.strip()[:60]!r}); retrying without the "
+                    f"background image."
+                )
+                images = []
+                budget += 1
+                last_err = ValueError(f"vision refusal: {rsp.strip()[:120]}")
+                continue
             try:
                 return self._parse_response(rsp)
             except (ValueError, ValidationError) as err:
                 last_err = err
                 logger.warning(
-                    f"GenerateLayout attempt {attempt}/{MAX_RETRIES} failed: {err}"
+                    f"GenerateLayout attempt {attempt}/{budget} failed: {err}"
                 )
 
         raise ValueError(
             f"GenerateLayout: could not produce a valid CandidatesBatch after "
-            f"{MAX_RETRIES} attempts. Last error: {last_err}"
+            f"{attempt} attempts. Last error: {last_err}"
         )
+
+    @staticmethod
+    def _looks_like_refusal(rsp: str) -> bool:
+        s = (rsp or "").strip().lower()
+        if not s or len(s) > _REFUSAL_MAX_LEN:
+            return False
+        return any(marker in s for marker in _REFUSAL_MARKERS)
 
     @staticmethod
     def _render_bg_image(spec: DesignSpec) -> Optional[str]:
@@ -710,19 +754,72 @@ class GenerateLayout(Action):
                 f"  - focal photo area: width*height in [{lo:.2f}, {hi:.2f}] of canvas area "
                 f"= [{lo * cw * ch:,.0f} .. {hi * cw * ch:,.0f}] px^2 ('{comp.photo_size}')."
             )
+            # Step 64: step63 hero candidates stalled at area 0.33, just under
+            # the 'large' floor (0.45) -- abstract bounds alone do not move
+            # the model far enough, but a copyable bbox does (step60 lesson:
+            # concrete math beats narrative hints). Mid-bucket area, canvas
+            # aspect, centered on the target cell; emitted only when the
+            # clamped example still satisfies its own contract.
+            mid = (lo + hi) / 2.0
+            scale = mid**0.5
+            ex_w = round(cw * scale)
+            ex_h = round(ch * scale)
+            cell_cx = (xl + xr) / 2.0
+            cell_cy = (yt + yb) / 2.0
+            ex_left = int(round(min(max(cell_cx - ex_w / 2.0, 0), cw - ex_w)))
+            ex_top = int(round(min(max(cell_cy - ex_h / 2.0, 0), ch - ex_h)))
+            ex_cx = ex_left + ex_w / 2.0
+            ex_cy = ex_top + ex_h / 2.0
+            if xl <= ex_cx <= xr and yt <= ex_cy <= yb:
+                lines.append(
+                    f"  - WORKED EXAMPLE satisfying both bounds: left={ex_left}, "
+                    f"top={ex_top}, width={ex_w}, height={ex_h} (center in "
+                    f"{comp.photo_cell}, area {ex_w * ex_h / (cw * ch):.2f} of "
+                    f"canvas). Start from this shape; vary the rest of the "
+                    f"layout, not the photo's coarse size."
+                )
         if comp.text_cell:
             xl, yt, xr, yb = cell_bounds(comp.text_cell, cw, ch)
             lines.append(
                 f"  - the AREA-WEIGHTED center of ALL text elements combined must fall in "
                 f"x in [{xl:.0f}, {xr:.0f}], y in [{yt:.0f}, {yb:.0f}] (grid cell {comp.text_cell})."
             )
+        # Step 64 third fix: the old narrative hint ("protect readability with
+        # an underlay or strong contrast") never moved the model -- smoke
+        # showed it parking the spec's underlay in an empty corner while text
+        # rode the photo bare, failing text_on_photo_no_underlay every
+        # attempt. Step 59 proved retry feedback is a dead path for underlay
+        # instructions; step 60 proved generation-time concrete recipes work,
+        # so the contract is spelled out here, with the spec's actual
+        # decorative_image ids named.
+        underlay_ids = [
+            el.id
+            for el in spec.elements
+            if el.semantic_type == SemanticType.DECORATIVE_IMAGE
+        ]
+        text_on_photo_rule = (
+            "  - relation 'text-on-photo': text boxes must overlap the focal photo by "
+            ">= 30% of total text area. Place text ON the photo like designers do."
+        )
+        if underlay_ids:
+            ids = ", ".join(underlay_ids)
+            text_on_photo_rule += (
+                f"\n  - underlay contract (QC-enforced): every text riding the photo must "
+                f"sit on a decorative_image underlay covering >= 80% of that text's bbox. "
+                f"This spec provides: {ids}. Recipe: give the underlay the SAME bbox as "
+                f"the riding text expanded 10-20% per side, z_index between the photo and "
+                f"the text (photo < underlay < text). Do NOT park the underlay in an "
+                f"empty corner away from the text -- that fails QC."
+            )
+        else:
+            text_on_photo_rule += (
+                "\n  - this spec has no decorative_image underlay, so protect readability "
+                "with strong text/photo contrast and keep each riding text FULLY inside "
+                "the photo bbox -- text pixels hanging off the photo onto the busy "
+                "background fail QC."
+            )
         relation_rules = {
-            "text-on-photo": (
-                "  - relation 'text-on-photo': text boxes must overlap the focal photo by "
-                ">= 30% of total text area. Place text ON the photo like designers do; "
-                "protect readability with a decorative_image underlay or strong contrast, "
-                "NOT by moving the text off the photo."
-            ),
+            "text-on-photo": text_on_photo_rule,
             "stacked": (
                 f"  - relation 'stacked': the text mass and the photo center must be "
                 f"vertically separated by > {ch / 6:.0f}px (1/6 canvas height), with "
@@ -760,8 +857,29 @@ class GenerateLayout(Action):
         ]
         if not photo_ids:
             return "None"
-        lo, hi = PHOTO_AREA_TARGET
         id_lines = "\n".join(f"  - {pid}" for pid in photo_ids)
+        comp = spec.composition
+        if comp is not None and comp.photo_size:
+            # Step 64: the art director's size bucket is the binding range.
+            # Emitting the historical 0.20-0.45 prior alongside a 'large'
+            # directive (0.45-0.80) gave the LLM two contradictory area
+            # signals -- step63 hero candidates landed on 0.33, the
+            # compromise point just below the bucket floor -- so the prior
+            # defers entirely to the directive.
+            from metagpt.ext.agentlayout.tools.composition_templates import (
+                SIZE_BUCKET_RANGES,
+            )
+
+            lo, hi = SIZE_BUCKET_RANGES[comp.photo_size]
+            return (
+                f"The composition directive OVERRIDES the historical prior: the "
+                f"focal photo's\narea_ratio MUST land in [{lo:.2f}, {hi:.2f}] "
+                f"('{comp.photo_size}', QC-enforced).\nDo NOT default to a "
+                f"1/3 x 1/3 tile (0.11) or a 0.33 block -- both fail the\n"
+                f"directive. Photo elements:\n"
+                f"{id_lines}"
+            )
+        lo, hi = PHOTO_AREA_TARGET
         return (
             f"Designer ground truths (N=1,902 Crello layouts) size non-background\n"
             f"photos at area_ratio median {PHOTO_AREA_GT['p50']:.2f}, upper quartile "
