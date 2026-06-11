@@ -28,6 +28,7 @@ from metagpt.ext.agentlayout.schema import (
     HardConstraintRule,
     LayoutElement,
     SemanticType,
+    VisualType,
 )
 
 
@@ -126,6 +127,14 @@ class ViolationType(str, Enum):
     # one region, entire canvas bands left blank).
     CANVAS_COVERAGE_LOW = "canvas_coverage_low"
     DEAD_BAND_EXCESSIVE = "dead_band_excessive"
+    # Step 59 (2026-06-11): Rea (Sobel gradient under text) is the only
+    # experiment.md geometric axis where AL trails designer GT (0.0141 vs
+    # 0.0066, ~2x). Root cause: safe zones are saliency-driven, not
+    # texture-driven. GT-calibrated like Step 57 (degradation guard, not an
+    # aesthetic rule): all 20 GT layouts pass at T=0.065 (GT worst exposed
+    # element 0.0454 + 0.02 margin; 8/20 GT layouts shield every text with
+    # an underlay).
+    TEXT_ON_BUSY_TEXTURE = "text_on_busy_texture"
 
 
 class Violation(BaseModel):
@@ -182,6 +191,8 @@ def check_candidate(
     violations.extend(_check_primary_in_safe_zone(candidate, spec, bg))
     # Step 57 (2026-06-11): coverage / dead-space degenerate-layout guardrails.
     violations.extend(_check_canvas_coverage(candidate, spec))
+    # Step 59 (2026-06-11): text on busy background texture (Rea deficit).
+    violations.extend(_check_text_on_busy_texture(candidate, spec))
     return CheckResult(
         candidate_id=candidate.candidate_id,
         passed=not violations,
@@ -922,6 +933,135 @@ def _check_canvas_coverage(candidate: Candidate, spec: DesignSpec) -> List[Viola
 
 
 # ----- end Step 57 rules ----------------------------------------------------
+
+
+# ----- Step 59 rule (2026-06-11) ---------------------------------------------
+
+TEXT_GRADIENT_MAX: float = 0.065
+"""Step 59: max mean normalised Sobel background gradient under a text
+element's *exposed* pixels (pixels not shielded by a decorative_image
+underlay). GT-calibrated degradation guard (Step 57 SOP, not an aesthetic
+rule): all 20 designer GT layouts pass — worst exposed GT element is
+0.0454, threshold = GT max + 0.02 margin (Step 58 lesson: gates hugging
+the GT max kill GT-style solutions). At 0.065 the rule catches 23%
+(74/327) of replayed live candidates with exposed text, including exactly
+the samples driving the Rea gap. Convention matches
+``evaluation.sega_metrics.metric_readability``: the gradient map is
+normalised by the image's own max and underlay bboxes zero out text
+pixels (an underlay shields the text from texture, which is the designer
+GT's dominant defense — 8/20 GT layouts shield every text element)."""
+
+_BG_GRADIENT_CACHE: Dict[Tuple[str, int, int], object] = {}
+"""(background_asset_ref, canvas_w, canvas_h) -> normalised gradient ndarray,
+or None when the image could not be loaded. One Sobel per sample, shared
+across every candidate/batch QC call for that spec."""
+
+
+def _bg_gradient_map(bg_ref: str, cw: int, ch: int):
+    key = (bg_ref, cw, ch)
+    if key not in _BG_GRADIENT_CACHE:
+        try:
+            import cv2
+            import numpy as np
+            from PIL import Image
+
+            from metagpt.ext.agentlayout.evaluation.sega_metrics import (
+                _sobel_gradient_normalised,
+            )
+
+            arr = np.array(Image.open(bg_ref).convert("RGB"))
+            if arr.shape[1] != cw or arr.shape[0] != ch:
+                arr = cv2.resize(arr, (cw, ch))
+            _BG_GRADIENT_CACHE[key] = _sobel_gradient_normalised(arr)
+        except Exception:
+            # Missing/corrupt bg image or optional deps (cv2) unavailable:
+            # skip the check rather than crash the QC pipeline (step-12
+            # "never crash" philosophy, same as resolve_background).
+            _BG_GRADIENT_CACHE[key] = None
+    return _BG_GRADIENT_CACHE[key]
+
+
+def _clip_box_px(el: LayoutElement, cw: int, ch: int) -> Optional[Tuple[int, int, int, int]]:
+    xl = max(0, int(round(float(el.left))))
+    yl = max(0, int(round(float(el.top))))
+    xr = min(cw, int(round(float(el.left) + float(el.width))))
+    yr = min(ch, int(round(float(el.top) + float(el.height))))
+    if xr <= xl or yr <= yl:
+        return None
+    return xl, yl, xr, yr
+
+
+def _check_text_on_busy_texture(candidate: Candidate, spec: DesignSpec) -> List[Violation]:
+    """Flag text sitting on busy background texture without an underlay shield.
+
+    Element classification mirrors the Rea metric / Step 59 calibration (NOT
+    ``TEXT_SEMANTIC_TYPES``): every ``visual_type == text`` element counts as
+    text — both live layouts the calibration caught were CTA buttons, which
+    ``TEXT_SEMANTIC_TYPES`` would miss. ``decorative_image`` elements are
+    underlays whose bbox shields any text pixels beneath; full-canvas
+    (>95% area) elements act as background and are ignored.
+    """
+    bg_ref = spec.canvas.background_asset_ref
+    if not bg_ref:
+        return []
+    cw = max(1, int(round(float(spec.canvas.width))))
+    ch = max(1, int(round(float(spec.canvas.height))))
+    spec_by_id = {e.id: e for e in spec.elements}
+
+    text_boxes: List[Tuple[str, Tuple[int, int, int, int]]] = []
+    underlay_boxes: List[Tuple[int, int, int, int]] = []
+    for el in candidate.elements:
+        spec_el = spec_by_id.get(el.id)
+        if spec_el is None:
+            continue
+        if spec_el.semantic_type == SemanticType.BACKGROUND_IMAGE:
+            continue
+        if float(el.width) * float(el.height) > 0.95 * cw * ch:
+            continue
+        box = _clip_box_px(el, cw, ch)
+        if box is None:
+            continue
+        if spec_el.semantic_type == SemanticType.DECORATIVE_IMAGE:
+            underlay_boxes.append(box)
+        elif spec_el.visual_type == VisualType.TEXT:
+            text_boxes.append((el.id, box))
+    if not text_boxes:
+        return []
+
+    grad = _bg_gradient_map(bg_ref, cw, ch)
+    if grad is None:
+        return []
+    import numpy as np
+
+    out: List[Violation] = []
+    for el_id, (xl, yl, xr, yr) in text_boxes:
+        mask = np.zeros((ch, cw), dtype=bool)
+        mask[yl:yr, xl:xr] = True
+        for uxl, uyl, uxr, uyr in underlay_boxes:
+            mask[uyl:uyr, uxl:uxr] = False
+        if not mask.any():
+            # Fully shielded by an underlay: trivially readable, skip.
+            continue
+        g = float(grad[mask].mean())
+        if g > TEXT_GRADIENT_MAX:
+            out.append(
+                Violation(
+                    type=ViolationType.TEXT_ON_BUSY_TEXTURE,
+                    targets=[el_id],
+                    detail=(
+                        f"text '{el_id}' sits on busy background texture "
+                        f"(mean gradient {g:.4f} > {TEXT_GRADIENT_MAX}); "
+                        "place an underlay shape beneath this text to shield "
+                        "it (designers fully shield text with underlays in "
+                        "8/20 reference layouts) or move it to a flatter "
+                        "background region"
+                    ),
+                )
+            )
+    return out
+
+
+# ----- end Step 59 rule -------------------------------------------------------
 
 
 def _check_text_contrast(candidate: Candidate, spec: DesignSpec) -> List[Violation]:

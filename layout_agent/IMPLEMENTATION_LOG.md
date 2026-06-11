@@ -4157,6 +4157,52 @@ blind innovation cand 50% 互相印證；(4) 13/19 張是 QC 退件版面
 （均 gitignored）。程式改動：新增 `step58c_sega_from_log.py`、
 `step21_phaseb_eval.py` 加 `--render-prefix`。
 
+#### Step 59 — 文字下方梯度 QC 規則 TEXT_ON_BUSY_TEXTURE（GT 校準 T=0.065）（2026/06/11）
+
+**動機**：Step 58c 確認 Rea（文字下 Sobel 梯度）是 experiment.md 六何指
+標中 AL 唯一明確落後軸（0.0141 vs GT 0.0066，~2×）。根因：safe_zones
+是 saliency 導向、非 texture 導向——saliency 低的角落仍可能梯度很高。
+
+**GT-first 校準（`step59_text_gradient_calibration.py`，零 LLM）**：
+重放 step56/58/58b 三份 oracle log 全部 generator batch（N=590 候選，
+327 含曝露文字）+ 20 張 step13 設計師 GT。Per-element 粒度，與
+`metric_readability` 同約定（梯度圖以影像自身 max 正規化、underlay
+bbox 把文字像素歸零）。發現：**8/20 GT 版面把每個文字元素都用 underlay
+完全遮蔽**（設計師的主要紋理防禦是「遮蔽」不是「閃避」）；曝露的 12 張
+worst-element 範圍 0.0000–0.0454（median 0.0040）。門檻 = GT max
+0.0454 + 0.02 餘裕 = **0.065**（Step 57 SOP：退化防護非審美規則；
+Step 58 教訓：貼著 GT max 會誤殺 GT 式解）——GT 20/20 過，抓
+74/590（13%；曝露候選的 23%），含 step58b 最終版面 2/18（5f4f5e15
+cta_1 0.0975、5f56075f cta_1 0.0684），恰好就是 Rea 最差樣本（互證）。
+
+**Production 規則（`tools/quality_checker.py`）**：新 ViolationType
+`TEXT_ON_BUSY_TEXTURE` + `_check_text_on_busy_texture`。設計要點：
+(1) 元素分類鏡像 Rea 指標而**非** `TEXT_SEMANTIC_TYPES`——
+`visual_type==text` 全算文字（**含 CTA**；校準抓到的兩個最終版面違規
+都是 cta_1，semantic 白名單會漏）、`decorative_image` 為 underlay 遮蔽
+盒、>95% 畫布面積視為背景跳過；(2) 背景自載：從
+`spec.canvas.background_asset_ref` 讀圖，模組級 `(path,w,h)` 梯度快取
+（每 sample 一次 Sobel），cv2/numpy/PIL 函式內 import、載入失敗靜默跳
+過（step-12 never-crash）——因此 **`filter_valid`（Generator 內部 QC
+迴圈）不需 bg 參數也會啟動**；(3) violation detail 依用戶決策明確指向
+GT 式解法：「place an underlay shape beneath this text to shield it …
+or move it to a flatter background region」。oracle gate
+（step41 `cov_viols` tuple）同步加入，與 Step 57 guardrails 同退件路
+徑。**不動 Generator prompt**（Step 49/58 已證 prompt-only 無預防力）。
+
+**驗證**：新測試 `test_quality_checker_text_gradient.py` 8 項（平坦
+pass／busy 區 fail＋detail 含 underlay 指引／busy 圖的平坦區 pass＝
+texture-local／underlay 遮蔽 pass／CTA 受檢／無 bg ref 跳過／缺檔不
+crash／門檻 pin 0.065），套件 277 passed（基線 269+8）零回歸。一致性
+（`step59b_qc_rule_consistency.py`）：production 規則重放三 log =
+**74/590 與校準腳本完全一致**（同樣本、同梯度值到第 4 位小數）。
+
+**誠實預期**：第 4 條 gate 規則，Step 58 已示範打地鼠風險——live
+acceptance 大概率持平；差異化賭注在 detail 直接給 underlay 解法，
+retry 能否真的學會遮蔽待 live N=20 驗證（未跑）。產物：
+`step59_text_gradient_calibration.{py,json}`、
+`step59b_qc_rule_consistency.py`。
+
 ---
 
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/11*

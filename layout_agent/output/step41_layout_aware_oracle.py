@@ -583,10 +583,18 @@ async def _process_sample(client: AsyncOpenAI, sample_id: str) -> Dict:
         # dead-band guardrails never gated step58. They join the gate here;
         # SAFE_ZONE_GATE (Step 53 ablation flag) keeps affecting only the
         # safe-zone violations.
+        # Step 59 (2026-06-11): TEXT_ON_BUSY_TEXTURE joins the gate alongside
+        # the Step 57 guardrails (GT-calibrated T=0.065, detail directs the
+        # Generator toward underlay shielding -- the designer-GT solution).
         cov_viols = [
             v
             for v in qc.violations
-            if v.type in (ViolationType.CANVAS_COVERAGE_LOW, ViolationType.DEAD_BAND_EXCESSIVE)
+            if v.type
+            in (
+                ViolationType.CANVAS_COVERAGE_LOW,
+                ViolationType.DEAD_BAND_EXCESSIVE,
+                ViolationType.TEXT_ON_BUSY_TEXTURE,
+            )
         ]
         if sz_viols and not SAFE_ZONE_GATE:
             # Step 53 ablation: log the would-be rejection, judge anyway.
