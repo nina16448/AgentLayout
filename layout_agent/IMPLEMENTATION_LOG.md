@@ -4035,6 +4035,76 @@ background_image 的 bbox）：
 design_layout 的實際影響（24/70 在 reject-retry loop 裡會觸發重生成，
 效果須實測）。
 
+#### Step 58 — coverage QC live 驗證：機制成功、效果 negative（Generator-bounded 第五次確認）
+
+**動機**：Step 57 的 guardrails 只做過離線重放驗證，須 live N=20 +
+blind judge 實測對 acceptance / blind design_layout 的影響。
+
+**過程中發現的 gate filter bug**：第一次 live 跑（step58）後發現
+`output/step41_layout_aware_oracle.py` 的 QC gate 只挑
+`PRIMARY_OUTSIDE_SAFE_ZONE`（`sz_viols = [v ... if v.type == ...]`），
+`check_candidate` 回報的新 violation 被 filter 靜默丟掉——step58 實際
+測到的是「僅 prompt rule 7、無 in-loop gating」。修正：`cov_viols`
+（CANVAS_COVERAGE_LOW / DEAD_BAND_EXCESSIVE）併入 `gate_viols` 一起
+退件；Step 53 的 `SAFE_ZONE_GATE` ablation flag 只影響 safe-zone 部分
+（coverage 規則是退化防護、無 ablation 需求）。重跑為 step58b。
+
+**三條件對照（live N=20，blind judge 含 GT-vs-GT control）**：
+
+| 指標 | step56（無規則） | step58（僅 prompt） | step58b（prompt+gate） |
+|---|---|---|---|
+| 候選幾何違規率（重放） | 24/70（34%） | 21/80（26%） | 26/75（35%） |
+| 新規則 in-loop 退件 | 0 | 0（filter bug） | 6（dead×4、cov+dead×2） |
+| 退件後下一 attempt 修好被點名問題 | — | — | 3/3，但全改踩 safe-zone |
+| QC acceptance | 0/20 | 1/20 | 0/20 |
+| 進到 judge 的 round | — | 28 | 18 |
+| blind overall cand 勝 | 11.1%（4/36） | 10.0%（4/40） | 2.6%（1/38）⚠ |
+| blind design_layout | 13.9% | 12.5% | 2.6% ⚠ |
+| blind graphics cand 勝 | 27.8% | 35.0% | 28.9% |
+| blind innovation cand 勝 | — | 30% | 50% |
+| GT-vs-GT control | — | 8/8 tie | 9/9 tie |
+
+⚠ blind 協定假象：audit 腳本取「最後一次 attempt」render（`pngs[-1]`），
+step58b 有 13/19 樣本最後一張是 QC 退件版面（gate 越嚴、最後一張越可能
+是失敗品），step58 是 8/20——step58b 的 blind 下滑不能解讀為品質倒退。
+
+**結論**：
+1. **機制驗證 ✅**：gate 修正後新規則真的開火（6 次）、觸發 retry、
+   Generator 會修被點名的問題（3/3 修好 coverage/dead-band）。
+2. **效果驗證 ✗（honest negative result）**：acceptance 0/20 無提升。
+   失敗模式是**打地鼠**：修好 dead-band 就踩 safe-zone、反之亦然
+   （5f9917ea：cov+dead → sz → dead_band），3 attempt 預算被 QC retry
+   互相消耗（judged rounds 28→18）。
+3. **prompt rule 7 無預防力**：生成端違規率 34%→26%→35%，step58 的
+   下降是 run 間雜訊——與 Step 49「prompt-only 上限」一致。
+4. **目視三組 attempt 鏈的深層發現**：
+   - 5f9917ea a2 = 大橫幅壓畫面中央，**與 GT 概念幾乎相同**，卻被
+     safe-zone gate 退件——設計師正解（橫幅壓在披薩上）違反我們的
+     safe-zone 規則，是 Step 52「GT 70% 被 gate 退」的具象案例；
+     兩個 QC 規則的可行解交集太小，Generator 被夾死。
+   - 5e6a3440 / 5fbfbd0f：結構與 GT 相同但**尺寸膽怯（timid sizing）**
+     ——GT 照片佔 ~75% 畫面、候選只敢放 ~25%；GT 文字盒大而壓主體、
+     候選一律縮小避讓。這比「coverage 太低」更精確描述 ~41 pts 差距
+     的本體，也解釋為何 coverage QC 抓得到症狀治不了病。
+5. **Generator-bounded 第五次確認**：QC 能偵測退化、能給可操作回饋，
+   但 Generator 缺「同時滿足多重空間約束 + 大膽放大元素」的構圖能力。
+
+**雜訊註記**：589d7bd9（step58 唯一 acceptance）在 step58b
+generate_failed×3（生成期 refusal/validation 失敗，非 QC），故 blind
+N=19；59280150 / 5dad776a 的 vision refusal 間歇出現（已知「先不修」）。
+
+**產物**（`layout_agent/output/`，gitignored）：`step58{,b}_live_N20.log`、
+`step58{,b}_live_results.json`、`step58{,b}_blind_judge{,.log}`、
+`step58{,b}_live_crello_*.png`。程式改動：`step41_layout_aware_oracle.py`
+gate 修正（committed）。
+
+**下一步候選**：(a) 對「打地鼠」——讓 QC 退件 feedback 一次列出**全部**
+未滿足約束（目前 retry 只看到當次違規），或加大 retry 預算；(b) 對
+「尺寸膽怯」——量化 GT vs candidate 的元素面積比分布，評估是否加
+最小主元素面積 hint（須照 Step 57 方法先 GT 校準）；(c) safe-zone gate
+與 GT 風格衝突（5f9917ea a2 誤殺）併入 Step 52 結論，考慮 safe-zone
+規則對「帶 underlay 的文字」放寬（GT 慣用橫幅壓主體）。
+
 ---
 
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/11*

@@ -578,6 +578,16 @@ async def _process_sample(client: AsyncOpenAI, sample_id: str) -> Dict:
         # the next attempt fixes the spatial placement first.
         qc = check_candidate(cand, spec, bg=bg)
         sz_viols = [v for v in qc.violations if v.type == ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE]
+        # Step 58b (2026-06-11): the original Step 43 filter above silently
+        # dropped every other violation type, so the Step 57 coverage /
+        # dead-band guardrails never gated step58. They join the gate here;
+        # SAFE_ZONE_GATE (Step 53 ablation flag) keeps affecting only the
+        # safe-zone violations.
+        cov_viols = [
+            v
+            for v in qc.violations
+            if v.type in (ViolationType.CANVAS_COVERAGE_LOW, ViolationType.DEAD_BAND_EXCESSIVE)
+        ]
         if sz_viols and not SAFE_ZONE_GATE:
             # Step 53 ablation: log the would-be rejection, judge anyway.
             print(f"    QC (gate OFF): {len(sz_viols)} violation(s) logged, judging anyway")
@@ -590,26 +600,27 @@ async def _process_sample(client: AsyncOpenAI, sample_id: str) -> Dict:
                 }
             )
             sz_viols = []
-        if sz_viols:
-            print(f"    QC: {len(sz_viols)} primary_outside_safe_zone violation(s) -> retry without judging")
+        gate_viols = sz_viols + cov_viols
+        if gate_viols:
+            kinds = sorted({v.type.value for v in gate_viols})
+            print(f"    QC: {len(gate_viols)} violation(s) ({', '.join(kinds)}) -> retry without judging")
             feedback = AestheticFeedback(
                 common_issues=(
-                    "QC rejected this candidate BEFORE the pairwise judge: "
-                    "primary content was placed outside every safe_zone. "
+                    "QC rejected this candidate BEFORE the pairwise judge. "
+                    "Fix every violation listed below before anything else. "
                     "The safe_zones JSON below the layout JSON in the next "
                     "Generator prompt tells you exactly where the saliency-"
-                    "low regions are. Move every primary element inside "
-                    "one of those zones.\n"
-                    + "\n".join(f"  * {v.detail}" for v in sz_viols)
+                    "low regions are.\n"
+                    + "\n".join(f"  * {v.detail}" for v in gate_viols)
                 ),
-                suggestions=[v.detail for v in sz_viols],
+                suggestions=[v.detail for v in gate_viols],
             )
             rounds_log.append(
                 {
                     "round": round_idx,
                     "attempt": attempt,
-                    "status": "qc_rejected_primary_outside_safe_zone",
-                    "qc_violations": [v.model_dump() for v in sz_viols],
+                    "status": "qc_rejected_" + "+".join(kinds),
+                    "qc_violations": [v.model_dump() for v in gate_viols],
                 }
             )
             continue
