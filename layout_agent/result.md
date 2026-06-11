@@ -2,7 +2,7 @@
 
 > 本文件為**獨立**版：不需閱讀 `README.md` 或 `live_runs_table.md` 即可理解每個實驗的動機、方法、數值與誠實定調。供論文 results / limitations / honesty 章節直接取用。
 > 數值 source-of-truth：`layout_agent/live_runs_table.md`、`layout_agent/output/step13_sota_winrate_results.json`、`layout_agent/output/step11_winrate_results.json`、`layout_agent/output/step23_phasea_full.json`、`layout_agent/output/step23_phaseb_full.json`、`layout_agent/output/step23_phaseb_designer_gt_full.json`。
-> 最後更新：2026-05-27（Step 23/23b N=1,897 完整 Crello test split 完成）。
+> 最後更新：2026-06-12（補錄 Step 30–64 oracle-loop / QC / renderer / 構圖師實驗鏈；§2 後半全部為新 judge schema 鏈）。
 >
 > ⚠️ **Step 30 Baseline 警示（2026-06-09）：** in-pipeline Aesthetic Judge 已從 4 軸 0-25 / total 0-100 改為 COLE 5 軸 1-10 / total 5-50（`ACCEPT_THRESHOLD` 75 → 35）。本文件目前所有 Phase A/B/win-rate 數值都是 **pre-Step 30 schema 產出**（git tag `step29-baseline-pre-judge-migration`、commit `0956f2bb`），跟 Step 30+ 之後的新 trace JSON / Phase B 結果**不可直接比較**。Step 30 動機與設計見 `IMPLEMENTATION_LOG.md`「Step 30」一節；若要跑新 baseline 並 cross-compare，需重跑 Phase B（~$30 / N=100）。
 
@@ -644,6 +644,302 @@
 
 ---
 
+> ⚠️ **以下 Step 30–64 全部使用新 judge schema（COLE 5 軸 1-10）與 oracle pairwise 協定，數值與上方 Step 29 以前的 Phase A/B/win-rate 不可直接比較**（見頁首 Step 30 Baseline 警示）。原始數據：`layout_agent/output/step3x..step64` 各 log / results JSON（gitignored）；完整技術細節見 `IMPLEMENTATION_LOG.md` 對應條目。
+
+### Step 30 — in-pipeline Judge 遷移 COLE 5 軸（2026-06-09）
+
+**動機**：自製 4 軸 0-25 / total 0-100 rubric 與 COLE/SEGA 文獻不對齊，loop 內 Judge 與 Phase B 評估用不同尺度。
+
+**方法**：judge schema 改 COLE 5 軸 1-10（total 5-50）、`ACCEPT_THRESHOLD` 75 → 35。pre-migration 基線封存於 git tag `step29-baseline-pre-judge-migration`（commit `0956f2bb`）。
+
+**誠實定調**：純 schema 遷移、無品質 claim；唯一後果是 Step 30+ 的 trace / Phase B 數值與本文件前半不可直比（頁首警示即此事）。
+
+---
+
+### Step 31 — Refinement loop 不會 climb：root-cause + best-so-far guard（N=5，2026-06-09）
+
+**結果**：0/5 accept、mean best-so-far 34.8 / threshold 35；唯一過 threshold 的 5e72 是 **round 1 cold-start 拿 38**，後續 3 輪 refinement 無法重現。
+
+**四個 root cause**：(1) COLE rubric 飽和於 Crello-grade（CR=7、IO=6 跨樣本一致、reward gradient ≈ 0）；(2) Judge noise（~1-2 點）> signal gap（1-3 點）；(3) suggestion→action 鬆耦（動 1 元素破壞別軸）；(4) Markov-chain 退步——best-so-far guard 修掉後 mean +0.8（噪音內）。
+
+**誠實定調**：loop「不會往上爬」是結構性，guard 只止血不增益。
+
+---
+
+### Step 32 — Phase B head-to-head：loop 真實落後 cold-start（N=5，2026-06-09）
+
+**結果**：同 5 樣本同輪 COLE GPT-4V 評分——cold-start Smean **6.10** vs live-loop **5.75**、Δ=**−0.35**；3/5 退步、1/5 改善、1/5 持平；最大退軸 CR −0.80。
+
+**誠實定調**：對齊 Judge 的 refinement loop 不只沒幫忙、還略傷。Source：`step32_phaseb_compare.json`。
+
+---
+
+### Step 33 — COLE rubric 寫進 Generator prompt：+0.05（噪音內）（N=5，2026-06-09）
+
+**結果**：rubric 當生成 prior（非 Judge filter），PRE33 6.15 vs POST33 6.20、Δ=**+0.05**、IO 軸完全不動。
+
+**誠實定調**：「rubric 位置不是 bottleneck」初步證據。Source：`step33_phaseb_compare.json`。
+
+---
+
+### Step 34 — Oracle GT-guided pairwise refinement：決定性 Generator-bounded 證據（N=5 → N=20，2026-06-09）
+
+**方法**：K=1 + pairwise judge vs Crello designer GT + 3 retry——給 Generator 最強 reward signal（直接跟真 GT 比、含 axis-level reason feedback）。
+
+**結果**：N=5 全滅（0 commit、15/15 verdict B=GT 勝）。N=20 robust 驗證：**2/20（10%）ok**、60 verdicts 中 GT 勝 55（91.7%）；真正贏 GT 的 verdict 僅 **2/60（3.3%）**（`592c2135` r1a2、`589d7bd9` r1a1），另 2 個 A-win 是 tie-break-by-prompt-rule、不算實質。
+
+**誠實定調**：bottleneck 在 Generator（gpt-4o zero-shot）、不在 Judge 設計。Oracle 在 inference time 用了 GT＝upper-bound ablation，**不能與 SEGA/PosterO 數字並列**，放 limitation/ablation section。
+
+---
+
+### Step 35/36/36b — 視覺工程：5 條 QC 規則 + metadata-leak fix，成功率 10%→20%（N=20，2026-06-09）
+
+**動機**：逐張看完 Step 34 的 17 個失敗 PNG，發現多為具體 fixable bug（41% underlay 過大、18% Analyst 把 Crello 目錄描述當 title、18% asset 利用不當、12% 配色錯）——**Generator-bounded 結論部分撤回**。
+
+**方法**：5 條新 QC 規則（`TEXT_OBSCURED_BY_OVERLAY`、`LOW_TEXT_CONTRAST`、`DECORATIVE_IMAGE_OVERSIZED`、`TITLE_UNDERSIZED`、`TITLE_PERIPHERAL`）＋ metadata-leak prompt fix（visible heading 必須來自 text snippets）。
+
+**結果**：2/20（10%）→ 3/20（15%）→ **4/20（20%）**，doubled；GT 勝率 91.7%→86.2%。清楚 win：5e72 [B,B,B]→[A,A,A]，標題正確用 text snippet 而非 metadata。4 個 success case（5e8d/592c/589d/5e72）可當 showcase figure。
+
+---
+
+### Step 36c — N=100 robust 驗證 + title peripheral top-band（2026-06-09）
+
+**結果**：Step 35/36 規則鏈在 **N=100** 重測 = **14%（95% CI 7–21%）**；N=20 的 20% 在大樣本下回落但量級維持；14 個 success sample 可作 showcase。`TITLE_PERIPHERAL` 加 top-band 豁免（標題貼頂是合法設計）。
+
+**誠實定調**：14% 是 charitable judge 下的數字——下一步 Step 37 證明其中多數是 tie-break 偽影。
+
+---
+
+### Step 37 — strict judge + Tier 1 QC 收緊：14%→2%（N=100，2026-06-09）
+
+**動機**：逐張檢查發現 N=100 的 14 個「成功」中 9/14（64%）是 pairwise prompt「prefer Image A by default」tie-break 規則造成的虛胖。
+
+**方法**：P1 Generator prompt 加 5 條 layout constraints；P2 tie-break 反轉（prefer B by default、A 只在 specific objective improvement 才贏）；P3 QC `TEXT_OBSCURED` 閾值 0.30→0.20＋same-z 觸發；P4 sequential text y-order。
+
+**結果**：ok 14/100 → **2/100（2%）**；GT 勝 90.7%→98.7%。
+
+**誠實定調**：**2% 才是 paper 該報的數字**——14% 是 LLM judge 校準偽影。
+
+---
+
+### Step 38 — 失敗 checklist + CoT 絕對打分：反向失敗（N=5，2026-06-09）
+
+**結果**：「列 flag 再算分」（`score = 10 − len(flags)`）讓 Smean 從 6.10 **反向衝到 8.80**——LLM 用 hedging 詞描述問題但只勾 1-2 個 flag，charitable bias 未被突破。
+
+---
+
+### Step 39 — J5/J6/J7 校準絕對打分：終於跟視覺一致（2026-06-09）
+
+**方法**：公式倒轉（從中點 5 出發、`5 + |strengths| − |flags|`）＋明確 anchor（award 9-10 / Crello GT 5-6 / AL typical 3-4 / broken 1-2）＋反 hedging（用模糊詞就必須勾 flag）。
+
+**結果（三組數字、各自語意）**：(1) 同 5 樣本三方對照：原 COLE 6.10 / Step 38 8.80 / **Step 39 3.90**，且樣本級 ranking 與視覺判斷一致；(2) GT anchor check：5 個 designer preview Smean **4.75**（calibration 健康）；(3) N=20 cold-start Smean **3.73**；(4) 同 5 ids head-to-head：GT 4.75 vs AL 3.75、**Δ=−1.00**。
+
+**誠實定調**：先前「Phase B 6.10 vs 6.6 ≈ noise」站不住——校準後 **AL 落後 designer GT 約 1.0 點**，原 0.5 點是 mean-regression 偽影；Step 39 保留 ordinal 訊號、揭穿 magnitude 失真。
+
+---
+
+### Step 40 — Flag-aware 結構化 reject feedback：0/20、whack-a-mole（2026-06-09）
+
+**方法**：Judge 逐軸列 closed 21-flag catalog，reject 時把 unique-to-A flag 翻成 concrete action 餵 Generator——feedback specificity 的上界測試。
+
+**結果**：**0/20 ok、60/60 verdict 全敗 GT**。Trace 顯示 whack-a-mole：核心 flag（composition_unbalanced 等）3 次重生都消不掉、還冒新 flag。
+
+**誠實定調**：feedback channel 的 specificity 不是 bottleneck，Generator 本身做不到。
+
+---
+
+### 八實驗收斂結論（Step 20b→30→31→32→33→34→37→40，paper main finding）
+
+| Step | 假設 | 結果 |
+|---|---|---|
+| 20b | refinement loop A/B controlled | 無 lift |
+| 30 | COLE 5-axis Judge alignment | 無 lift |
+| 31 | best-so-far guard | mean +0.8 noise |
+| 32 | Phase B loop vs cold | loop **−0.35** |
+| 33 | rubric in Generator prompt | +0.05 noise |
+| 34 | oracle pairwise vs GT | 10%（charitable judge） |
+| 37 | strict judge + Tier 1 QC | **2%**（校準後） |
+| 40 | flag-aware structured feedback | **0%**（whack-a-mole） |
+
+**Main numbers**：strict pairwise N=100 = **2%**；calibrated absolute Smean = **3.73 AL vs 4.75 GT（Δ=−1.0）**。八實驗逐一消除 alternative explanation（judge alignment / Markov regression / rubric 位置 / tie-break bias / feedback specificity），收斂於 **gpt-4o zero-shot Generator 在 Crello commercial-design band 的本質能力上界**。
+（後註：此結論其後被 Step 47 發現的 render confound 要求重審，並在 Step 48 去 confound 後重新成立。）
+
+---
+
+### Step 41–46 — GT-anchored refinement 工具鏈（commit `7ee833f1`，2026-06-10）
+
+單一 commit、無逐步 log：`place_in_bbox`（QC 退件自動回填）、typography 決策通道、**Generator vision channel**（Generator 直接看渲染後背景圖）。Step 46 smoke 撞 21 次 LLM 安全拒答——後由 Step 47 確認與 render confound 連動（修正後該 smoke 拒答歸零，但拒答自 Step 58 起以背景噪音形式回歸，見 Step 62 更正）。細節以 IMPLEMENTATION_LOG Step 47/48 條目內的引用為準。
+
+---
+
+### Step 47 — 三項 render/data-channel confound 修正：Generator-bounded 需重審（2026-06-10）
+
+**發現的三個 confound**：(1) **composite background plates**——17.3% 樣本有多張背景 plate、舊管線只渲染第一張（Generator/Judge 看到的背景不完整）；(2) **字型四方不一致**——GT 預覽 / AL render / prompt 宣稱 / 實際 fallback 各用不同字型，修法是 bundle 5 個 OFL Google Fonts 進專案；(3) `MAX_UPSCALE=2.0` 上限防小圖拉糊。
+
+**誠實定調**：Steps 30–40 的結論全部在帶 confound 的 render 下取得，須加註記；N=5 post-fix smoke 拒答 0（vs Step 46 的 21）。是否影響結論方向 → Step 48 重測。
+
+---
+
+### Step 48 — 去 confound N=20 重跑：Generator-bounded 成立（2026-06-10）
+
+**結果**：**0/20 acceptance、judge 31/31 全判 B（GT）勝**、所有樣本 round1_exhausted——與 pre-fix 同型。
+
+**誠實定調**：三項 confound 修正後結論方向不變，**Generator-bounded 在乾淨條件下重新成立**；論文引用本步而非 Step 34/37 的帶 confound 版本。
+
+---
+
+### Step 49 — prompt-only 上限 ablation：graphics 是唯一移動軸（N=20，2026-06-11）
+
+**方法**：49a typography 決策通道進 prompt；49b dead-space balance constraints；49c oracle 加 per-axis A/B/tie attribution。
+
+**結果**：**graphics tie 16%→41%（p=0.050）為唯一移動軸**；design_layout / typography 一票不動；QC reject 率 47%→41%。
+
+**誠實定調**：prompt 指引有可達天花板、且搆不到主軸——**勿再提 prompt-only 改進方案**（此結論在 Step 58/60 反覆驗證）。
+
+---
+
+### Step 50 — gpt-5.2 control：同型失敗（N=5，2026-06-11）
+
+**結果**：換更強模型 0/5、失敗形狀與 gpt-4o 相同。結論改名為「**LLM-coordinate-generation-bounded**」——瓶頸是 LLM 以座標文字生成版面這個介面，非單一模型能力。附帶修復：`openai_api.py` 對 o1/o3/o4/gpt-5 prefix 的參數相容。
+
+---
+
+### Step 51 — blind judge audit：pairwise 從來不是 blind（2026-06-11）
+
+**發現**：歷來 pairwise judge prompt 一直標示 A=candidate、B=GT——**所有 headline 勝率都是 label-aware 數字**。Blind 重判：position bias = 0；design_layout / typography 的輸**是真的**（blind 下仍輸）；**innovation 有 label bias**（blind 下 candidate 勝 60% vs labeled 0%）。
+
+**誠實定調**：headline 數字一律須 blind 重跑；本文件 Step 56 之後引用的 blind 數字均源於此協定。
+
+---
+
+### Step 52 — gate 不對稱：GT 70% 被我們自己的 QC gate 退件（2026-06-11）
+
+**結果**：把 20 張 designer GT 餵進自家 QC gate，**14/20（70%）被退**（違規 overlap median 0.062）——gate 對 GT 式解（文字壓主體、大面積重疊）天然不友善。是否為 gap 成因 → Step 53 ablation。
+
+---
+
+### Step 53 — gate-off ablation：gate 不是 gap 成因（2026-06-11）
+
+**結果**：關掉 safe-zone gate 重跑，blind 判決**一票未變（2/32/0）**。
+
+**誠實定調**：GT 被 gate 誤殺是真的，但放寬 gate 不會改善判決——**勿再提放寬 gate 方案**；gap 在 Generator 構圖本身。
+
+---
+
+### Step 54 — render parity 分解：render channel 佔 blind gap 61–68%（上界）（2026-06-11）
+
+**方法**：把 GT layout 用我們的 renderer 重渲染再 blind 對判，分離「版面」與「渲染」兩個通道。
+
+**結果**：render channel 佔 blind gap **61–68%（上界）**；舊 renderer 天花板（GT layout 過我們 renderer 後的 blind 勝率）僅 **22.5%**——renderer 本身壓死了上限。
+
+---
+
+### Step 55 — renderer 升級：天花板 22.5%→55%（2026-06-11）
+
+**方法**：修 2 個 silent font bug、auto-wrap、text fit、rotation 支援。
+
+**結果**：GT-through-our-renderer blind 天花板 design_layout 22.5%→**55%**、typography →30%——超過 render parity 需求，renderer 不再是 binding constraint。Step 51 量到的 A blind 5% 因此過時 → Step 56 重測。
+
+---
+
+### Step 56 — 新 renderer live 重測（blind N=18，2026-06-11）
+
+**結果**：candidate blind 勝率 design_layout 5%→**13.9%**、typography 2.5%→**19.4%**、graphics **27.8%**（candidate 領先軸）、overall 11.1%。
+
+**誠實定調**：renderer 升級回收了一段 gap，但天花板 55% vs 實測 13.9% 之間仍有 **~41 pts 純 Generator 構圖差距**——Generator-bounded 第四次存活（前三次：Step 34/48/49）。
+
+---
+
+### Step 57 — coverage QC guardrails（GT 校準，2026-06-11）
+
+**方法**：照 GT-first SOP 校準兩條退化防護——`COVERAGE_MIN=0.10`、`DEAD_BAND_MAX=0.60`（GT 20/20 全過、設計師極簡版面合法）。
+
+**結果**：離線重放抓到 step56 候選 **24/70（34%）** 有退化幾何。live 驗證 → Step 58。
+
+---
+
+### Step 58 — coverage QC live：機制成功、效果 negative（2026-06-11）
+
+**過程 bug**：第一輪發現 oracle gate 是白名單 filter、新 violation 被靜默丟掉（step58 實測等於「僅 prompt rule」）；修正後重跑 step58b。
+
+**結果（三條件對照）**：in-loop 退件 6 次、retry **3/3 修好被點名問題但全改踩 safe-zone**（打地鼠）；acceptance **0/20**；judged rounds 28→18（QC retry 互相消耗預算）。step58b blind 下滑（2.6%）是 `pngs[-1]` 協定假象（13/19 最後一張是退件版面）、不可解讀為品質倒退。prompt rule 無預防力（違規率 34%→26%→35% 為 run 間雜訊）。
+
+**深層發現（後續步驟的源頭）**：(1) 5f9917ea a2 與 GT 概念幾乎相同卻被 safe-zone gate 退件——Step 52 誤殺的具象案例；(2) **尺寸膽怯（timid sizing）**：GT 照片 ~75% 畫面、候選只敢 ~25%——比 coverage 更精確描述 ~41 pts 差距。Generator-bounded 第五次確認。
+
+---
+
+### Step 58c/58d — experiment.md 指標重算：幾何六指標 + COLE 四軸（2026-06-11）
+
+**幾何六指標（live oracle run 最後 attempt 版面 vs 同子集 GT）**：AL 在 **5/6 軸達到或超過 GT**（幾何指標飽和、同 Step 29 結論）；**Rea（文字下梯度）是唯一明確落後軸（~2×**，step58b 0.0141 vs GT 0.0066）。
+
+**COLE 四軸絕對分（gpt-4o，N=19）**：AL step58b Smean **6.78** vs Designer GT **7.53**（落後 ~1 分）vs 舊 cold-start 5.26 vs SEGA-13B 6.32（跨論文 informational）。**唯一反超軸 S_IO 6.16 vs GT 5.85**，與 blind innovation candidate 50% 互相印證。
+
+**三套指標合讀**：幾何達標、COLE 差 1 分、blind design_layout 大輸——差距不在幾何合規性而在構圖層次；S_IO 是 AL 真實強項。引用幾何指標用本步、勿用 Step 29。
+
+---
+
+### Step 59 — TEXT_ON_BUSY_TEXTURE QC（GT 校準 T=0.065）+ live：feedback 路線封死（2026-06-11）
+
+**校準發現**：8/20 GT 版面把每個文字元素用 underlay **完全遮蔽**——設計師的紋理防禦是「遮蔽」不是「閃避」。門檻 = GT max 0.0454 + 0.02 = **0.065**（GT 20/20 過、抓候選 74/590）。
+
+**Live N=20**：規則**精準度完美**（開火 3/20 = 校準預測的同三樣本、梯度值一致到第 3-4 位、零誤殺）；但 **retry 零修復**——三個 spec 都有可用 underlay、detail 明確指示「加 underlay 遮蔽」，Generator 連移位都不做。Rea 0.0141→**0.0085**（同子集 GT 1.47×；方向與機制一致、n=15 不可宣稱因果）。acceptance 0/20（第六次確認）。
+
+**誠實定調**：**Generator retry 對明確、可執行的結構化修復指令完全不回應**——「QC feedback 措辭改進」路線封死，殘餘選項收斂到直接改 Generator 輸入端。
+
+---
+
+### Step 60 — GT 校準照片面積 prior：尺寸第一次移動、判決不動（2026-06-11）
+
+**校準（N=1,902 GT）**：photo GT p50 **0.213** / p75 **0.445** vs 候選**退化單點 0.1111**（1/3×1/3 習慣）——photo 是唯一尺寸膽怯 class，prior 只鎖 product_image。
+
+**方法（雙槓桿）**：prompt 敘述 hint＋尾端 ATTENTION（含逐 canvas 像素數學）；`inject_photo_size_prior()` 程式化注入 `photo-prominent` hard constraint（QC bucket 0.20、剛好低於 GT p50 避免誤殺）。
+
+**結果**：smoke 證實「敘述 hint 單獨=零移動、雙槓桿=第一次移動」（大量精確堆積在 0.200——Generator 真的照 ATTENTION 算數學）。Live N=20：尺寸持續移動（max **0.444**=GT p75、≥0.20 比例 ~50%），但 **acceptance 0/20、design_layout B=20 一票未動**。架構發現：oracle gate 白名單把 SIZE_PREFERENCE 算出後直接丟棄——實際生效的只有 prompt 槓桿，0.200 堆積是自願服從。
+
+**誠實定調**：機制成功＋結果 negative 第三連發（58/59/60）；尺寸膽怯這個失效模式**已修復**，但單一可量化失效模式的修復不足以撼動構圖判決（Generator-bounded 第七次）。
+
+---
+
+### Step 61 — GT vs 候選粗構圖統計：草稿層級差距量化（2026-06-12）
+
+**方法**：零 LLM——每張版面壓成 squint-test 簽名（photo 3×3 格位置＋尺寸桶、文字加權質心、photo-text relation），GT n=1,168 vs 五份 live run 候選 n=205。
+
+**結果**：(1) **照片尺寸最大缺口**——GT large+bleed **45.1%** vs 候選 **0%**（small 92.7%）；(2) **設計師最常用的招式候選幾乎不用**——text-on-photo GT **43.3%** vs 候選 **3.9%**，GT top-3 全是「大照片置中＋文字疊上」；(3) 位置習慣相反——GT photo MC 50.7%，候選照片散落底帶、文字推到上下邊緣（迴避模式）；(4) QC 衝突——busy-texture＋safe-zone 規則正好禁止 GT 最大宗構圖。
+
+**誠實定調**：草稿層級差距獲量化證實，「構圖師 Role」有明確數據支撐——本步 GT 構圖統計即其模板庫校準來源。
+
+---
+
+### Step 62 — AI 構圖師（Composition Director）：機制成功、假設未測到（2026-06-12）
+
+**方法**：GT 校準模板庫（8 有照＋3 純文字模板、aspect-ratio 先驗）→ `ComposeSketch` Agent 2.5（art director persona、看背景圖選模板、輸出 directive）→ Generator prompt directive 區段＋尾端 ATTENTION → QC 構圖合約（cell/size/質心/relation 四項數值檢查）＋ text-on-photo 條件豁免。
+
+**結果**：構圖師機制 **20/20 成功**（4 有照樣本全選 hero-center-overlay、零 fallback）；QC 合約有效（hero 照片 attempt 間 0.111→0.333 朝 large 移動）。但 acceptance 0/20、**judge 曝光崩潰 28→6**——4 個 text-on-photo 樣本**一個都沒進 judge**，核心假設（GT 式構圖能否贏 design_layout）實際上未被測到。根因＝**雙重束縛**：text-only 模板 directive（文字質心 MC）與 safe-zone 規則直接矛盾、Generator 乒乓至耗盡。
+
+**拒答更正**：LLM 安全拒答非本步新回歸——step58=74、59=80、60d=59、62=118 行；Step 47「拒答消失」未持續成立，是 step58 起的背景噪音。
+
+---
+
+### Step 63 — directive 存在時 safe-zone 全面讓位（2026-06-12）
+
+**方法**：構圖師選模板時已看過渲染後背景圖，directive 是 informed override——`spec.composition` 存在時 safe-zone 規則直接讓位（取代 step62 較窄豁免）；busy-texture 規則保留（要求的是 underlay 修正、不構成位置矛盾）。
+
+**結果**：雙重束縛解除（safe-zone 違規 0、乒乓消失）；judge 曝光 **6→18**（9/20 樣本）；**acceptance 1/20——Step 48 以來第一個非零**（`589d7bd9` overall tie 過關：content/typography A 勝、design_layout/graphics B 勝、innovation tie）。但 **4 個 text-on-photo 樣本第二次 0 進 judge**——死因換位為 composition_mismatch / 拒答（拒答升至 140 行、直接殺死 hero 樣本 5bbcb749）。per-axis：design_layout A=0 B=18（樣本量足、仍全敗）。
+
+**誠實定調**：機制目標達成、非零 acceptance 靠 content/typography 拉成 tie 而非 design_layout 贏；text-on-photo 假設連兩步未被測到，瓶頸移到 Generator 對 hero 合約的執行力＋拒答噪音。
+
+---
+
+### Step 64 — 三修聯動：拒答 fallback＋面積訊號統一＋underlay 合約（2026-06-12）
+
+**方法（三修均在 `generate_layout.py`）**：64a 視覺拒答偵測→丟圖純文字重試＋一次性 budget+1；64b directive 有 photo_size 時面積 hint 讓位給 bucket（解 step63 hero 全停 0.333=prior 與 directive 的妥協點）＋自洽 WORKED EXAMPLE bbox；64c text-on-photo 規則點名 spec 的 decorative_image id＋80% 覆蓋門檻＋配方（bbox 外擴 10-20%、z 夾中）。
+
+**結果（live N=20）**：拒答 **140→32 行（−77%）**、fallback 開火 16 次、GenerateLayout 零全滅；judge 曝光 **6→18→25 輪**（12/20 樣本）；**text-on-photo 首次進 judge**（5e7a3506 兩輪——step62/63 皆 0）、**兩輪皆輸 B**。判決全敗：design_layout A=0 B=25、typography A=0 B=25、graphics B=18 tie=7、innovation tie 24；acceptance **0/20**（step63 的 tie 未重現）。剩餘 hero 死因各異（composition_mismatch×3 / off-photo CTA 三攻不動 / mismatch＋no_underlay 混合）。
+
+**誠實定調**：(1) QC 漏斗（曝光鏈）與判決端是**兩個獨立瓶頸**——三步工程把前者疏通、後者紋風不動；(2) 「GT 式構圖能否贏 design_layout」首個答案=否，但僅 2 輪（1 樣本）、下結論需更多 hero 進 judge；(3) **歸因警語：三修同輪，效果須用 per-sample 死因分解拆**、勿整體歸因單一修正；(4) Generator-bounded 首次在「假設被測到」的條件下成立。
+
+---
+
 ## §3 核心誠實定調（consolidated — 論文 honesty 章節用）
 
 ### §3.1 不可宣稱勝設計師 / 勝 SOTA
@@ -699,4 +995,5 @@
 | step 12d content-aware live（post-fix，真 end-to-end） | `layout_agent/output/live_step12d_postfix_5efdd2dd.log`、`role_live_crello_5efdd2dd499b85dcc75ba0bc_{trace,spec}.json`、`_last_reject.png`（現存即 post-fix） |
 | 模組程式 | `metagpt/ext/agentlayout/`（gap 引用：`roles/aesthetic_judge.py:79`；對照：`pipeline.py:189`、`roles/layout_generator.py:155`） |
 | SOTA-context 數字出處 | AesthetiQ, CVPR 2025, arXiv 2503.00591 — Table 1（judge=VILA-7B、Crello test 1,971；FlexDM/LACE/PosterLLaVa/LayoutNUWA/AesthetiQ-1B…8B 之 Mean IoU% + Win-Rate%） |
+| Step 30–64 oracle / blind / QC / 構圖師實驗鏈原始數據 | `layout_agent/output/step3x..step64` 各 `*.log` / `*_results.json` / renders（gitignored）；逐步技術細節 `layout_agent/IMPLEMENTATION_LOG.md` 對應條目；showcase 圖 `layout_agent/good_result/`（7 組 GT+AL 對） |
 | commit 紀錄 | `git log --oneline -- metagpt/ext/agentlayout/`（step 12b = `a87b5034`、step 13 doc = `a2f85a58`） |
