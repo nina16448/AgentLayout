@@ -4105,6 +4105,58 @@ gate 修正（committed）。
 與 GT 風格衝突（5f9917ea a2 誤殺）併入 Step 52 結論，考慮 safe-zone
 規則對「帶 underlay 的文字」放寬（GT 慣用橫幅壓主體）。
 
+#### Step 58c/58d — experiment.md 指標重算：幾何六指標 + COLE 四軸（2026/06/11）
+
+**動機**：用戶要求看 experiment.md 定義的指標在 live oracle run 上的結果。
+oracle 不落盤 spec/candidate，故新增零 LLM 重算腳本
+`step58c_sega_from_log.py`：從 oracle log 解析每個 sample **最後一個
+batch 的 candidates[0]**（= oracle 渲染、blind judge 評的那張，
+step41:513 + step51 `pngs[-1]` 協定），重用 `step20_sega_eval` 的
+builder / metric 函式，數字與 Step 29 N=1,895 基準同一套實作。
+
+**Log parser 兩個修補**：(1) loguru 非同步 INFO 行（cost_manager 等）會
+插進 JSON dump 中間（甚至接在同行後面），以 timestamp regex 剝除；
+(2) Generator content 字串含原始控制字元，`json.loads(strict=False)`。
+修補後覆蓋 16/15/18（step56/58/58b），缺的是 generate_failed /
+vision-refusal 樣本（log 內無 candidate，blind judge 同樣沒評）。
+
+**幾何六指標（mean，AL = 最後 attempt 版面）**：
+
+| run | Ali ↓ | Ove ↓ | Und_l ↑ | Und_s ↑ | Occ ↓ | Rea ↓ | n |
+|---|---|---|---|---|---|---|---|
+| step56 | 0.0000 | 0.0000 | 0.6250 | 0.6250 | 0.1274 | 0.0128 | 16 |
+| step58 | 0.0005 | 0.0000 | 0.4779 | 0.4222 | 0.1142 | 0.0184 | 15 |
+| step58b | 0.0000 | 0.0000 | 0.5114 | 0.4444 | 0.1122 | 0.0141 | 18 |
+| Designer GT | 0.0017 | 0.0234 | 0.4364 | 0.3684 | 0.1136 | 0.0066 | 19 |
+
+AL 在 5/6 軸達到或超過 GT（幾何指標飽和，同 Step 29 結論）；**Rea 是
+唯一明確落後軸**（~2×，文字壓在背景紋理複雜處）；三 run 間差異為
+樣本組成 + QC 退件版面比例之雜訊，不得宣稱 coverage QC 改善幾何指標。
+
+**COLE 四軸（58d）**：`step21_phaseb_eval.py` 加 `--render-prefix`
+（glob `{prefix}_crello_{id}_r1a*.png` 取 `[-1]`，與 blind judge 同
+協定；預設 None 行為不變，step32/33 importer 不受影響）。gpt-4o 絕對
+分，N=19/20（589d7bd9 無 render）：
+
+| Method | S_DL | S_QL | S_TV | S_IO | Smean |
+|---|---|---|---|---|---|
+| AL step58b | 6.95 | 7.47 | 6.53 | **6.16** | 6.78 |
+| AL 舊 cold-start（Step 21） | 5.50 | 5.10 | 6.15 | 4.30 | 5.26 |
+| Designer GT（Step 21b） | 7.95 | 8.65 | 7.65 | 5.85 | 7.53 |
+| SEGA-13B（Table 3 參考） | 6.15 | 6.75 | 6.35 | 6.04 | 6.32 |
+
+要點：(1) 四軸全高於 SEGA-13B（跨論文 informational）；(2) vs 舊
+cold-start +1.51 Smean＝renderer 升級 + oracle loop 混合效果，不可歸因
+單一因素；(3) vs GT 落後約 1 分，**唯一反超軸 S_IO 6.16 vs 5.85**，與
+blind innovation cand 50% 互相印證；(4) 13/19 張是 QC 退件版面
+（`pngs[-1]`），分數偏保守。
+
+**三套指標合讀**：幾何達標、COLE 差 1 分、blind design_layout 大輸——
+差距不在幾何合規性而在構圖層次（尺寸膽怯／留白運用）；S_IO 是 AL
+真實強項。產物：`step58c_sega_from_log.json`、`step58d_phaseb_cole.json`
+（均 gitignored）。程式改動：新增 `step58c_sega_from_log.py`、
+`step21_phaseb_eval.py` 加 `--render-prefix`。
+
 ---
 
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/11*
