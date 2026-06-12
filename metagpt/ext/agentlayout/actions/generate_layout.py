@@ -477,7 +477,7 @@ ATTENTION: If feedback is provided, satisfy every structured_suggestion in at
            do not over-apply: a ">=" constraint is a LOWER bound, not a target
            you must exceed by 2x.
 ATTENTION: Step 46 (2026-06-10) -- ATTACHED IMAGE IS THE CANVAS BACKGROUND.
-           The first (and only) attached image is the literal background PNG
+           The FIRST attached image is the literal background PNG
            the renderer will composite your layout on top of. The numeric
            `safe_zones` you see in this prompt are a COARSE summary computed
            from that image. WHEN YOUR EYE AND THE NUMBERS DISAGREE, BELIEVE
@@ -500,6 +500,7 @@ ATTENTION: Step 46 (2026-06-10) -- ATTACHED IMAGE IS THE CANVAS BACKGROUND.
            listed safe_zones. If the image shows a face or focal element
            inside what the safe_zones call "safe", pick a different listed
            safe_zone for your primary -- do NOT cover the face.
+{self_render}
 ATTENTION: If the "# Previous Attempt" block is non-empty (refinement mode),
            every element's (left, top, width, height) must stay within +/-10%
            of its previous value unless a structured_suggestion explicitly
@@ -523,9 +524,10 @@ MAX_RETRIES: int = 3
 # only occur on this action's long prompt + photographic backgrounds
 # (ComposeSketch and the Judge attach the same images and never refuse), and
 # resending the identical payload usually refuses again. Detection is
-# deliberately narrow: a genuine refusal is one short sentence, while a valid
-# batch response is thousands of characters of JSON, so the length cap
-# prevents false positives on candidate text content.
+# deliberately conservative: it only runs AFTER JSON parsing failed (a valid
+# batch can never be misclassified), and only the first _REFUSAL_MAX_LEN
+# characters are scanned -- refusals open with the apology, while candidate
+# text content sits deep inside thousands of characters of JSON.
 _REFUSAL_MARKERS: Tuple[str, ...] = (
     "i'm sorry",
     "i am sorry",
@@ -533,8 +535,37 @@ _REFUSAL_MARKERS: Tuple[str, ...] = (
     "i cannot assist",
     "can't help with",
     "cannot help with",
+    # Step 65 smoke: gpt-4o also refuses with "I'm unable to assist with
+    # this request." and long "I'm unable to provide ..." narratives --
+    # undetected, they burned full retry budgets 5x/N=5.
+    "i'm unable to",
+    "i am unable to",
+    "unable to assist",
+    "unable to help",
 )
 _REFUSAL_MAX_LEN: int = 200
+
+# Step 65 (2026-06-12): close the visual feedback loop. Step 59 proved the
+# Generator ignores even explicit, executable TEXT repair instructions on
+# retry; but it has never SEEN its own failed attempt -- feedback always
+# arrived as JSON + prose while the render stayed on disk. This note rides
+# the prompt only when the previous attempt's render is attached as the last
+# image, telling the model to self-critique visually before regenerating.
+_SELF_RENDER_NOTE: str = """\
+ATTENTION: Step 65 (2026-06-12) -- THE LAST ATTACHED IMAGE IS YOUR OWN
+           PREVIOUS ATTEMPT, ALREADY RENDERED. It is exactly what the Quality
+           Checker / Judge saw when producing the `feedback` above. Before
+           emitting new candidates:
+             1. LOOK at that render and name its 2-3 worst visual flaws
+                (text drowning in busy texture, timid undersized photo, large
+                dead bands, colliding elements, illegible contrast, layout
+                that ignores the composition directive).
+             2. Cross-check every `feedback` item against what you SEE --
+                the feedback refers to THIS image, not to an abstraction.
+             3. Every new candidate must VISIBLY fix the flaws you named.
+                If a new layout would render nearly identical to the attached
+                attempt, it is WRONG -- do not resubmit the same geometry.
+                Keep only what already looks good."""
 
 
 # ============================================================
@@ -561,6 +592,7 @@ class GenerateLayout(Action):
         feedback: Optional[AestheticFeedback] = None,
         prev_best_layout: Optional[Dict[str, Tuple[float, float, float, float]]] = None,
         prev_best_subscores: Optional[Dict[str, int]] = None,
+        prev_render_path: Optional[Path] = None,
     ) -> CandidatesBatch:
         """Build prompt, call LLM, parse and validate.
 
@@ -572,29 +604,64 @@ class GenerateLayout(Action):
         the prompt activates the ``# Previous Attempt`` block, switching the
         Generator from cold-start to anchored refinement mode (+/-10% drift
         per element unless a structured_suggestion demands a larger edit).
+
+        Visual self-correction (Step 65, 2026-06-12): when
+        ``prev_render_path`` points at the previous attempt's rendered PNG,
+        it is attached as the LAST image and the prompt gains the
+        self-render ATTENTION block. Callers that never render between
+        retries simply omit it and get the pre-Step-65 behaviour.
         """
         spec.assert_enriched()
-        prompt = self._build_prompt(
-            spec, tree, bg, feedback, prev_best_layout, prev_best_subscores
-        )
 
         # Step 46: attach the canvas background image so the LLM can see the
         # focal subject and the real empty regions, not just the coarse
         # safe_zones summary. Silently fall back to text-only when the model
         # lacks vision support or the background asset is missing/unreadable.
+        # Step 65: optionally attach the previous attempt's render as the
+        # LAST image. Images are collected BEFORE the prompt is built because
+        # the prompt must only describe images that are actually attached.
         images: List[str] = []
+        self_render_attached = False
         if self.llm.support_image_input():
             bg_b64 = self._render_bg_image(spec)
             if bg_b64 is not None:
-                images = [bg_b64]
+                images.append(bg_b64)
             else:
                 logger.debug(
                     "GenerateLayout: no usable background image; using text-only call."
                 )
+            if prev_render_path is not None:
+                pr_b64 = self._load_image_b64(Path(prev_render_path))
+                if pr_b64 is not None:
+                    images.append(pr_b64)
+                    self_render_attached = True
+                else:
+                    logger.debug(
+                        f"GenerateLayout: previous render {prev_render_path!r} "
+                        f"unreadable; proceeding without self-render."
+                    )
         else:
             logger.debug(
                 f"GenerateLayout: LLM '{getattr(self.llm, 'model', '?')}' lacks "
                 f"vision support; using text-only call."
+            )
+
+        prompt = self._build_prompt(
+            spec,
+            tree,
+            bg,
+            feedback,
+            prev_best_layout,
+            prev_best_subscores,
+            self_render_attached=self_render_attached,
+        )
+
+        if images:
+            # INFO so live-run logs can decompose refusal rates by payload:
+            # bg-only calls vs calls that also carry the self-render.
+            logger.info(
+                f"GenerateLayout: attaching {len(images)} image(s) "
+                f"(self_render={self_render_attached})."
             )
 
         last_err: Optional[Exception] = None
@@ -606,24 +673,40 @@ class GenerateLayout(Action):
                 rsp = await self.llm.aask(prompt, images=images)
             else:
                 rsp = await self.llm.aask(prompt)
-            if images and self._looks_like_refusal(rsp):
-                # Step 64: informed degradation -- drop the background image
-                # and fall back to the pre-step46 text-only mode (the numeric
-                # safe_zones summary is still in the prompt). Grant one
-                # replacement attempt so a refusal cannot burn the whole
-                # budget. The `images and` guard makes this fire at most once.
-                logger.warning(
-                    f"GenerateLayout attempt {attempt}/{budget}: vision refusal "
-                    f"detected ({rsp.strip()[:60]!r}); retrying without the "
-                    f"background image."
-                )
-                images = []
-                budget += 1
-                last_err = ValueError(f"vision refusal: {rsp.strip()[:120]}")
-                continue
             try:
                 return self._parse_response(rsp)
             except (ValueError, ValidationError) as err:
+                # Step 65: refusal detection moved AFTER the parse attempt --
+                # a parseable batch is always accepted, so head-scanning for
+                # refusal markers can never discard a good response.
+                if images and self._looks_like_refusal(rsp):
+                    # Step 64: informed degradation -- drop the images and
+                    # fall back to the pre-step46 text-only mode (the numeric
+                    # safe_zones summary is still in the prompt). Grant one
+                    # replacement attempt so a refusal cannot burn the whole
+                    # budget. The `images and` guard makes this fire at most
+                    # once. Step 65: the prompt is rebuilt so it no longer
+                    # claims a self-render is attached.
+                    logger.warning(
+                        f"GenerateLayout attempt {attempt}/{budget}: vision "
+                        f"refusal detected ({rsp.strip()[:60]!r}); retrying "
+                        f"without image(s)."
+                    )
+                    images = []
+                    if self_render_attached:
+                        self_render_attached = False
+                        prompt = self._build_prompt(
+                            spec,
+                            tree,
+                            bg,
+                            feedback,
+                            prev_best_layout,
+                            prev_best_subscores,
+                            self_render_attached=False,
+                        )
+                    budget += 1
+                    last_err = ValueError(f"vision refusal: {rsp.strip()[:120]}")
+                    continue
                 last_err = err
                 logger.warning(
                     f"GenerateLayout attempt {attempt}/{budget} failed: {err}"
@@ -636,8 +719,11 @@ class GenerateLayout(Action):
 
     @staticmethod
     def _looks_like_refusal(rsp: str) -> bool:
-        s = (rsp or "").strip().lower()
-        if not s or len(s) > _REFUSAL_MAX_LEN:
+        # Step 65: scan only the head -- long "I'm unable to provide ...,
+        # however here is guidance ..." narratives are refusals too, but a
+        # marker buried deep in candidate text content must not match.
+        s = (rsp or "").strip().lower()[:_REFUSAL_MAX_LEN]
+        if not s:
             return False
         return any(marker in s for marker in _REFUSAL_MARKERS)
 
@@ -654,14 +740,23 @@ class GenerateLayout(Action):
         bg_ref = spec.canvas.background_asset_ref
         if not bg_ref:
             return None
-        bg_path = Path(bg_ref)
-        if not bg_path.exists():
+        return GenerateLayout._load_image_b64(Path(bg_ref))
+
+    @staticmethod
+    def _load_image_b64(path: Path) -> Optional[str]:
+        """Load any raster image, downscale to ``_BG_MAX_EDGE_PX``, base64 PNG.
+
+        Shared by the background channel (Step 46) and the self-render
+        channel (Step 65). Returns None when the file is missing or
+        unreadable; callers degrade gracefully.
+        """
+        if not path.exists():
             return None
         try:
-            img = Image.open(bg_path).convert("RGB")
+            img = Image.open(path).convert("RGB")
         except (OSError, IOError) as err:
             logger.warning(
-                f"GenerateLayout._render_bg_image: cannot open {bg_ref!r}: {err}"
+                f"GenerateLayout._load_image_b64: cannot open {str(path)!r}: {err}"
             )
             return None
         w, h = img.size
@@ -682,12 +777,15 @@ class GenerateLayout(Action):
         feedback: Optional[AestheticFeedback],
         prev_best_layout: Optional[Dict[str, Tuple[float, float, float, float]]] = None,
         prev_best_subscores: Optional[Dict[str, int]] = None,
+        self_render_attached: bool = False,
     ) -> str:
-        """Render PROMPT_TEMPLATE with all 9 substitutions.
+        """Render PROMPT_TEMPLATE with all 11 substitutions.
 
         ``previous_attempt`` is the new Refinement Loop block. It is "None"
         on cold-start (Round 0) and a compact JSON-ish description in
-        refinement mode (Round 1+).
+        refinement mode (Round 1+). ``self_render_attached`` (Step 65)
+        activates the self-render ATTENTION block and must be True only when
+        the previous attempt's render is actually in the image payload.
         """
         spec_str = json.dumps(spec.model_dump(), indent=2, ensure_ascii=False)
         # Wrap tree as {"layout_tree": ...} so the LLM sees the same shape it
@@ -717,6 +815,7 @@ class GenerateLayout(Action):
             format_example=FORMAT_EXAMPLE_JSON,
             photo_size_prior=self._format_area_hints(spec),
             composition_directive=self._format_composition_directive(spec),
+            self_render=_SELF_RENDER_NOTE if self_render_attached else "None",
         )
 
     @staticmethod

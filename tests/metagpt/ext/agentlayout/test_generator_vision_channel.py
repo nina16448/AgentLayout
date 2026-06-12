@@ -74,7 +74,9 @@ class _FakeLLM:
         return self.supports_vision
 
     async def aask(self, prompt: str, images: Optional[List[str]] = None, **kwargs: Any) -> str:
-        self.calls.append({"prompt_head": prompt[:80], "images": images, "kwargs": kwargs})
+        self.calls.append(
+            {"prompt_head": prompt[:80], "prompt": prompt, "images": images, "kwargs": kwargs}
+        )
         return self.canned_response
 
 
@@ -200,7 +202,9 @@ class _RefusingVisionLLM(_FakeLLM):
     """Refuses whenever an image is attached; answers normally text-only."""
 
     async def aask(self, prompt: str, images: Optional[List[str]] = None, **kwargs: Any) -> str:
-        self.calls.append({"prompt_head": prompt[:80], "images": images, "kwargs": kwargs})
+        self.calls.append(
+            {"prompt_head": prompt[:80], "prompt": prompt, "images": images, "kwargs": kwargs}
+        )
         if images:
             return "I'm sorry, I can't assist with that."
         return self.canned_response
@@ -210,7 +214,9 @@ class _AlwaysRefusingLLM(_FakeLLM):
     """Refuses every call, with or without an image."""
 
     async def aask(self, prompt: str, images: Optional[List[str]] = None, **kwargs: Any) -> str:
-        self.calls.append({"prompt_head": prompt[:80], "images": images, "kwargs": kwargs})
+        self.calls.append(
+            {"prompt_head": prompt[:80], "prompt": prompt, "images": images, "kwargs": kwargs}
+        )
         return "I'm sorry, I can't assist with that."
 
 
@@ -218,9 +224,16 @@ def test_looks_like_refusal_detection():
     f = GenerateLayout._looks_like_refusal
     assert f("I'm sorry, I can't assist with that.")
     assert f("  I cannot assist with that request. ")
+    # Step 65 smoke regression: these phrasings slipped through and burned
+    # full retry budgets on 5/5 samples.
+    assert f("I'm unable to assist with this request.")
+    assert f(
+        "I'm unable to provide specific coordinates for this layout. "
+        "However, I can offer general guidance on layout principles: " + "x" * 300
+    )
     assert not f(_CANNED_BATCH_JSON)
     assert not f("")
-    # length cap: a long response containing a refusal phrase is not a refusal
+    # head scan: a refusal phrase buried deep in a long response is not a refusal
     assert not f("x" * 300 + " i'm sorry")
 
 
@@ -261,3 +274,120 @@ async def test_run_raises_when_text_only_fallback_also_refuses(tmp_path):
     assert len(fake.calls) == 4
     assert fake.calls[0]["images"]
     assert all(not c["images"] for c in fake.calls[1:])
+
+
+# ============================================================
+# Step 65: visual self-correction (previous render fed back)
+# ============================================================
+
+_NOTE_MARK = "PREVIOUS ATTEMPT, ALREADY RENDERED"
+
+
+def _vision_setup(tmp_path, llm_cls=_FakeLLM, bg: bool = True):
+    bg_path = None
+    if bg:
+        bg_path = tmp_path / "bg.png"
+        _bg_png_to_path(bg_path)
+    spec = _make_spec(bg_path=str(bg_path) if bg_path else None)
+    tree = _flat_tree(spec)
+    bg_analysis = default_white_background(spec.canvas)
+    fake = llm_cls(supports_vision=True, canned_response=_CANNED_BATCH_JSON)
+    gen = GenerateLayout()
+    object.__setattr__(gen, "llm", fake)
+    return gen, fake, spec, tree, bg_analysis
+
+
+def test_load_image_b64_returns_none_for_missing_path(tmp_path):
+    assert GenerateLayout._load_image_b64(tmp_path / "nope.png") is None
+
+
+def test_load_image_b64_returns_none_for_unreadable_file(tmp_path):
+    garbage = tmp_path / "garbage.png"
+    garbage.write_bytes(b"not a png at all")
+    assert GenerateLayout._load_image_b64(garbage) is None
+
+
+@pytest.mark.asyncio
+async def test_run_attaches_prev_render_as_last_image_with_note(tmp_path):
+    gen, fake, spec, tree, bg_analysis = _vision_setup(tmp_path)
+    prev = tmp_path / "prev_attempt.png"
+    _bg_png_to_path(prev)
+
+    batch = await gen.run(
+        spec=spec, tree=tree, bg=bg_analysis, feedback=None, prev_render_path=prev
+    )
+    assert len(batch.candidates) == 1
+    assert len(fake.calls) == 1
+    assert len(fake.calls[0]["images"]) == 2  # bg first, self-render last
+    assert _NOTE_MARK in fake.calls[0]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_run_missing_prev_render_degrades_to_bg_only(tmp_path):
+    gen, fake, spec, tree, bg_analysis = _vision_setup(tmp_path)
+
+    await gen.run(
+        spec=spec,
+        tree=tree,
+        bg=bg_analysis,
+        feedback=None,
+        prev_render_path=tmp_path / "never_rendered.png",
+    )
+    assert len(fake.calls) == 1
+    assert len(fake.calls[0]["images"]) == 1  # bg only
+    assert _NOTE_MARK not in fake.calls[0]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_run_prev_render_without_bg_still_attaches_and_notes(tmp_path):
+    gen, fake, spec, tree, bg_analysis = _vision_setup(tmp_path, bg=False)
+    prev = tmp_path / "prev_attempt.png"
+    _bg_png_to_path(prev)
+
+    await gen.run(
+        spec=spec, tree=tree, bg=bg_analysis, feedback=None, prev_render_path=prev
+    )
+    assert len(fake.calls) == 1
+    assert len(fake.calls[0]["images"]) == 1  # self-render only
+    assert _NOTE_MARK in fake.calls[0]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_run_skips_prev_render_when_llm_lacks_vision(tmp_path):
+    bg = tmp_path / "bg.png"
+    _bg_png_to_path(bg)
+    spec = _make_spec(bg_path=str(bg))
+    tree = _flat_tree(spec)
+    bg_analysis = default_white_background(spec.canvas)
+    prev = tmp_path / "prev_attempt.png"
+    _bg_png_to_path(prev)
+
+    fake = _FakeLLM(supports_vision=False, canned_response=_CANNED_BATCH_JSON)
+    gen = GenerateLayout()
+    object.__setattr__(gen, "llm", fake)
+
+    await gen.run(
+        spec=spec, tree=tree, bg=bg_analysis, feedback=None, prev_render_path=prev
+    )
+    assert len(fake.calls) == 1
+    assert fake.calls[0]["images"] is None
+    assert _NOTE_MARK not in fake.calls[0]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_run_refusal_drops_both_images_and_strips_note(tmp_path):
+    gen, fake, spec, tree, bg_analysis = _vision_setup(tmp_path, llm_cls=_RefusingVisionLLM)
+    prev = tmp_path / "prev_attempt.png"
+    _bg_png_to_path(prev)
+
+    batch = await gen.run(
+        spec=spec, tree=tree, bg=bg_analysis, feedback=None, prev_render_path=prev
+    )
+    assert len(batch.candidates) == 1
+    assert len(fake.calls) == 2
+    assert len(fake.calls[0]["images"]) == 2
+    assert _NOTE_MARK in fake.calls[0]["prompt"]
+    # Step 64 fallback + Step 65: text-only retry must not claim an attached
+    # self-render the model can no longer see.
+    assert not fake.calls[1]["images"]
+    assert _NOTE_MARK not in fake.calls[1]["prompt"]

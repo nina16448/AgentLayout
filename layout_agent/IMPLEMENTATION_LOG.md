@@ -4539,4 +4539,74 @@ composition 合約能過）、新牆=underlay；第二輪（含 64c）hero 首�
 
 ---
 
+## Step 65：Generator 視覺自我修正——把上一攻的 render 回灌給 Generator 眼睛（2026/06/12）
+
+**動機**：使用者選定 ceiling 答覆中第一條未試路線：「Generator 看
+自己的 render 自我修正——現在 retry 只給 JSON previous_attempt＋
+文字 feedback，從未把渲染圖回灌給 Generator 眼睛（vision channel
+只看背景圖）這個可以試試看」。假設根據：Step 59 證明 Generator 對
+可執行的「文字」修正指令零回應，但它從未「看過」自己失敗的成品。
+
+**實作（generate_layout.py + step41 oracle + 測試 ×7）**：
+- oracle 本就在 QC gate 前渲染每一攻（`render_to_file`），上一攻
+  PNG 永遠在磁碟上、零額外渲染成本。`_process_sample` 兩個迴圈追
+  蹤 `prev_png` → `_generate_render(prev_render=...)` →
+  `GenerateLayout.run(prev_render_path=...)`。
+- run() 改為「先收圖、後組 prompt」：背景圖第一張、self-render 最
+  後一張；新增第 11 個 slot `{self_render}`，附圖成功才填
+  `_SELF_RENDER_NOTE`（要求模型指出 render 的 2–3 個最糟缺陷、逐
+  條對照 feedback、新候選必須可見地修復），否則填 "None"——prompt
+  永不描述未實際附上的圖。Step 46 措辭 "first (and only)" 改
+  "FIRST"。`_render_bg_image` 抽出共用 `_load_image_b64`（缺檔/壞
+  檔回 None 降級）。
+- 拒答 fallback（64a）聯動：拒答時丟「全部」圖並以
+  `self_render_attached=False` 重組 prompt。
+
+**Smoke ×3 抓出兩個拒答偵測缺口（與假設無關但致命）**：
+- smoke1：gpt-4o 換句式 "I'm unable to assist with this request."
+  不在 marker 清單 → fallback 永不開火，8 個 validation error 全
+  是同一句拒答、5/5 樣本 retry budget 被燒光。修法：marker 補
+  "unable to assist/help"。
+- smoke2：第三變體 "I'm unable to provide specific..."（長拒答
+  >200 字元，舊長度 cap 直接放棄偵測）。結構性修法：run() 改「先
+  parse、parse 失敗才查拒答」（合法 JSON 永不被誤丟），
+  `_looks_like_refusal` 改掃前 200 字元；marker 再補 "i'm/i am
+  unable to"。smoke3：generate_failed 5→0、拒答 7 次全攔截，15/15
+  attempt 全部產出 render 進 QC → 放行 live。
+- 另加 INFO log 記錄每呼叫附圖數＋self_render 旗標，live 可分解拒
+  答率 by payload。測試：mock 升級記錄完整 prompt、新增 7 個（2
+  圖附掛、缺檔降級、無背景仍附、非 vision 跳過、拒答全丟＋去
+  note、`_load_image_b64` 二態、長拒答頭部偵測）；全套件 323
+  passed / 12 skipped。
+
+**Live N=20 結果（step65_live.log / step65_live_results.json）**：
+- 機制全程運作：60 次附圖呼叫中 40 次帶 self-render（23 次模型真
+  正看到自己的 render）、拒答 21 次零漏網、generate_failed=0。
+- **假設未獲支持（與 Step 64 純文字基線同指標對照）**：
+  - 跨 attempt 違規集合演化：9/20 vs step64 13/20——候選隨機性本
+    來就造成違規 churn，視覺回灌沒有增加回應性，數值上反而更低。
+  - QC 退件→進 judge 修復數：5 = 5，無增益。
+  - design_layout A=0 B=23（step64 A=0 B=25），紋風不動。
+- **新發現：self-render 使拒答率翻倍**——2-image 呼叫拒答 17/40
+  =42.5% vs 1-image 4/20=20%。渲染成品（含文字的海報圖）比純背景
+  照更易觸發 safety；且 fallback 一開火連背景圖也一併失去，42.5%
+  的 retry 輪反而退化成純文字。
+- **acceptance 1/20（589d7bd9，r1.a2 tie 過關）但歸因翻案**：時間
+  戳顯示該輪 attach 2 圖後 7 秒即被拒答 → fallback 純文字才生成
+  ——系統史上最佳單輪（content＋typography 雙 A 勝＋overall tie）
+  是「沒看任何圖」的輪產出的，不能歸功視覺自我修正。
+- 唯二 per-axis A 勝（content_relevance、typography_color 各 1）
+  全集中在該 tie 輪。
+
+**結論**：視覺自我修正路線關閉（negative result，歸因乾淨）：23
+輪真正看到自己 render 的生成在所有指標上都不優於 step64 純文字基
+線，且附上自己的 render 會把 safety 拒答率推高一倍。Step 59 的
+「retry 不回應」結論在視覺通道下依然成立——瓶頸不在 feedback 的
+模態，而在 Generator 本身的構圖能力。拒答偵測的兩個缺口修正
+（parse-first＋頭部掃描）為永久性基礎建設，獨立於本步假設成立。
+產物：`step65_smoke{,2,3}.log`、`step65_live.log`、
+`step65*_results.json`（log/results gitignored）。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/12*

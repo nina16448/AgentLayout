@@ -940,6 +940,16 @@
 
 ---
 
+### Step 65 — Generator 視覺自我修正：上一攻 render 回灌 vision channel（2026-06-12）
+
+**方法**：retry 時把上一攻已渲染的 PNG 當第二張圖（背景圖之後）附給 Generator，prompt 加 `_SELF_RENDER_NOTE`（指出 2-3 個最糟缺陷→對照 feedback→可見地修復）；oracle 兩個迴圈追蹤 `prev_png`、零額外渲染成本。Smoke ×3 先修掉兩個拒答偵測缺口（新句式 "unable to assist"、長拒答 >200 字元）：run() 改 parse-first＋頭部掃描，generate_failed 5→0 後才放行 live。
+
+**結果（live N=20）**：機制全程運作——40 次 2-image 呼叫、23 次模型真正看到自己的 render、拒答 21 次零漏網。**假設未獲支持**（同指標 vs Step 64 純文字基線）：跨 attempt 違規演化 9/20 vs 13/20（churn 本來就有、視覺回灌沒加成）；QC退件→judge 修復 5=5；design_layout A=0 B=23。**新發現：self-render 使拒答率翻倍**（2-image 42.5% vs 1-image 20%），且 fallback 連背景圖一併丟失。acceptance 1/20（`589d7bd9` tie 過關、content＋typography 雙 A 勝）**但歸因翻案**：時間戳證明該輪被拒答後由純文字 fallback 生成——系統史上最佳單輪沒看任何圖。
+
+**誠實定調**：(1) 視覺自我修正路線關閉（negative result、歸因乾淨）：Step 59「retry 不回應」結論在視覺通道下依然成立，**瓶頸不在 feedback 模態而在 Generator 構圖能力本身**；(2) 唯一 acceptance 不可歸功本步機制（該輪 text-only）；(3) 拒答偵測 parse-first 修正是永久性基礎建設、獨立於假設成立；(4) ceiling 三條未試路線只剩 constraint-solver placement 與 fine-tuning。
+
+---
+
 ## §3 核心誠實定調（consolidated — 論文 honesty 章節用）
 
 ### §3.1 不可宣稱勝設計師 / 勝 SOTA

@@ -502,10 +502,16 @@ async def _generate_render(
     bg,
     feedback: Optional[AestheticFeedback],
     out_png: Path,
+    prev_render: Optional[Path] = None,
 ) -> Optional[Candidate]:
+    # Step 65 (2026-06-12): prev_render closes the visual feedback loop --
+    # the previous attempt's PNG (always rendered before QC) is attached so
+    # the Generator can SEE the layout the feedback refers to.
     gen = GenerateLayout()
     try:
-        batch = await gen.run(spec=spec, tree=tree, bg=bg, feedback=feedback)
+        batch = await gen.run(
+            spec=spec, tree=tree, bg=bg, feedback=feedback, prev_render_path=prev_render
+        )
     except Exception as err:
         print(f"    [warn] GenerateLayout crashed: {type(err).__name__}: {err}")
         return None
@@ -575,14 +581,20 @@ async def _process_sample(client: AsyncOpenAI, sample_id: str) -> Dict:
     reference_png = gt_png
     reference_label = "GT (Crello designer reference)"
     won_this_round = False
+    # Step 65: the previous attempt's render, attached to the next Generator
+    # call so it can see what the feedback refers to. None on cold-start.
+    prev_png: Optional[Path] = None
 
     for attempt in range(1, MAX_RETRY_PER_ROUND + 1):
         cand_png = OUT / f"{RENDER_PREFIX}_crello_{sample_id}_r{round_idx}a{attempt}.png"
         print(f"  Round {round_idx} attempt {attempt}: generating...")
-        cand = await _generate_render(sample_id, spec, tree, bg, feedback, cand_png)
+        cand = await _generate_render(
+            sample_id, spec, tree, bg, feedback, cand_png, prev_render=prev_png
+        )
         if cand is None:
             rounds_log.append({"round": round_idx, "attempt": attempt, "status": "generate_failed"})
             continue
+        prev_png = cand_png
         # Step 43 (2026-06-10): QC gate -- if any primary element falls
         # outside every safe_zone, skip the judge and rebuild feedback so
         # the next attempt fixes the spatial placement first.
@@ -696,10 +708,13 @@ async def _process_sample(client: AsyncOpenAI, sample_id: str) -> Dict:
         reference_label = f"committed render from Round {committed_round}"
         cand_png = OUT / f"{RENDER_PREFIX}_crello_{sample_id}_r{round_idx}a1.png"
         print(f"  Round {round_idx}: generating against {reference_label}...")
-        cand = await _generate_render(sample_id, spec, tree, bg, feedback, cand_png)
+        cand = await _generate_render(
+            sample_id, spec, tree, bg, feedback, cand_png, prev_render=prev_png
+        )
         if cand is None:
             rounds_log.append({"round": round_idx, "attempt": 1, "status": "generate_failed"})
             break
+        prev_png = cand_png
         cand_layout = _candidate_layout_json(cand, spec)
         cand_ids = {el.id for el in cand.elements}
         verdict = await _pairwise_judge(
