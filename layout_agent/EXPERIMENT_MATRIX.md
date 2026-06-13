@@ -1,0 +1,98 @@
+# AgentLayout — 論文實驗矩陣（架構確認用 main + ablation）
+
+**用途**：把 `result.md` 的 Step 6~66 散落數據,重組成論文需要的兩張表——**main experiments（整體成績）**與 **ablation studies（逐元件拔掉看貢獻）**——並標清每格的變因（N / judge / renderer 版本）與**衡量軸**。零成本整理,不含新實驗。
+
+**權威來源**：所有數字回溯 `result.md` 對應 Step 段落與 `IMPLEMENTATION_LOG.md`;本檔僅做映射,不產生新數字。
+
+---
+
+## 核心框架：multi-axis,不要全綁 aesthetic win rate
+
+這條探索線最後收斂為 **Generator-bounded**（見 memory `project_generator_bounded_line_closed`）：在 **aesthetic pairwise win rate** 這根軸上幾乎每個元件 ablation 都是 negative。**若整張 ablation 表只用這根軸,會誤讀成「每個元件都沒用」。** 正確做法是讓每個元件在**它該負責的軸**上展現貢獻：
+
+| 衡量軸 | 量什麼 | 哪些元件在這軸有正貢獻 |
+|---|---|---|
+| **A. 幾何指標**（Ali/Ove/Und/Read/Occ） | 版面排列的數學品質 | content-aware、underlay placement |
+| **B. Aesthetic 絕對分**（COLE Smean 1-10） | MLLM 對單張的美學打分 | （全元件持平/落後 designer ~1 分,Generator-bounded） |
+| **C. Aesthetic pairwise**（blind win rate） | 盲判 vs designer GT | renderer（回收一段）；其餘 negative |
+| **D. Completion / robustness** | 跑完不 crash 的比例 | QC tolerance、crash fix、graceful degradation |
+| **E. Render parity 天花板** | GT layout 過我方 renderer 的盲判勝率 | renderer 升級 |
+| **F. Layout-IoU** | 與 GT 位置的重疊 | 整體 pipeline（勝 random、平 centered） |
+
+---
+
+## 表一 — Main experiments（整體成績 vs Designer GT）
+
+| # | 實驗 | 軸 | N | judge / 協定 | AgentLayout | Designer GT | 證據 |
+|---|---|---|---|---|---|---|---|
+| M1 | 幾何六指標（underlay-enabled） | A | 1,895 | zero-LLM rule-based | Ali 0.0000 / Ove 0.0035 / Und_l **0.5518** / Und_s **0.4428** / Read 0.0311 / Occ 0.1620 | 0.0010 / 0.0449 / 0.3542 / 0.2674 / 0.0235 / 0.1371 | Step 29 |
+| M2 | 幾何六指標（live, post-composition 子集） | A | ~19 | zero-LLM | 5/6 軸達標;**Rea 唯一落後 ~2×** | — | Step 58c/58d |
+| M3 | COLE aesthetic 絕對分 | B | 19 | gpt-4o 四軸 | Smean **6.78**（S_IO 6.16 反超） | **7.53**（S_IO 5.85） | Step 58d |
+| M4 | COLE 校準絕對分 | B | 20 | gpt-4o J5/J6/J7 校準 | **3.73** | **4.75**（Δ=−1.0） | Step 39 |
+| M5 | Pairwise win rate（**blind**, 新 renderer） | C | 18 | blind pairwise | design_layout **13.9%** / typography 19.4% / graphics 27.8% / overall 11.1% | 其餘 = GT | Step 51 + 56 |
+| M6 | Layout-IoU + baseline | F | 20 | BypassJudge | **0.0994** > random 0.0567,≈ centered 0.0931 | — | Step 15 |
+| M7 | SOTA-context 對照（**非 head-to-head**） | — | — | published | IoU ~9.94%（最弱段量級） | AesthetiQ-8B 17.19 / LayoutNUWA 5.58 | Step 16 |
+
+> **誠實定調**：A 軸（幾何）AgentLayout 勝/平 designer 且跨 N=20/100/1,897 三 scale robust（論文最強 claim）;B/C 軸（aesthetic）落後 designer ~1 分、blind 大輸 = Generator-bounded。**不可宣稱勝設計師 aesthetic、不可宣稱勝 SOTA。**
+
+---
+
+## 表二 — Ablation studies（拔掉/換掉元件看影響）
+
+| # | 架構元件 | 對照（off → on / 換版本） | 主軸 | 結果 | 證據 |
+|---|---|---|---|---|---|
+| A1 | **BackgroundAnalyzer**（content-aware） | white-stub → 真 saliency | A/任務對齊 | ✅ 先前 live 其實非 content-aware;補上後任務才對齊 SOTA scope | Step 12 |
+| A2 | **Underlay placement** | Und=0（Step 23 baseline）→ Und=0.55 | A | ✅ Und_l 0→0.55、Und_s 0→0.44,超 designer;但 Read/Occ 略退（over-containment） | Step 23 vs 29 |
+| A3 | **Renderer** | 舊 → 升級（font/wrap/fit/rotation） | E | ✅ GT-through-renderer 盲判天花板 design_layout **22.5%→55%**;live 候選 5%→13.9% | Step 54/55/56 |
+| A4 | **QC safe-zone gate** | gate-on → gate-off | C | ⚠️ blind 判決**一票未變**（2/32/0）→ gate 不是 gap 成因;貢獻在 D 軸非 C 軸 | Step 52/53 |
+| A5 | **Refinement loop** | cold-start → loop | B | ⚠️ loop **−0.35** vs cold-start;loop 不會 climb（rubric 飽和 + judge noise > signal） | Step 31/32/34 |
+| A6 | **QC tolerance / crash fix** | strict → tolerance + degradation | D | ✅ completion 0/15 crash → **100% N=20**、0 degradation | Step 10/10c/17 |
+| A7 | **Prompt 指引上限** | 無 → typography/balance/rubric 進 prompt | B/C | ⚠️ graphics tie 16%→41% 為**唯一移動軸**;主軸不動 | Step 49 |
+| A8 | **Composition Director** | 無 → AI 構圖師（GT 模板庫） | C | ⚠️ 機制 20/20 成功但假設未測到（judge 曝光崩 28→6,雙重束縛） | Step 62/63 |
+| A9 | **Feedback 模態** | 文字 QC → 視覺自我修正 | C | ⚠️ 兩者皆 negative;self-render 還使拒答率翻倍 | Step 59/65 |
+| A10 | **Placement 由誰算** | LLM 生座標 → constraint-solver（幾何去 LLM） | C | ✅ **最強反證**:幾何全移出 LLM、數學構造最優,judge 仍 **55/55 全敗** → 瓶頸不在幾何合規 | Step 66 |
+| A11 | **Generator 模型** | gpt-4o → gpt-5.2 | C | ⚠️ 同型失敗 → 改名「LLM-coordinate-generation-bounded」,非單一模型 | Step 50 |
+| A12 | **Judge self-preference** | gpt-4o judge → Claude judge | 方法學 | ✅ 80%↔80% 完全複製 → self-preference confound 排除 | Step 14 |
+| A13 | **Judge label bias** | label-aware → blind | 方法學 | ✅ innovation 有 label bias（60%→真值）;design_layout/typography 輸是真的 | Step 51 |
+
+---
+
+## 表三 — 變因一致性風險（搬數字進論文前必看）
+
+這些 Step 散在不同條件,**直接並排會被審稿人打**。同一張表內必須同條件：
+
+| 變因 | 出現過的值 | 影響 |
+|---|---|---|
+| **N** | 5 / 18 / 19 / 20 / 100 / 1,895 | per-axis ranking 在 N<1,000 會 selection-bias flip（Step 22/23b 實證） |
+| **Judge** | gpt-4o / gpt-5.2 / Claude sonnet / VILA-7B（未跑） | 跨 judge 校準漂移（Step 21b: designer 同 prompt 7.525 vs SEGA 自報 6.32） |
+| **Judge 協定** | label-aware / blind | headline 一律須 blind（Step 51） |
+| **Renderer 版本** | 舊（≤Step 54）/ 新（Step 55+） | 跨版本 live 數字不可比;Step 51 的 5% 已被 Step 56 13.9% 取代 |
+| **Judge rubric** | 自製 4軸0-25 / COLE 5軸1-10 / 校準 J5-J7 | Step 30 遷移後與前半不可直比;絕對分 6.10 vs 3.73 是校準差 |
+
+---
+
+## 表四 — 覆蓋度與缺口（要不要補實驗的決策點）
+
+| 元件 / claim | 現有覆蓋 | 缺口 | 補的成本 |
+|---|---|---|---|
+| 幾何 head-to-head | ✅ N=1,895 robust | 無 | $0 |
+| underlay ablation | ✅ Step 23 vs 29 | Phase B（COLE）對 underlay-enabled 未重評 | ~$30 |
+| renderer ablation | ✅ Step 54/55/56 | 無 | $0 |
+| gate ablation | ✅ Step 53 blind | 無 | $0 |
+| loop ablation | ✅ Step 32 N=5 | N 偏小（5） | ~$10 擴 N |
+| **Composition Director** | ⚠️ 假設未測到 | hero 樣本進 judge 太少（2 輪） | 需重跑、見探索線結案結論已封 |
+| **統一條件主表** | ❌ 散在不同 N/judge/renderer | 無「同 N 同 judge 同 split」的乾淨 main+ablation 表 | 重跑一輪 ~$? |
+| VILA-7B head-to-head | ❌ 未跑 | 消 judge≠VILA caveat | 重（裝環境/checkpoint） |
+
+---
+
+## 給論文的建議寫法
+
+1. **Main results 用 A 軸（幾何）當正面 claim** — 跨三 scale robust、judge-drift-free,是最硬的貢獻。
+2. **Ablation 表用 multi-axis** — 每個元件標它贏的那根軸（A6 robustness、A3 renderer parity、A2 underlay 幾何）,避免全綁 C 軸顯得元件無用。
+3. **Generator-bounded 當 main finding 而非失敗** — A5/A7/A8/A9/A10/A11 是一條因果鏈,逐一排除 alternative explanation（judge alignment / rubric 位置 / feedback specificity / 模型 / 幾何介面）,收斂於「LLM 以座標文字生成版面」這個介面的能力上界。A10（constraint-solver 55/55）是最乾淨的決定性證據。
+4. **誠實章節**（`result.md` §3）照搬 — 不勝設計師、不勝 SOTA、plateau 結構性。
+
+---
+
+**最後更新**：2026-06-13。對應 `result.md`（Step 6~65）+ Step 66（IMPLEMENTATION_LOG 末尾,尚未 backfill 進 result.md）。
