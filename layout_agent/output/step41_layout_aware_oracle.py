@@ -74,6 +74,7 @@ from metagpt.ext.agentlayout.schema import (  # noqa: E402
 )
 from metagpt.ext.agentlayout.tools.asset_analyzer import AssetAnalyzer  # noqa: E402
 from metagpt.ext.agentlayout.tools.background_analyzer import resolve_background  # noqa: E402
+from metagpt.ext.agentlayout.tools.constraint_solver import solve_placement  # noqa: E402
 from metagpt.ext.agentlayout.tools.quality_checker import (  # noqa: E402
     ViolationType,
     check_candidate,
@@ -89,6 +90,12 @@ MODEL = "gpt-4o"
 SAFE_ZONE_GATE = True
 RENDER_PREFIX = "step41_layout_aware_oracle"
 RESULTS_JSON = "step41_layout_aware_results.json"
+
+# Step 66 (2026-06-13): constraint-solver placement. When True, the LLM
+# Layout Generator is replaced by the deterministic constraint solver
+# (tools/constraint_solver.py); Analyst / PlanAssets / ComposeSketch / judge
+# are untouched. The retry loop's attempt index becomes the solver variant.
+SOLVER_MODE = False
 
 DEFAULT_IDS = [
     "5928015095a7a863ddcd8e38",
@@ -503,7 +510,20 @@ async def _generate_render(
     feedback: Optional[AestheticFeedback],
     out_png: Path,
     prev_render: Optional[Path] = None,
+    variant: int = 0,
 ) -> Optional[Candidate]:
+    # Step 66 (2026-06-13): constraint-solver placement -- geometry without
+    # the LLM. Textual/visual feedback is unusable by a deterministic solver;
+    # the retry signal is the ``variant`` index instead (distinct calibrated
+    # outputs per attempt).
+    if SOLVER_MODE:
+        try:
+            cand = solve_placement(spec, bg=bg, variant=variant)
+        except Exception as err:
+            print(f"    [warn] solve_placement crashed: {type(err).__name__}: {err}")
+            return None
+        render_to_file(cand, spec, out_png)
+        return cand
     # Step 65 (2026-06-12): prev_render closes the visual feedback loop --
     # the previous attempt's PNG (always rendered before QC) is attached so
     # the Generator can SEE the layout the feedback refers to.
@@ -589,7 +609,8 @@ async def _process_sample(client: AsyncOpenAI, sample_id: str) -> Dict:
         cand_png = OUT / f"{RENDER_PREFIX}_crello_{sample_id}_r{round_idx}a{attempt}.png"
         print(f"  Round {round_idx} attempt {attempt}: generating...")
         cand = await _generate_render(
-            sample_id, spec, tree, bg, feedback, cand_png, prev_render=prev_png
+            sample_id, spec, tree, bg, feedback, cand_png, prev_render=prev_png,
+            variant=attempt - 1,
         )
         if cand is None:
             rounds_log.append({"round": round_idx, "attempt": attempt, "status": "generate_failed"})
@@ -709,7 +730,8 @@ async def _process_sample(client: AsyncOpenAI, sample_id: str) -> Dict:
         cand_png = OUT / f"{RENDER_PREFIX}_crello_{sample_id}_r{round_idx}a1.png"
         print(f"  Round {round_idx}: generating against {reference_label}...")
         cand = await _generate_render(
-            sample_id, spec, tree, bg, feedback, cand_png, prev_render=prev_png
+            sample_id, spec, tree, bg, feedback, cand_png, prev_render=prev_png,
+            variant=round_idx - 1,
         )
         if cand is None:
             rounds_log.append({"round": round_idx, "attempt": 1, "status": "generate_failed"})
@@ -762,7 +784,7 @@ async def _process_sample(client: AsyncOpenAI, sample_id: str) -> Dict:
 
 
 async def main() -> int:
-    global SAFE_ZONE_GATE, RENDER_PREFIX, RESULTS_JSON
+    global SAFE_ZONE_GATE, RENDER_PREFIX, RESULTS_JSON, SOLVER_MODE
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--ids-file", default=None)
@@ -773,9 +795,16 @@ async def main() -> int:
     )
     parser.add_argument("--render-prefix", default=RENDER_PREFIX)
     parser.add_argument("--results-json", default=RESULTS_JSON)
+    parser.add_argument(
+        "--solver",
+        action="store_true",
+        help="Step 66: replace the LLM Layout Generator with the deterministic "
+        "constraint solver (tools/constraint_solver.py); attempt index = variant",
+    )
     args = parser.parse_args()
 
     SAFE_ZONE_GATE = not args.no_safe_zone_gate
+    SOLVER_MODE = args.solver
     RENDER_PREFIX = args.render_prefix
     RESULTS_JSON = args.results_json
     print(f"safe_zone_gate={'ON' if SAFE_ZONE_GATE else 'OFF'}  prefix={RENDER_PREFIX}")

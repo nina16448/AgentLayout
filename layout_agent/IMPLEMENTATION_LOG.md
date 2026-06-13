@@ -4609,4 +4609,108 @@ composition 合約能過）、新牆=underlay；第二輪（含 64c）hero 首�
 
 ---
 
-*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/12*
+## Step 66（2026-06-13）：Constraint-solver placement——幾何全面去 LLM 化
+
+**動機**：Generator-bounded 已七次確認；文字 feedback（Step 59）與
+視覺自我修正（Step 65）雙雙排除後，ceiling 清單只剩 constraint-
+solver placement 與 fine-tuning。使用者裁示：「我覺得可以試試看
+Constraint-solver placement」。本步把像素層幾何決策從 LLM 手中整
+個拿走：placement 由確定性 solver 直接從構圖指令＋QC 數學「建構」
+出合規 bbox；LLM 保留 Analyst／構圖師（ComposeSketch）／judge。
+
+**新模組 `metagpt/ext/agentlayout/tools/constraint_solver.py`**
+（`solve_placement(spec, bg, variant) -> Candidate`）：
+- 與 QC 共用同一套數學來源：`cell_bounds`／`SIZE_BUCKET_RANGES`
+  （照片面積取 bucket 中點，離兩側邊界最遠）、30% riding／80%
+  underlay 覆蓋合約、coverage≥0.10／死帶≤0.60、Step 59
+  `_bg_gradient_map` Sobel 梯度圖——「由構造保證」通過 oracle gate
+  六類違規。
+- 文字量測直接用 renderer 的 `_resolve_font`／`_wrap_to_width`／
+  `_MEASURE_DRAW`：量測與渲染同字型物件，shrink-to-fit 不觸發。
+- 質心對位：QC `_check_composition` 檢查的是面積加權質心；solver
+  先原點堆疊→算質心→整體平移 target−centroid，數學精確命中。
+- **錨點搜尋（solver 的本質）**：text 直接踩背景的模板在 directive
+  cell ±80% composition tolerance 範圍內取 5×5 錨點網格，以（文字
+  下梯度 ASC、safe-zone 含覆率 DESC、離 cell 中心距離 ASC）排序取
+  argmin——Step 59 證明 LLM 對 underlay/位置指令零回應，solver 直
+  接數值下山。
+- relation 各自的幾何合約：text-on-photo＝stack 縮放至照片內置中
+  （riding 100%）＋underlay 外擴 6% 全包；stacked＝照片往 cell 反
+  側邊緣偏移、文字嚴格放上/下帶內（防 relation 分類器誤判成
+  text-on-photo）；centered-mix＝文字上下分拆、面積配平質心至照片
+  中心 ±canvas/6；side-by-side／text-only＝錨點搜尋。
+- 修復迴圈（anchor 模式限定）：coverage 不足→字級按 sqrt 缺口自適
+  應放大；垂直死帶→gap×3.5 重排；水平死帶→錨點內移。
+- `variant` 0/1/2（預設／字級×1.18／字級×0.86＋photo +0.05）給
+  retry 迴圈確定性變體；同輸入同 variant 位元級重現。
+- typography 啟發式：title=display bold（style_keywords 含
+  elegant/wedding/script 等→script）、subtitle/CTA=sans-serif
+  bold；顏色全用 `bg.recommended_text_color`。
+
+**Driver**：`step41_layout_aware_oracle.py` 加 `--solver` flag——
+`_generate_render` 換成 `solve_placement`（attempt index = variant），
+Analyst/PlanAssets/ComposeSketch/QC gate/judge 全部不動。拒答在
+placement 階段結構性歸零（零 LLM 呼叫）。
+
+**測試**：新 `test_constraint_solver.py` 28 條全過——10 模板
+gate-clean 參數化、riding/underlay 合約數值驗證、質心命中 cell、
+relation 分類器自洽（QC 同款函式驗）、確定性／variant 差異、busy
+背景梯度迴避（左噪右平合成背景，stack 移往平坦半側）、全噪背景
+underlay 自動出動、亮度感知文字色（暗照片→白字、淺背景→黑字）、
+537×240／1080×1920 極端畫布。全套件 **351 passed / 12 skipped**
+零回歸。
+
+**Smoke N=5 機制全勝、判決全敗（→ 兩處修正後 live）**：
+- 15/15 attempt 全部進 judge——step58 以來**首次**零 QC 退件、
+  **零拒答**（solver 零 LLM，拒答結構性歸零）、零 generate_failed。
+- 但判決 15/15 輸 B、acceptance 0/5；a_flags 抓到兩個真實視覺缺
+  陷：(1) `composition_unbalanced`——錨點梯度未分箱時在均勻 busy
+  背景上被取樣噪音拉離中心；(2) `low_contrast_text` 15/15——
+  `bg.recommended_text_color` 以全域背景亮度決定，對「暗照片上騎
+  字＋淺畫布」全錯。
+- 兩修：梯度分箱 0.01（真實 busy-vs-flat 對比跨多箱仍主導，均勻
+  背景的 per-anchor 差異歸零不再亂移）；新 `_pick_text_color`——
+  取文字 stack 正下方那塊「地」的亮度（騎字時取照片裁切、否則背
+  景裁切、再否則畫布色），<140 給白字否則黑字。視覺自查確認暗霓
+  虹照片上的 "Discover now" 由黑翻白、可讀。
+
+**Live N=20 結果（`step66_live.{log,results.json}`，untracked）**：
+- **機制面 step58 以來最佳**：judge 曝光 **55 輪**（vs step63=18、
+  step64=25）、零拒答、零 generate_failed、僅 5 輪 QC 退件（皆來自
+  2 個邊角樣本，見下）。**18/20 樣本完全 gate-clean by
+  construction**。
+- **核心負結果 = 最乾淨的 Generator-bounded 反證**：acceptance
+  **0/20**、**55/55 全敗 B、零 tie 零 A**。per-axis：design_layout
+  A=0 **B=55**、typography A=0 B=53、graphics A=0 B=50、content
+  tie=35、innovation tie=33。
+- **關鍵發現：QC 數學合規 ≠ MLLM judge 美學偏好。** 即使把 LLM 完
+  全移出幾何、由構造保證質心命中 cell／面積達 bucket 中點／
+  coverage 達標／零 gate 違規，judge 仍 55/55 偏好設計師 GT。主因
+  a_flags：`composition_unbalanced` 54、`low_contrast_text` 36、
+  `generic_centered_only_composition` 25、`size_hierarchy_broken`
+  22。judge 把 solver 的「置中、對稱、規則」構圖判為「通用、不平
+  衡」，設計師 GT 的非對稱動態構圖勝出。
+- **誠實限定**：(1)「gate-clean by construction」成立於 18/20；2
+  個邊角 solver 修復迴圈未完全消除——`5f9815e2`（超 sparse 短文
+  字，coverage 5.7→8.5%、水平死帶 86%，單行窄文字填不滿寬畫布）、
+  `589d7bd9`（hero 窄照片，垂直死帶僅超閾 0.8–2.3%，text-on-photo
+  分支未跑 dead-band 修復）。這 5 輪被 driver QC gate 正確攔截、未
+  進 judge，不影響 55/55 統計（反證 gate 仍運作）。(2)
+  `low_contrast_text` 仍 36 次——`_pick_text_color` 取 stack bbox
+  區域**平均**亮度，busy 中暗背景（如霧林）局部深處對比仍不足；單
+  一文字色無法同時對所有局部高對比，需 underlay／text treatment
+  ——呼應 step 11「schema 表達力 scope boundary」。
+
+**結論**：constraint-solver placement 路線 = **negative result，但
+是最強的 Generator-bounded 反證**。先前七次「Generator-bounded」都
+可被質疑為 LLM 幾何執行力問題；本步把 LLM 完全移出幾何、幾何由構
+造數學最優，judge 仍 55/55 偏好設計師——證明 gap 不在「誰擺
+bbox」，而在 **QC 可驗證的幾何合規性 vs judge 的整體美學偏好之間
+的本質落差**（置中規則 vs 設計師的非對稱動態構圖）。ceiling 未試
+路線只剩 fine-tuning（1,902 GT）。引用須帶 judge 曝光 55（史上最高）
+＋「QC-compliant ≠ judge-preferred」脈絡。產物：`step66_smoke.*`、
+`step66_live.*`、`step66_sanity_*.png`（log/results gitignored）。
+
+---
+
+*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/13*
