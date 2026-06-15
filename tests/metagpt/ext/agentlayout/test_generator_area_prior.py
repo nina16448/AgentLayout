@@ -173,10 +173,11 @@ def test_inject_photo_size_prior_noop_without_photo():
     assert spec.hard_constraints == []
 
 
-def test_prompt_template_formats_with_eleven_substitutions():
+def test_prompt_template_formats_with_twelve_substitutions():
     """Regression: PROMPT_TEMPLATE.format must not raise KeyError after the
-    photo_size_prior (Step 60), composition_directive (Step 62) and
-    self_render (Step 65) slots were added (all literal braces stay escaped)."""
+    photo_size_prior (Step 60), composition_directive (Step 62), self_render
+    (Step 65) and exemplars (Step 67) slots were added (all literal braces
+    stay escaped)."""
     rendered = PROMPT_TEMPLATE.format(
         design_spec="{}",
         safe_zones="[]",
@@ -189,12 +190,15 @@ def test_prompt_template_formats_with_eleven_substitutions():
         photo_size_prior="None",
         composition_directive="None",
         self_render="None",
+        exemplars="None",
     )
     assert "# GT-calibrated photo size prior (Step 60" in rendered
     assert "{photo_size_prior}" not in rendered
     assert "# Composition directive (Step 62" in rendered
     assert "{composition_directive}" not in rendered
     assert "{self_render}" not in rendered
+    assert "# Designer exemplars (Step 67" in rendered
+    assert "{exemplars}" not in rendered
 
 
 # ============================================================

@@ -15,9 +15,12 @@ Implementation:
     on DIS dataset). rembg returns a single-channel uint8 alpha mask at the
     input resolution.
   * Fuse: resize both maps to the layout canvas resolution, then take the
-    per-pixel mean (BASNet + ISNet)/2. This matches the PKU author's stated
-    intent of "detection followed by refinement" without committing to a
-    specific cascading scheme that the paper does not document.
+    per-pixel MAX, matching PKU eval.py ``pic = np.maximum(pic_1, pic_2)``
+    (metric-audit A3, 2026-06-13; previously this was a mean, which
+    under-estimated saliency vs PKU's max and broke Occ comparability).
+    Remaining deviation from PKU: PKU's two maps are PFPN + BASNet; here we
+    substitute ISNet for PFPN -- a model-identity difference still open
+    (see layout_agent/METRIC_ALIGNMENT_AUDIT.md A3).
 
 Returns float32 in [0, 1] of shape (H, W). On failure (model load error or
 torch unavailable) raises ``RuntimeError`` instead of silently falling back;
@@ -180,7 +183,13 @@ def basnet_isnet_saliency(
     isnet_raw = _isnet_saliency(bg_rgb)
     isnet_resized = cv2.resize(isnet_raw, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
 
-    fused = (basnet_resized + isnet_resized) / 2.0
+    # Metric-audit A3 (2026-06-13): fuse via per-pixel MAX, matching PKU
+    # eval.py `pic = np.maximum(pic_1, pic_2)`. Previously this took the
+    # mean, which systematically under-estimates saliency vs PKU's max and
+    # made our Occ numbers non-comparable. (Remaining deviation: PKU's two
+    # maps are PFPN + BASNet; we substitute ISNet for PFPN -- a model-
+    # identity difference still open, see METRIC_ALIGNMENT_AUDIT.md A3.)
+    fused = np.maximum(basnet_resized, isnet_resized)
     fused = np.clip(fused, 0.0, 1.0).astype(np.float32)
     return fused
 

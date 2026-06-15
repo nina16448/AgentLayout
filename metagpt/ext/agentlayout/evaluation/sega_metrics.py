@@ -102,10 +102,65 @@ def _bbox_inter_oneside(bb1: BBoxXYXY, bb2: BBoxXYXY) -> float:
 
 
 def _is_contain(bb_outer: BBoxXYXY, bb_inner: BBoxXYXY) -> bool:
-    """True iff bb_outer fully contains bb_inner (inclusive)."""
-    xl_o, yl_o, xr_o, yr_o = bb_outer
-    xl_i, yl_i, xr_i, yr_i = bb_inner
-    return xl_o <= xl_i and yl_o <= yl_i and xr_o >= xr_i and yr_o >= yr_i
+    """PKU-compatible containment for Und_s (metric-audit A5).
+
+    PKU eval.py's ``is_contain`` has a known bug: its 3rd condition is
+    ``xr_2 >= xr_2`` (the inner box's right edge compared to itself -- always
+    True), so the right edge is NEVER checked; containment is effectively
+    3-sided (left / top / bottom). SEGA Table 3 inherits the PKU evaluator
+    verbatim, so to keep Und_s comparable we reproduce the bug rather than the
+    intended 4-sided check. The right-edge term is intentionally omitted.
+    """
+    xl_o, yl_o, _xr_o, yr_o = bb_outer
+    xl_i, yl_i, _xr_i, yr_i = bb_inner
+    # NOTE: right-edge check (xr_o >= xr_i) intentionally OMITTED -- see above.
+    return xl_o <= xl_i and yl_o <= yl_i and yr_o >= yr_i
+
+
+# ============================================================
+# Preprocessing helpers (metric-audit A2 / A7)
+# ============================================================
+
+
+def drop_invalid_elements(
+    layout: Layout,
+    canvas_w: float,
+    canvas_h: float,
+    area_frac: float = 0.001,
+) -> Layout:
+    """Remove elements smaller than ``area_frac`` of the canvas (PKU getRidOfInvalid).
+
+    PKU eval.py invalidates any box whose canvas-clamped area is below
+    ``5.13 * 7.50 * 10 = 384.75`` px at 513x750 -- i.e. 0.1% of the canvas
+    area -- by setting its class to 0 before the geometry metrics run. We
+    reproduce that threshold scale-independently (default ``area_frac=0.001``)
+    against the per-sample native canvas. Callers should apply this once to
+    each layout before metric_* so tiny/degenerate boxes don't pollute
+    Alignment / Overlay / Occlusion / Readability (metric-audit A2).
+    """
+    thresh = float(area_frac) * float(canvas_w) * float(canvas_h)
+    kept: Layout = []
+    for cls, (xl, yl, xr, yr) in layout:
+        # Clamp to canvas bounds before the area test, matching PKU.
+        cxl = max(0.0, float(xl))
+        cyl = max(0.0, float(yl))
+        cxr = min(float(canvas_w), float(xr))
+        cyr = min(float(canvas_h), float(yr))
+        area = abs((cxr - cxl) * (cyr - cyl))
+        if area >= thresh:
+            kept.append((cls, (xl, yl, xr, yr)))
+    return kept
+
+
+def layout_has_underlay(layout: Layout) -> bool:
+    """True iff the layout contains >=1 underlay (cls==3) element.
+
+    Lets callers distinguish "no underlay emitted" (Und is N/A -- exclude
+    from the mean, since PKU averages Und only over underlay-bearing layouts
+    via ``avali``) from "underlay present but covers nothing" (a real 0).
+    See metric-audit A7.
+    """
+    return any(cls == CLS_UNDERLAY for cls, _ in layout)
 
 
 # ============================================================
@@ -140,10 +195,12 @@ def metric_alignment(
 ) -> float:
     """Indicator of pair-wise non-alignment across elements in a layout.
 
-    For each element, we compute 6 normalised position/size features
-    (left, top, center_x, center_y, width, height) -> the minimum pairwise
+    For each element, we compute 6 normalised position features
+    (left, top, center_x, center_y, right, bottom) -> the minimum pairwise
     delta on each axis among all elements -> g(delta). The per-element
     score is the min across the 6 axes (the strongest alignment evidence).
+    These are the same 6 edge/center axes as PKU eval.py (NOT width/height;
+    alignment measures edge/center coincidence, not size similarity).
     Layout score = sum of per-element scores. Mean over layouts.
 
     Lower is better -- 0 means every element has another perfectly
@@ -164,7 +221,11 @@ def metric_alignment(
             t = yl / canvas_h
             r = xr / canvas_w
             b = yr / canvas_h
-            theda.append([l, t, (l + r) / 2.0, (t + b) / 2.0, r - l, b - t])
+            # PKU eval.py order: [left, top, center_x, center_y, right, bottom].
+            # NOT width/height -- alignment is edge/center coincidence, so the
+            # 5th/6th axes must be right (xr) and bottom (yr), matching
+            # PKU's theda = [xl, yl, (xl+xr)/2, (yl+yr)/2, xr, yr].
+            theda.append([l, t, (l + r) / 2.0, (t + b) / 2.0, r, b])
         theda_arr = np.array(theda)
         ali = 0.0
         n = len(elements)
@@ -303,9 +364,22 @@ def metric_underlay_strict(layouts: Iterable[Layout]) -> float:
 def _sobel_gradient_normalised(bg_rgb: "np.ndarray") -> "np.ndarray":
     """Compute the Sobel gradient magnitude image, normalised to [0, 1].
 
-    Equivalent to PKU's ``img_to_g_xy``: convert to grayscale, Sobel dx + dy,
-    sqrt((dx^2 + dy^2) / 2), normalise to [0, 255], then divide by 255.
-    Implemented with numpy + cv2.Sobel (cv2 already in repo deps via PIL).
+    Follows PKU's ``img_to_g_xy``: grayscale, Sobel dx + dy (ddepth=-1, so
+    negative gradients saturate to 0 exactly as PKU does), sqrt((dx^2+dy^2)/2),
+    then normalise by the image's own max. cv2 is already a repo dep via PIL.
+
+    Metric-audit A6 -- ONE intentional deviation from PKU, documented not
+    replicated: PKU keeps the Sobel output as uint8 and computes ``dx**2`` in
+    uint8, which OVERFLOWS (255**2 mod 256 = 1), scrambling strong edges. We
+    cast to float64 before squaring, so our gradient is the mathematically
+    correct magnitude. We deliberately do NOT reproduce the overflow because
+    (a) it makes the metric semantically meaningless for strong edges, and
+    (b) the QC TEXT_ON_BUSY_TEXTURE threshold (Step 57/58, T=0.065) is
+    GT-calibrated against THIS float gradient via quality_checker
+    ``_bg_gradient_map`` -- replicating the overflow would silently break that
+    calibration. Consequence: our Readability is not bit-identical to PKU's
+    but is monotonic/correct; treat cross-paper Read as indicative (already a
+    caveat for the whole table).
     """
     import cv2  # local import so module-level import doesn't fail without cv2
 
@@ -347,12 +421,18 @@ def metric_readability(
     if not layouts_list:
         return 0.0
     total = 0.0
-    n_counted = 0
+    # A4: denominator = every evaluable sample (non-None bg), matching PKU
+    # `return metrics / len(img_names)`. A sample with no text region (or zero
+    # gradient) contributes 0 to the numerator but is still counted -- unlike
+    # the old code, which divided by only the contributing samples and so
+    # biased Readability high.
+    n_eval = 0
     cw = int(round(canvas_w))
     ch = int(round(canvas_h))
     for layout, bg_rgb in zip(layouts_list, bg_list):
         if bg_rgb is None:
             continue
+        n_eval += 1
         # PKU resizes everything to (513, 750); we resize to the *layout*
         # canvas so bbox indices line up. The bbox coords are in the
         # layout canvas frame, so we resize the bg image to match.
@@ -380,15 +460,14 @@ def metric_readability(
                     mask[yli:yri, xli:xri] = 0.0
         total_area = float(mask.sum())
         if total_area <= 0:
+            # No text region: contributes 0 to numerator, still in n_eval.
             continue
         total_grad = float(grad[mask > 0.5].sum())
-        if total_grad <= 0:
-            continue
+        # total_grad == 0 (flat bg) adds 0 -- matches PKU's `if total_grad`.
         total += total_grad / total_area
-        n_counted += 1
-    if n_counted == 0:
+    if n_eval == 0:
         return 0.0
-    return total / n_counted
+    return total / n_eval
 
 
 # ============================================================
@@ -417,12 +496,17 @@ def metric_occlusion(
             f"{len(layouts_list)} layouts; one map per layout required."
         )
     total = 0.0
-    n_counted = 0
+    # A4: denominator = every evaluable sample (non-None saliency), matching
+    # PKU `return metrics / len(img_names)`. A layout covering no salient
+    # pixels contributes 0 but is still counted (old code divided by only the
+    # contributing samples, biasing Occ).
+    n_eval = 0
     cw = int(round(canvas_w))
     ch = int(round(canvas_h))
     for layout, sal in zip(layouts_list, sal_list):
         if sal is None:
             continue
+        n_eval += 1
         import cv2
 
         if sal.shape[1] != cw or sal.shape[0] != ch:
@@ -439,12 +523,11 @@ def metric_occlusion(
                 mask[yli:yri, xli:xri] = 1.0
         total_area = float(mask.sum())
         if total_area <= 0:
+            # No element covers anything: contributes 0, still in n_eval.
             continue
         total_sal = float(sal[mask > 0.5].sum())
-        if total_sal <= 0:
-            continue
+        # total_sal == 0 (elements over flat/non-salient bg) adds 0.
         total += total_sal / total_area
-        n_counted += 1
-    if n_counted == 0:
+    if n_eval == 0:
         return 0.0
-    return total / n_counted
+    return total / n_eval

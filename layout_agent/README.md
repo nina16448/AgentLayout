@@ -4,6 +4,64 @@
 
 ---
 
+## 文件閱讀指南：本檔為「設計藍圖」非「實作現況」
+
+本 README 是整個系統的**設計藍圖與研究理念展示**，描述的是論文方法章節背後完整的構思與整體架構願景。隨著實驗一路演進，部分模組目前以最小可用版本（minimum viable version）或**預留欄位**的形式運作，與本檔描述的最終理想型態之間存在已知落差。
+
+**最新的實作現況請以下列檔案為準**（這三個檔案會跟著每次實驗同步更新）：
+
+- `layout_agent/IMPLEMENTATION_LOG.md` — 從第一版到最新一次實驗的每一個設計決策、修改原因、權衡取捨的逐步紀錄
+- `layout_agent/result.md` — 最新的實驗結果、Benchmark 比較、可放進論文的數據與結論
+- `layout_agent/EXPERIMENT_MATRIX.md` — 主實驗與所有 ablation 的完整對照表
+
+### 已知的主要落差說明
+
+為避免讀者因為閱讀 README 而誤判系統實際能力，以下落差特別說明清楚：
+
+#### 1. CLIP 語意相似度（semantic_relevance）目前為預留欄位
+
+README 在「系統模組總覽」「Element Embedding 前處理」與附錄符號表多處描述：使用 **CLIP ViT-L/14** 將圖片元素、**CLIP Text Encoder** 將文字元素統一編碼成向量，再與 style_keywords 計算 cosine similarity，作為 `semantic_relevance` 欄位。同時還會將所有 embedding 存進 **Embedding Store**（FAISS）。
+
+**實作上：** 上述 CLIP 編碼器與 Embedding Store **目前都尚未實作**，`semantic_relevance` 統一回傳中性常數 **0.5**。此模組列為未來工作。
+
+**為什麼可以暫不影響論文核心論點：** 在現行流程中，`semantic_relevance` 只被 Asset Planner 拿來輔助安排元素分群，而它的「上游搭檔」`importance`（直接從元素類型查表得到，例如標題=5、內文=3、裝飾=1）已經提供了主要的語意重要性訊號。換句話說，**用 CLIP 算出來的 cosine 分數所能多帶來的訊號，主要是「同類元素之間誰更貼近 style_keywords」這個第二層的區分**，對於整體版面決策的影響相對邊際。
+
+#### 2. Composition Director（AI 構圖師）僅存在於實驗驅動腳本
+
+README 後段的 step 紀錄與架構描述中提到 **Composition Director**（程式碼為 `actions/compose_sketch.py`）——它的角色是在像素級排版之前，先從 GT-calibrated 模板庫中選一個合適的「整體構圖方向」（焦點照片放哪一格、文字壓不壓在照片上、照片佔多大面積...），讓 Layout Generator 在這個約束下做細部安排。
+
+**實作上：** 預設的整套流程（`LayoutPipeline.run()`）以及 Role 流程（`build_team()`）**皆未串接 Composition Director**，此模組目前只在實驗驅動腳本 `layout_agent/output/step41_layout_aware_oracle.py` 中被呼叫。
+
+**為什麼維持現狀：** 在 Step 62–66 的系列實驗中，加入 Composition Director 雖然機制本身運作正常，但對最終 acceptance 與 win-rate 並未帶來顯著提升，**結論已收斂為 limitation** 寫進論文。將其推進為預設流程會把一個被驗證為 negative 的元件鋪成系統預設行為，故維持只在實驗腳本中啟用的設計。
+
+#### 3. 預設 Role 編制為五個，不含 CompositionDirectorRole
+
+預設 Team 由以下五個 Role 組成：`AnalystRole`、`AssetPlannerRole`、`LayoutGeneratorRole`、`AestheticJudgeRole`、`IterationStateRole`，**不包含 README 部分流程圖中描述的 CompositionDirectorRole**。理由同上一條。
+
+#### 4. Refinement Loop 的兩條流程實作有小差異
+
+系統提供兩種流程入口：直接呼叫的 **Pipeline 流程**（`LayoutPipeline.run()`）與 Team / Role 流程（`build_team()`），兩者在「best-so-far guard」（避免被噪音 re-judge 拉回較差的 anchor）與「最大輪數計算」上存在小幅差異。
+
+**為什麼可以暫不影響論文 headline 數據：** 所有 headline 實驗結果（包含 Step 22 N=100 的主結論）都是透過實驗驅動腳本 `step41_layout_aware_oracle.py` 跑出來的，這支腳本自帶迴圈控制邏輯，不經由上述兩條 default 流程。詳見 `IMPLEMENTATION_LOG.md` Step 31。
+
+#### 5. Generator prompt 與 Quality Checker 的尺寸門檻刻意不一致
+
+README 「系統模組總覽」描述 Quality Checker 會驗證版面合法性。實作上 Generator prompt 對「prominent」「medium」尺寸寫的是 stretch target（例：prominent **20%**），但 Quality Checker 的實際 accept 下限低於此（例：prominent **10%**）。
+
+**為什麼這是刻意設計：** 在 Step 58/60 觀察到 LLM 系統性「尺寸膽怯」（傾向於把元素做太小）。把 prompt 寫高、QC 門檻寫低，相當於告訴 LLM「請朝 20% 努力」，而實際只要做到 10% 就會被接受。這個雙層門檻是為了拉回 LLM 的偏移。此設計細節在程式碼中已加上 inline 註解說明（`tools/quality_checker.py` 與 `actions/generate_layout.py`），避免未來被當成 bug 修掉。
+
+### 為什麼選擇保留 README 原文、另以 banner 說明落差
+
+本 README 同時是**論文研究方法章節的延伸說明**與**整套系統的設計理念展示**。如果改寫成「實作現況快照」會：
+
+- 失去研究藍圖的完整性，讀者無法看到完整的系統構思
+- 與論文方法章節的敘述風格脫節
+- 隨著實驗持續演進需要頻繁重寫，反而難以維持一致
+
+因此本檔**保留為設計藍圖性質**，實作層面的最新狀態與每次修改的脈絡以 `IMPLEMENTATION_LOG.md` 為準，最新的實驗數據以 `result.md` 為準。
+
+---
+
 ## 研究背景與動機
 
 本研究所在實驗室的方向為 AI 應用研究。本篇碩士論文的主題是**利用 Multi-Agent AI 系統解決內容感知排版生成（Content-Aware Layout Generation）問題**——在**既有背景畫布**上，根據自然語言 brief 與一組既有素材（image / text），決定每個元素的座標、大小、層次與視覺屬性。任務 scope 不包含背景生成、字型/裝飾合成、影像 inpainting——這些是 scope 外能力，已記為 limitation（見 `result.md` §0、§3.3）。Benchmark 對齊 AesthetiQ（CVPR 2025）、LayoutNUWA、PosterLLaVa 等 content-aware layout generation 同類方法，protocol 為 pairwise win-rate vs designer-GT layout（同 renderer 純排版幾何）+ Mean IoU。

@@ -77,12 +77,28 @@ SIZE_HINT_LOWER_BOUND: Dict[str, float] = {
     # hint -> minimum element_area / canvas_area ratio.
     # Buckets follow the Layout Generator prompt's size reference, plus
     # 'prominent' which Analyst uses as a synonym in the spec example.
+    #
+    # DELIBERATE ASYMMETRY (Step 67 audit, 2026-06-14): these values are
+    # the *QC ACCEPTANCE FLOOR*, NOT the Generator's target. The Layout
+    # Generator prompt (actions/generate_layout.py PROMPT_TEMPLATE, "size
+    # reference" block) intentionally quotes higher numbers as STRETCH
+    # TARGETS (e.g. prompt 'prominent >=20%' vs QC 0.10; prompt
+    # 'medium >=15%' vs QC 0.08). Combined with the prompt's
+    # 'aim for value .. value*1.2; do NOT exceed by huge margins' rule
+    # this counters the LLM size-timidity surfaced in Step 58/60 (see
+    # [[project_step58_coverage_qc_live]], [[project_step60_photo_size_prior]]):
+    # the LLM systematically undershoots, so anchoring the prompt to the
+    # QC floor would land actual outputs *below* the floor and crater
+    # acceptance. Do NOT "fix" this by aligning the two numbers --
+    # all published Step 22..66 calibration was done against this gap.
     "full-canvas": 0.95,
     "hero": 0.60,
     "large": 0.30,
     # 'prominent' = "should stand out", typical for poster headlines.
     # 0.10 calibrated against vertical posters where headline is one line of bold text;
     # 0.20 was too strict (forced a 240px-tall banner on a 1200px canvas).
+    # The Generator prompt still quotes 'prominent >=20%' as a stretch
+    # target -- see the asymmetry note at the top of this dict.
     "prominent": 0.10,
     # Step 60 (2026-06-11): GT-calibrated PHOTO bucket. Designer GT photos
     # have area_ratio p50 = 0.213 (N=2,374 elements over 1,902 layouts, see
@@ -230,12 +246,26 @@ def check_candidate(
 def filter_valid(
     candidates: Iterable[Candidate],
     spec: DesignSpec,
+    bg: Optional[BackgroundAnalysis] = None,
 ) -> Tuple[List[Candidate], List[CheckResult]]:
-    """Batch wrapper. Returns (kept_candidates, all_reports)."""
+    """Batch wrapper. Returns (kept_candidates, all_reports).
+
+    ``bg`` is forwarded to :func:`check_candidate` so the Step 43 safe-zone
+    rule (``_check_primary_in_safe_zone``) can fire when a caller supplies
+    a background analysis. Pre-Step 67 the parameter was dropped silently,
+    which meant every production caller (``pipeline._generate_with_topup``,
+    ``LayoutGeneratorRole._generate_with_topup``) ran QC without ``bg`` even
+    though they already had one in scope. The safe-zone rule short-circuits
+    whenever ``spec.composition is not None`` (the Step 63 deference contract
+    for the Composition Director path), so wiring ``bg`` through here does
+    not change behaviour for the Crello Composition Director pipeline -- it
+    just stops the API from silently dropping the argument on non-composition
+    callers (oracle drivers, ablation harnesses, tests).
+    """
     kept: List[Candidate] = []
     reports: List[CheckResult] = []
     for c in candidates:
-        report = check_candidate(c, spec)
+        report = check_candidate(c, spec, bg=bg)
         reports.append(report)
         if report.passed:
             kept.append(c)

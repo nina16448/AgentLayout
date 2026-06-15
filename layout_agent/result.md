@@ -946,7 +946,17 @@
 
 **結果（live N=20）**：機制全程運作——40 次 2-image 呼叫、23 次模型真正看到自己的 render、拒答 21 次零漏網。**假設未獲支持**（同指標 vs Step 64 純文字基線）：跨 attempt 違規演化 9/20 vs 13/20（churn 本來就有、視覺回灌沒加成）；QC退件→judge 修復 5=5；design_layout A=0 B=23。**新發現：self-render 使拒答率翻倍**（2-image 42.5% vs 1-image 20%），且 fallback 連背景圖一併丟失。acceptance 1/20（`589d7bd9` tie 過關、content＋typography 雙 A 勝）**但歸因翻案**：時間戳證明該輪被拒答後由純文字 fallback 生成——系統史上最佳單輪沒看任何圖。
 
-**誠實定調**：(1) 視覺自我修正路線關閉（negative result、歸因乾淨）：Step 59「retry 不回應」結論在視覺通道下依然成立，**瓶頸不在 feedback 模態而在 Generator 構圖能力本身**；(2) 唯一 acceptance 不可歸功本步機制（該輪 text-only）；(3) 拒答偵測 parse-first 修正是永久性基礎建設、獨立於假設成立；(4) ceiling 三條未試路線只剩 constraint-solver placement 與 fine-tuning。
+**誠實定調**：(1) 視覺自我修正路線關閉（negative result、歸因乾淨）：Step 59「retry 不回應」結論在視覺通道下依然成立，**瓶頸不在 feedback 模態而在 Generator 構圖能力本身**；(2) 唯一 acceptance 不可歸功本步機制（該輪 text-only）；(3) 拒答偵測 parse-first 修正是永久性基礎建設、獨立於假設成立；(4) ceiling 未試路線剩 constraint-solver placement（下一步 Step 66）與 fine-tuning。
+
+---
+
+### Step 66 — constraint-solver placement：幾何全移出 LLM，仍 55/55 全敗（live N=20，2026-06-13）
+
+**方法**：把版面幾何整個移出 LLM——新增 `constraint_solver.py`，由 `solve_placement` 以構造數學決定每個元素的 bbox：質心命中指定 cell、面積達 bucket 中點、coverage 達標、零 gate 違規；支援 stacked／centered-mix／`_split_around_photo` 等 relation 分支，並以 `_region_luminance`＋`_pick_text_color` 依背景亮度選文字色。LLM 只剩語意（哪段文字、用哪張 asset），座標完全由 solver 決定。26 個 solver 單元測試 + 全套 349 測試綠燈；zero-LLM sanity render 3 模板有效。
+
+**結果（live N=20，`step66_live.{log,results.json}`，untracked）**：機制面 Step 58 以來最佳——judge 曝光 **55 輪**（vs Step63=18、Step64=25）、零拒答、零 generate_failed、僅 5 輪 QC 退件（皆來自 2 個邊角樣本）、**18/20 樣本 gate-clean by construction**。但 acceptance **0/20**、**55/55 全敗 B、零 tie 零 A**。per-axis：design_layout A=0 **B=55**、typography A=0 B=53、graphics A=0 B=50、content tie=35、innovation tie=33。主因 a_flags：`composition_unbalanced` 54、`low_contrast_text` 36、`generic_centered_only_composition` 25、`size_hierarchy_broken` 22——judge 把 solver 的置中／對稱／規則構圖判為「通用、不平衡」，設計師 GT 的非對稱動態構圖勝出。
+
+**誠實定調**：constraint-solver placement = **negative result，但是最強的 Generator-bounded 反證**。先前七次「Generator-bounded」都可被質疑為 LLM 幾何執行力問題；本步把 LLM 完全移出幾何、由構造數學最優，judge 仍 55/55 偏好設計師——證明 gap 不在「誰擺 bbox」，而在 **QC 可驗證的幾何合規性 vs judge 整體美學偏好之間的本質落差**（置中規則 vs 設計師非對稱動態構圖）。**核心命題：QC 數學合規 ≠ MLLM judge 美學偏好。** 限定：(1)「gate-clean by construction」成立於 18/20，2 個邊角樣本（`5f9815e2` 超 sparse 短文字、`589d7bd9` hero 窄照片）solver 修復迴圈未完全消除，被 driver QC gate 正確攔截未進 judge，不影響 55/55 統計；(2) `low_contrast_text` 仍 36 次——`_pick_text_color` 取 stack 區域平均亮度，busy 中暗背景局部深處對比仍不足，單一文字色無法對所有局部高對比，呼應 Step 11「schema 表達力 scope boundary」。引用須帶 judge 曝光 55（史上最高）＋「QC-compliant ≠ judge-preferred」脈絡。ceiling 未試路線只剩 fine-tuning（1,902 GT）。產物：`step66_smoke.*`、`step66_live.*`、`step66_sanity_*.png`（gitignored）；程式 `metagpt/ext/agentlayout/tools/constraint_solver.py`。
 
 ---
 
@@ -956,6 +966,7 @@
 - step 11 task-aligned pairwise head-to-head（同 renderer 純排版幾何，與 AesthetiQ Table 1「vs GT」一致）：N=3 設計師 2:1。先前「+2/+2/+4 勝 GT」是非配對單邊測量假象，**作廢**。
 - step 13 Win rate 80% 原受三 caveat 限制；**Step 14 已用獨立 Claude judge 消除最強的 self-preference confound（80% ↔ 80% 完全複製）**；**Step 17 進一步在 post-fix content-aware render 上用同 Claude judge judge-only 重判（75.0%）→ 同量級（80→75 N=20 噪音內），跨 pre/post-fix render 再次穩固**。剩 judge≠VILA-7B、N=20≠1,971 兩 caveat 未消，故 AesthetiQ 17.19% 仍僅作 qualitative/indicative 對照、不進勝負表；但可誠實宣稱「SOTA-positioning 結果對獨立 judge + render 版本皆 robust，非自我偏好假象」。
 - **Step 16 SOTA-context 表**（AesthetiQ Table 1，VILA-7B/1,971）為 published-numbers **related-work 定位**，非 head-to-head；我方 IoU ~9.94% 屬最弱段量級、win-rate B 語意與其不同，**禁止併入其排名表**。
+- **SEGA Table 3（Ali/Ove/Und_l/Und_s/Read/Occ）亦不可同表對標**（2026-06-13 指標稽核結案）：逐行對照 PKU `eval.py` 後修正 7 項實作差異（A1–A7，`sega_metrics.py`，`test_sega_metrics.py` 18 passed），但剩 3 項**協定層級差異**（P1/P2/P3）無法靠改 code 消除——SEGA 在 Crello **只擺 text**（照片/shape/underlay 已 render 進 canvas、underlay GT 為手工封閉曲線標註），我方是 **asset-placement（吃 asset、text+image 全擺、canvas 只壓底圖 plate、underlay 由 type-0 classifier 推）**。三者是「同一任務形式差異的三張臉」，即 2026-06-04 architectural commitment trade-off。**故 SEGA 6 指標僅作 indicative，永不 head-to-head；我方指標只用於內部比較（AL vs designer GT vs random/centered，同一協定，Step 15/20/29）。** 細節 `layout_agent/METRIC_ALIGNMENT_AUDIT.md`。**注意：A3/A4/A5/A7 修正後，舊 Rea/Occ/Und 數字（Step 20/29 等）需用新指標重算才可比。**
 
 ### §3.2 plateau bal/coh≈17 是結構性 scope-bound limitation
 - 非 LLM 能力問題。Generator schema 無裝飾元素表達力、renderer 零裝飾層、Judge rubric 在裸 asset + 單色底下數學上夾在 ~17。
@@ -1007,3 +1018,139 @@
 | SOTA-context 數字出處 | AesthetiQ, CVPR 2025, arXiv 2503.00591 — Table 1（judge=VILA-7B、Crello test 1,971；FlexDM/LACE/PosterLLaVa/LayoutNUWA/AesthetiQ-1B…8B 之 Mean IoU% + Win-Rate%） |
 | Step 30–64 oracle / blind / QC / 構圖師實驗鏈原始數據 | `layout_agent/output/step3x..step64` 各 `*.log` / `*_results.json` / renders（gitignored）；逐步技術細節 `layout_agent/IMPLEMENTATION_LOG.md` 對應條目；showcase 圖 `layout_agent/good_result/`（7 組 GT+AL 對） |
 | commit 紀錄 | `git log --oneline -- metagpt/ext/agentlayout/`（step 12b = `a87b5034`、step 13 doc = `a2f85a58`） |
+
+---
+
+## §6 Step 68 — X plan：A+B 軸全指標驗證 + Crello N=100 fresh + PKU 997 indicative（2026-06-15）
+
+教授要求論文有可對齊 SOTA 的指標；既有 Crello 主結果雖然引用 SEGA 6 軸，但 (1) SEGA Audit A1–A7 修了 alignment 公式與 underlay_strict 流程、cached 數字未經重算 (2) Phase B 用的是 SDL/SQL/STV/SIO 4-axis、不是當前 COLE 5-axis rubric (3) PKU 從未跑。Step 68 一次補齊。
+
+### 68.1 A 軸 zero-LLM 重算結果（4 個 deterministic 指標 × 6 source）
+
+`validate_geometric_metrics.py`、tolerance 1e-6 on aggregate mean。逐 source 重算 vs cached：
+
+| Source | n 重算 | alignment Δ | overlay Δ | underlay_loose Δ | underlay_strict Δ |
+|---|---|---|---|---|---|
+| **M1 N=1895** (`step29_phasea_full_redesign.json`) | 1895 | **1.18e-05 ⚠️** | 3.0e-18 ✅ | 0 ✅ | **0.0857 ⚠️** |
+| A2 N=1897 (`step23_phasea_full.json`) | 1896 | 9.17e-04 ⚠️ | 5.2e-18 ✅ | 0 ✅ | 0 ✅ |
+| step22 N=100 (`step22_sega_n100_results.json`) | 100 | 9.06e-03 ⚠️ | 0 ✅ | 0 ✅ | 0 ✅ |
+| step20 N=20 baseline (`step20_sega_results.json`) | 20 | 2.32e-02 ⚠️ | 1.1e-19 ✅ | 0 ✅ | 0 ✅ |
+| step20 N=20 refined (`step20_sega_results_refined.json`) | 18 | 2.58e-02 ⚠️ | 0 ✅ | 0 ✅ | 0 ✅ |
+| oracle N=100 (`step34_oracle_results_N100_postStep37.json`) | 0 | (schema 不同、skip) | — | — | — |
+
+**結論**：
+
+- **Overlay / Underlay_loose 全部 source bit-exact**（漂移 0、tolerance 1e-6）→ Ove / Und_l 引用值不動
+- **Alignment 全部 source 系統性漂移**（SEGA Audit A1 width/height 公式修正後新值）：
+  - **M1 N=1895 Ali**：0.0000 (8.08e-7) → **1.26e-05**（worst sample 0.465 on `59158b4f95a7a863ddcd8675`）
+- **Underlay_strict M1 漂移**：0.4428 → **0.5285**；vs designer GT 0.2674 領先從 1.66× 拉到 **1.98×**，**AgentLayout 變更強**
+- **不需要更新**：Designer GT 數字也用同一函式算的、等比例漂移、ratio 不變
+- **驗證腳本**：`validate_geometric_metrics.py`；報告 `validate_metrics_report.md`
+
+### 68.1.5 Crello N=20 sanity（bug-fix 後 pipeline smoke）
+
+`step22_coldstart_render.py --force --max-samples 20`、為 Task 6 全 N=100 之前的 go/no-go gate：
+
+- **20/20 fresh candidate JSON 寫入**、render PNG + spec JSON 全部產生
+- Vision refusal **3 次** all retry 救回（in step 64 後 32/140 ≈ 22% 的預期範圍）
+- Pipeline 不崩、LLM endpoint 正常、JSON schema 無變
+- LLM cost ~$1.1
+
+### 68.1.6 B 軸 sanity N=5（cached step22）
+
+`validate_b_axis_judge.py --n 5 --prefix b_axis_micro`、確認 Step 30 COLE 5-axis 1-10 rubric 還能跑：
+
+| 項目 | 值 |
+|---|---|
+| n_ok | 5/5 |
+| Smean mean | 6.08 |
+| sanity band 3.0–8.0 | 5/5 in range ✅ |
+| design_layout mean | 6.00 |
+| content_relevance mean | 6.60 |
+| typography_color mean | 5.60 |
+| graphics_images mean | 6.20 |
+| innovation_originality mean | 6.00 |
+
+`b_axis_micro_results.json`、cost ~$0.5。Judge interface 還能跑、給後續 N=100 全量重判鋪路。
+
+### 68.2 Crello N=100 fresh（bug-fixed pipeline 重炸）
+
+`step22_coldstart_render.py --force` 重炸全 100 樣本、100/100 fresh candidate；vision refusal ~3/20 在 step 64 後預期範圍。
+
+**A 軸 aggregate（`step22_sega_n100_fresh.json`）**：
+
+| 指標 | Agent | GT | 判定 |
+|---|---|---|---|
+| alignment | 6.85e-03 | 5.62e-03 | Agent 略輸 |
+| overlay | **5.66e-04** | 2.34e-02 | **Agent 大勝（40× 好）** |
+| underlay_loose | **0.532** | 0.452 | **Agent 勝** |
+| underlay_strict | **0.523** | 0.440 | **Agent 勝** |
+| readability | 0.027 | 0.014 | Agent 略輸 |
+| occlusion | 0.172 | 0.147 | Agent 略輸 |
+
+**3/6 軸勝 designer GT**；比舊 cached N=100（Und=0、Ove tie）顯著進步。
+
+**B 軸 fresh re-judge（`validate_b_axis_judge.py --n 100`，`b_axis_n100_fresh_results.json`）**：
+
+- 100/100 ok、**Smean mean = 6.322**（範圍 5.6–7.6）
+- 5 軸 mean：design_layout 6.28 / content_relevance 7.00 / typography_color 6.00 / graphics_images 6.16 / innovation_originality 6.17
+- 比舊 4-axis SDL/SQL/STV/SIO 4.93 大幅提升、接近 Step 58d 6.78（後者帶 composition director）→ **論文新 main B 軸 headline**
+
+**Smean 跨版本對照表**（同 N=100 Crello，cross-rubric 僅供參考，不可直接比較）：
+
+| 版本 | Rubric | N | Smean | 備註 |
+|---|---|---|---|---|
+| Step 22 cached (2026-05-28) | 4-axis SDL/SQL/STV/SIO | 100 | 4.93 | 舊 phaseb |
+| Step 39 calibrated | 4-axis J5/J6/J7 校準 | 20 | 3.73 | 校準後再低 |
+| Step 58d post-composition | 4-axis | 19 | 6.78 | 有 composition director |
+| **Step 68 fresh (2026-06-15)** | **COLE 5-axis 1-10** | **100** | **6.322** | **新 headline、無 composition director** |
+
+### 68.3 PKU-PosterLayout 997 跨資料集 indicative
+
+`run_pku_batch.py --n 997`、HF `creative-graphic-design/PKU-PosterLayout` ralf-style test split、`inpainted_poster` 當 canvas（test 時 `canvas=None`）、固定模板 DesignSpec (1 title + 1 body + 1 logo, asset_ref=None) 繞過 Analyst。**997/997 ok、零 crash**、LLM cost ~$52。
+
+| 指標 | Agent | GT | 判定 |
+|---|---|---|---|
+| alignment | **1.42e-03** | 2.27e-03 | **Agent 勝** |
+| overlay | **4.79e-04** | 1.94e-03 | **Agent 勝（4× 好）** |
+| underlay_loose | 0 | 0.784 | by-design forfeit（schema scope） |
+| underlay_strict | 0 | 0.781 | by-design forfeit |
+| readability | 0.0234 | 0.0130 | Agent 略輸 |
+| occlusion | 0.101 | 0.0710 | Agent 略輸 |
+
+**誠實 framing**：
+
+- **2/6 軸勝 designer**（Ali / Ove）、**2/6 by-design forfeit**（Und；schema 沒裝飾元素表達力）、**2/6 同量級略輸**（Rea / Occ）
+- 與 SEGA Table 3 / PosterO / RADM **不直接同表對標**：本實驗 element 集是固定模板（非 generative element-proposer）、Judge 不上場（無真 asset 渲染）；數字為 indicative 跨資料集落點
+- 可寫成「placement-axis 跨資料集 generalize：Crello 上勝 designer 的 Ove/Und 結論在 PKU 上**部分保持**（Ali / Ove 仍勝），但 Und 由 schema scope 邊界封死」
+
+### 68.4 證據檔索引（新增）
+
+| 檔案 | 內容 |
+|---|---|
+| `layout_agent/output/validate_geometric_metrics.py` | A 軸 zero-LLM 重算 harness |
+| `layout_agent/output/validate_geometric_metrics_results.json` | A 軸 6 source 重算對照 |
+| `layout_agent/output/validate_metrics_report.md` | A 軸驗證報告（人類可讀） |
+| `layout_agent/output/validate_metrics_inventory.md` | A+B 軸源檔盤點 |
+| `layout_agent/output/validate_b_axis_judge.py` | B 軸 re-judge harness |
+| `layout_agent/output/b_axis_micro_results.json` | B 軸 N=5 sanity |
+| `layout_agent/output/b_axis_n100_fresh_results.json` | Crello N=100 fresh B 軸 |
+| `layout_agent/output/recompute_sega_n100_fresh.py` | A 軸 fresh aggregate harness |
+| `layout_agent/output/step22_sega_n100_fresh.json` | Crello N=100 fresh A 軸 |
+| `layout_agent/output/run_pku_batch.py` | PKU Path A glue 主程式 |
+| `layout_agent/output/pku_run/run_pku_final_n997.json` | PKU 997 indicative aggregate |
+| `step22_coldstart_render.py --force` | 旗標新增（idempotent skip bypass） |
+
+**X plan LLM cost breakdown**：
+
+| 項目 | 預估 |
+|---|---|
+| Crello N=20 sanity (Task 3) | ~$1.1 |
+| Crello N=100 --force (Task 6a) | ~$5 |
+| Crello N=100 B 軸 re-judge (Task 11) | ~$5 |
+| B 軸 micro N=5 sanity (Task 10) | ~$0.5 |
+| PKU 997 indicative (Task 6b) | ~$52 |
+| PKU smoke v1–v5 iterations | ~$0.5 |
+| **合計** | **~$64** |
+
+A 軸驗證 (Task 9) + Crello N=100 A 軸 aggregate (Task 12) 皆為 **零 LLM**（純 sega_metrics 重算）。

@@ -122,7 +122,7 @@ class LayoutGeneratorRole(Role):
                 cand.candidate_id = f"r{prefix_offset + topup_idx}_{cand.candidate_id}"
 
             pool.extend(batch.candidates)
-            new_kept, reports = filter_valid(batch.candidates, spec)
+            new_kept, reports = filter_valid(batch.candidates, spec, bg=bg)
             all_reports.extend(reports)
             for cand in new_kept:
                 if cand.candidate_id not in seen_ids:

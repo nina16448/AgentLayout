@@ -25,7 +25,10 @@
 
 | # | 實驗 | 軸 | N | judge / 協定 | AgentLayout | Designer GT | 證據 |
 |---|---|---|---|---|---|---|---|
-| M1 | 幾何六指標（underlay-enabled） | A | 1,895 | zero-LLM rule-based | Ali 0.0000 / Ove 0.0035 / Und_l **0.5518** / Und_s **0.4428** / Read 0.0311 / Occ 0.1620 | 0.0010 / 0.0449 / 0.3542 / 0.2674 / 0.0235 / 0.1371 | Step 29 |
+| M1 | 幾何六指標（underlay-enabled） | A | 1,895 | zero-LLM rule-based | Ali **1.26e-05** / Ove 0.0035 / Und_l **0.5518** / Und_s **0.5285** / Read 0.0311 / Occ 0.1620 | 0.0010 / 0.0449 / 0.3542 / 0.2674 / 0.0235 / 0.1371 | Step 29（Ali/Und_s 為 2026-06-15 SEGA Audit A1/A4 修正後重算值） |
+| M1' | 幾何六指標（N=100 fresh，bug-fixed pipeline） | A | 100 | zero-LLM rule-based | Ali 6.85e-03 / Ove **5.66e-04** / Und_l **0.532** / Und_s **0.523** / Read 0.0270 / Occ 0.172 | 5.62e-03 / 2.34e-02 / 0.452 / 0.440 / 0.0140 / 0.147 | Step 68 (2026-06-15) |
+| M3' | COLE aesthetic 絕對分（N=100 fresh） | B | 100 | gpt-4o COLE 5-axis 1-10 | **Smean 6.32** (DL 6.28 / CR 7.00 / TC 6.00 / GI 6.16 / IO 6.17) | — | Step 68 |
+| M8 | PKU 997 跨資料集 indicative | A | 997 | zero-LLM rule-based (Path A) | Ali **1.42e-03** / Ove **4.79e-04** / Und=0 (scope) / Read 0.0234 / Occ 0.101 | 2.27e-03 / 1.94e-03 / 0.784 / 0.781 / 0.0130 / 0.0710 | Step 68 (2026-06-15) |
 | M2 | 幾何六指標（live, post-composition 子集） | A | ~19 | zero-LLM | 5/6 軸達標;**Rea 唯一落後 ~2×** | — | Step 58c/58d |
 | M3 | COLE aesthetic 絕對分 | B | 19 | gpt-4o 四軸 | Smean **6.78**（S_IO 6.16 反超） | **7.53**（S_IO 5.85） | Step 58d |
 | M4 | COLE 校準絕對分 | B | 20 | gpt-4o J5/J6/J7 校準 | **3.73** | **4.75**（Δ=−1.0） | Step 39 |
@@ -95,4 +98,17 @@
 
 ---
 
-**最後更新**：2026-06-13。對應 `result.md`（Step 6~65）+ Step 66（IMPLEMENTATION_LOG 末尾,尚未 backfill 進 result.md）。
+**最後更新**：2026-06-15。對應 `result.md`（Step 6~68，Step 68 為 X plan：A+B 軸 validation + Crello N=100 fresh + PKU 997 indicative）+ `IMPLEMENTATION_LOG.md`；三份文件已對齊。
+
+---
+
+## 附錄 A：2026-06-15 X plan 新增證據檔
+
+| 檔案 | 內容 |
+|---|---|
+| `layout_agent/output/validate_geometric_metrics_results.json` | A 軸 4 deterministic 指標 vs 6 個歷史 source 重算對照、Ali/Und_s 漂移證據 |
+| `layout_agent/output/validate_metrics_report.md` | A 軸驗證報告（人類可讀） |
+| `layout_agent/output/validate_metrics_inventory.md` | A+B 軸源檔盤點 |
+| `layout_agent/output/step22_sega_n100_fresh.json` | Crello N=100 fresh 6 軸 aggregate（M1'） |
+| `layout_agent/output/b_axis_n100_fresh_results.json` | Crello N=100 fresh COLE 5-axis Smean（M3'） |
+| `layout_agent/output/pku_run/run_pku_final_n997.json` | PKU 997 indicative（M8） |

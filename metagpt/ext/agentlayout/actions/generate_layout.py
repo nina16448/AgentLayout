@@ -131,6 +131,17 @@ FORMAT_EXAMPLE_JSON = """{
 }"""
 
 
+# DELIBERATE PROMPT/QC ASYMMETRY (Step 67 audit, 2026-06-14):
+# The "size reference" block below quotes 'prominent >=20%' and
+# 'medium >=15%' as STRETCH TARGETS. The downstream QC acceptance floor
+# (tools/quality_checker.py SIZE_HINT_LOWER_BOUND) is LOWER -- 0.10 and
+# 0.08 respectively. Combined with the prompt's "aim for value .. value*1.2;
+# do NOT exceed by huge margins" rule, this 1.5-2x gap counters the LLM
+# size-timidity surfaced in Step 58/60 ([[project_step58_coverage_qc_live]],
+# [[project_step60_photo_size_prior]]): anchoring the prompt to the QC
+# floor would land actual outputs *below* the floor and crater acceptance.
+# All Step 22..66 calibration was done against this gap; do NOT align the
+# two numbers without re-running headline experiments.
 PROMPT_TEMPLATE = """Role: You are a professional graphic layout designer.
 Your goal is to arrange the given design elements on a canvas
 by assigning precise pixel coordinates to each element.
@@ -141,6 +152,13 @@ Safe zones: {safe_zones}
 Dominant palette: {dominant_palette}
 Recommended text color (default, override if needed): {recommended_text_color}
 Feedback from previous round (if any): {feedback}
+
+# Designer exemplars (Step 67, 2026-06-13; "None" when retrieval is off)
+# Real human-designer layouts for structurally similar briefs, normalised to
+# [0,1]. Study their composition language -- where they place text relative to
+# photos, how large photos are, asymmetry -- and produce candidates in that
+# language. Do NOT copy coordinates; they are a different brief.
+{exemplars}
 
 # Aesthetic objective (Step 33, 2026-06-09)
 Every candidate you emit will be judged on these four axes (each 1-10, total
@@ -593,6 +611,7 @@ class GenerateLayout(Action):
         prev_best_layout: Optional[Dict[str, Tuple[float, float, float, float]]] = None,
         prev_best_subscores: Optional[Dict[str, int]] = None,
         prev_render_path: Optional[Path] = None,
+        exemplars: Optional[str] = None,
     ) -> CandidatesBatch:
         """Build prompt, call LLM, parse and validate.
 
@@ -654,6 +673,7 @@ class GenerateLayout(Action):
             prev_best_layout,
             prev_best_subscores,
             self_render_attached=self_render_attached,
+            exemplars=exemplars,
         )
 
         if images:
@@ -778,6 +798,7 @@ class GenerateLayout(Action):
         prev_best_layout: Optional[Dict[str, Tuple[float, float, float, float]]] = None,
         prev_best_subscores: Optional[Dict[str, int]] = None,
         self_render_attached: bool = False,
+        exemplars: Optional[str] = None,
     ) -> str:
         """Render PROMPT_TEMPLATE with all 11 substitutions.
 
@@ -816,6 +837,7 @@ class GenerateLayout(Action):
             photo_size_prior=self._format_area_hints(spec),
             composition_directive=self._format_composition_directive(spec),
             self_render=_SELF_RENDER_NOTE if self_render_attached else "None",
+            exemplars=exemplars or "None",
         )
 
     @staticmethod

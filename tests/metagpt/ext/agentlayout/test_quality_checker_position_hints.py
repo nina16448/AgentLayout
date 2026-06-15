@@ -1351,3 +1351,74 @@ def test_step43_skipped_when_bg_is_none():
     result = check_candidate(cand, spec)  # no bg passed
     out = [v for v in result.violations if v.type == ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE]
     assert out == [], f"bg=None must skip the rule; got {out}"
+
+
+def test_step67_filter_valid_forwards_bg_to_safe_zone_rule():
+    """Step 67 (2026-06-14): pre-fix, ``filter_valid`` silently dropped its
+    background-analysis argument because the signature was
+    ``filter_valid(candidates, spec)``. Both production call sites
+    (``pipeline._generate_with_topup`` and
+    ``LayoutGeneratorRole._generate_with_topup``) had a resolved ``bg`` in
+    scope but had no way to forward it -- so the Step 43
+    PRIMARY_OUTSIDE_SAFE_ZONE rule never fired in the live pipeline on
+    non-composition specs.
+
+    This regression test pins the post-fix contract: a candidate that
+    sits outside every safe_zone must be dropped from the kept list
+    *when bg is passed*. ``spec.composition`` is left as None so the
+    Step 63 deference short-circuit does not mask the regression.
+    """
+    from metagpt.ext.agentlayout.tools.quality_checker import filter_valid
+
+    # Title sized to satisfy other QC rules (Step 57 coverage >=10%,
+    # Step 36 title size >=8% etc.) and positioned ENTIRELY outside the
+    # left-half safe_zone r1c0=[0,0,500,1000]. 500x300 at (500,350) =
+    # 150_000 px^2 = 15% of a 1000x1000 canvas.
+    spec, cand, bg = _step43_spec_and_candidate(
+        title_left=500, title_top=350, title_w=500, title_h=300
+    )
+
+    # Without bg: safe-zone rule is inert, candidate is kept.
+    kept_no_bg, reports_no_bg = filter_valid([cand], spec)
+    assert kept_no_bg == [cand], (
+        f"bg=None must keep the candidate (rule inert); "
+        f"got violations={reports_no_bg[0].violations}"
+    )
+    assert reports_no_bg[0].passed, "bg=None must report passed"
+
+    # With bg: safe-zone rule fires, candidate is dropped.
+    kept_with_bg, reports_with_bg = filter_valid([cand], spec, bg=bg)
+    assert kept_with_bg == [], (
+        "filter_valid must forward bg so the Step 43 safe-zone rule fires; "
+        f"unexpectedly kept {kept_with_bg}"
+    )
+    assert not reports_with_bg[0].passed, "candidate outside every safe_zone must fail QC"
+
+
+def test_step67_filter_valid_bg_defers_when_composition_present():
+    """Step 67 + Step 63: when a CompositionDirective is on the spec, the
+    safe-zone rule defers (Composition Director already picked the
+    placement template under vision). ``filter_valid`` forwarding ``bg``
+    must NOT regress this -- the candidate that would have been dropped
+    above must now survive QC.
+    """
+    from metagpt.ext.agentlayout.schema import CompositionDirective
+    from metagpt.ext.agentlayout.tools.quality_checker import filter_valid
+
+    # Same outside-zone geometry as the previous test: would be dropped
+    # by safe-zone QC when bg is forwarded and composition is None.
+    spec, cand, bg = _step43_spec_and_candidate(
+        title_left=500, title_top=350, title_w=500, title_h=300
+    )
+    # Minimal directive: presence (not contents) triggers the Step 63
+    # deference branch in _check_primary_in_safe_zone.
+    spec.composition = CompositionDirective(
+        template_id="text_only_centered",
+        rationale="test fixture: deference contract.",
+    )
+
+    kept, reports = filter_valid([cand], spec, bg=bg)
+    assert kept == [cand], (
+        "Step 63: safe-zone rule must defer when spec.composition is set; "
+        f"got kept={kept}, violations={reports[0].violations}"
+    )

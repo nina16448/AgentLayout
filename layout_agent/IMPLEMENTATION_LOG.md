@@ -4713,4 +4713,234 @@ bbox」，而在 **QC 可驗證的幾何合規性 vs judge 的整體美學偏好
 
 ---
 
-*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/13*
+## 指標稽核修正 A1 — Alignment feature 對齊 PKU（2026-06-13）
+
+**背景**：對照 PKU PosterLayout `eval.py` 與 SEGA Table 3 逐行稽核
+`evaluation/sega_metrics.py`（完整報告 `layout_agent/METRIC_ALIGNMENT_AUDIT.md`、
+記憶 `project-sega-metric-alignment-audit`）。發現 `metric_alignment` 的
+6 個對齊 feature 第 5、6 軸用了 **width/height**，PKU 用的是
+**right/bottom**——alignment 量的是邊緣／中心重合，量寬高差
+`|w1−w2|` ≠ 量右緣差 `|r1−r2|`，導致 Ali 數值與 PKU/SEGA 不可比。
+
+**修正**：
+- `evaluation/sega_metrics.py:167` `theda.append([l, t, cx, cy, r-l, b-t])`
+  → `[l, t, cx, cy, r, b]`，對齊 PKU `theda=[xl,yl,(xl+xr)/2,(yl+yr)/2,xr,yr]`；
+  並更新 `metric_alignment` docstring（width/height → right/bottom）。
+- `tests/metagpt/ext/agentlayout/test_sega_metrics.py` 兩個 alignment 案例
+  docstring/註解同步更正（斷言與測資不變——新軸下 same-size+same-left
+  仍共享 left/right/center_x→0；六軸全異案例 right/bottom 也全異→>0）。
+
+**驗證**：`test_sega_metrics.py` **12 passed**（meta env）。其餘 A2–A7 / P1–P3
+（saliency mean→max、getRidOfInvalid、Rea/Occ 分母、Und_s bug、underlay 協定、
+text-only 不對稱）仍為 open，見稽核報告 §10；本次只修最明確的 A1。
+
+---
+
+## 指標稽核修正 A3 — Occ saliency 融合 mean→max 對齊 PKU（2026-06-13）
+
+**背景**：稽核 §6。`evaluation/saliency_basnet_isnet.py` 把 BASNet 與 ISNet 兩張
+saliency 圖以 **mean `(b+i)/2`** 融合；PKU `eval.py` 用 **max `np.maximum(pic_1,pic_2)`**。
+mean < max → 我方 saliency 系統性偏低 → Occ 偏低（看起來更好）、與 PKU/SEGA 不可比。
+
+**修正**：
+- `saliency_basnet_isnet.py:183` `fused = (basnet_resized + isnet_resized)/2.0`
+  → `fused = np.maximum(basnet_resized, isnet_resized)`；模組 docstring 同步更正。
+- 函式簽名與回傳 `(H,W) float32` 不變，唯一呼叫者
+  `layout_agent/output/step20_sega_eval.py:197-201` 不需改。
+
+**驗證**：AST parse + py_compile OK；融合語意檢查 `max([0.2,0.9],[0.8,0.1])=[0.8,0.9]`
+（舊 mean=[0.5,0.5]），確認 max≥mean、Occ 將上修。此模組需下載
+BASNet/ISNet 權重、無離線單測覆蓋，故以編譯＋語意驗證為準。
+
+**未解殘留**：PKU 第二顆模型是 **PFPN**、我方仍用 **ISNet** 代替（model-identity
+偏離，換 PFPN 需引入新權重、屬較重改動，暫不做）。**影響**：先前用舊 mean
+融合算過的 Occ（Step 20/29 等）若要與新值比較須**重算**。其餘 A2/A4/A5/A7、
+P1/P2/P3 仍 open。
+
+---
+
+## 指標稽核修正 A2 + A4 + A7（2026-06-13）
+
+稽核 §7/§5-6/§3 三項一次處理。library 改 `evaluation/sega_metrics.py`、
+呼叫端接 `layout_agent/output/step20_sega_eval.py`。
+
+**A2（getRidOfInvalid 前處理）**：新增 `drop_invalid_elements(layout, cw, ch,
+area_frac=0.001)`——剔除 clamp 到畫布後面積 < 0.1% canvas 的 box（對齊 PKU
+384.75px²@513×750 的 scale-independent 版）。`_per_sample_metrics` 開頭套用，
+agent/gt/random/centered 一致過濾。
+
+**A4（Rea/Occ 分母）**：`metric_readability` / `metric_occlusion` 分母由
+n_counted（有貢獻樣本）改為 **n_eval（所有非-None bg/saliency 樣本）**，零貢獻
+（無文字／覆蓋零顯著）樣本算 0 進分母而非剔除——對齊 PKU `÷ len(img_names)`。
+先前偏高的 Rea/Occ 會下修。
+
+**A7（Und 聚合）**：新增 `layout_has_underlay()`；`_per_sample_metrics` 對無
+underlay 樣本回 `None`（非 0），`_aggregate` / random 聚合改 None-aware
+（`_mean_opt`/`_pstdev_opt`），Und 只對有 underlay 的樣本平均（對齊 PKU
+`avali`）。**效果**：GT 的 Und_l/Und_s 會上修（排除無-underlay GT 樣本的假 0）、
+AgentLayout/random/centered 的 Und 由 0 改報 **N/A**（誠實：本就不發 underlay）。
+表格與 None 格式化同步更新。
+
+**驗證**：`test_sega_metrics.py` **17 passed**（新增 5 測：drop_invalid×2、
+has_underlay、occ/rea 分母各 1）；`step20_sega_eval.py` py_compile OK；
+quality_checker 等下游 import 乾淨。**未跑實驗**（依指示）；需端到端時 N=5 即可。
+
+**仍 open**：A5（Und_s PKU 右緣 bug 要不要複製）、A6（Sobel dtype）、
+P1/P2/P3（underlay 協定、text-only 不對稱、canvas）。稽核報告 §10。
+
+---
+
+## 指標稽核修正 A5 + A6（2026-06-13）
+
+**A5（Und_s 複製 PKU 右緣 bug）**：PKU `is_contain` 的第 3 條是
+`xr_2 >= xr_2`（內框右緣跟自己比、永真），右緣**從不檢查**、實際只 3 邊
+（左/上/下）。SEGA Table 3 沿用 PKU evaluator，為求 Und_s 可比，
+`sega_metrics.py` `_is_contain` **刻意複製此 bug**（移除右緣項，留醒目註解）。
+影響：對有 underlay 的 GT，Und_s 與 SEGA 同協定。新增測試
+`test_underlay_strict_replicates_pku_right_edge_bug`（文字只超 deco 右緣→
+仍判 contained=1）釘住此行為。既有 3 個 underlay_strict 測試不受影響
+（partial_overlap 仍 0，因 bottom 條件先 fail）。
+
+**A6（Sobel dtype）= documented deviation，不照抄**：PKU 在 uint8 上算
+`dx**2` 會 overflow（255²mod256=1、打亂強邊）。**不複製**，原因：(a) overflow
+讓 metric 對強邊語意失真；(b) QC `TEXT_ON_BUSY_TEXTURE` 閾值（Step 57/58
+T=0.065）是對「目前 float64 Sobel」做 GT 校準（經 `quality_checker._bg_gradient_map`），
+照抄 overflow 會悄悄破壞該校準。改為在 `_sobel_gradient_normalised` docstring
+明白標註：保留數學正確 float 版、Read 與 PKU 非 bit-identical 但單調正確、
+跨 paper Read 視為 indicative（全表既有 caveat）。ddepth=-1（負梯度飽和為 0）
+本就與 PKU 一致、保留。
+
+**驗證**：`test_sega_metrics.py` **18 passed**（+1 A5 測）；A6 無行為變更、
+QC 校準完好。**未跑實驗**。
+
+**仍 open**：**P1/P2/P3**（underlay 協定、text-only 不對稱、canvas）——協定層級、
+需方向拍板。A1–A7 七項 code-level 對齊全部到位。
+
+---
+
+## Step 67：filter_valid 漏接 bg — API hygiene 修正（2026-06-14）
+
+**Codex 指出的問題**：`tools/quality_checker.py` 的 `filter_valid(candidates, spec)`
+簽名沒有 `bg` 參數，內部呼叫 `check_candidate(c, spec)` 也不傳 bg。兩個正式呼叫點
+（`pipeline.py:383`、`roles/layout_generator.py:125`）作用域內**已有** `bg` 變數
+（由 `resolve_background` 解析過），但沒有路徑傳進 QC。結果 Step 43 的
+`_check_primary_in_safe_zone` 在正式 pipeline 永遠不會觸發。
+
+**驗證結論（部分對）**：問題在程式碼層面屬實，但對 Crello 正式 pipeline
+**運行時零影響**——`_check_primary_in_safe_zone` 在 line 799–800 有 Step 63
+deference short-circuit：`if spec.composition is not None: return []`。
+Crello 正式跑的時候 Composition Director（Step 62）一定會 emit directive、
+讓 spec.composition 非 None。所以即便修了，Crello live run 行為不變。
+真正會受影響的是「非 composition 路徑」的呼叫端（oracle drivers、
+ablation harnesses、未來新增的 spec.composition=None 路線）。
+
+**修正範圍（純 API hygiene）**：
+
+1. `quality_checker.filter_valid` 簽名加上 `bg: Optional[BackgroundAnalysis] = None`，
+   內部改 `check_candidate(c, spec, bg=bg)`。Docstring 寫明此修正不改 Crello
+   composition pipeline 行為、只修非 composition 路徑。
+2. `pipeline.py:383` 與 `roles/layout_generator.py:125` 兩處呼叫加上 `bg=bg`。
+   （兩處 `bg` 變數早已在外層函式 scope 內。）
+3. 加兩個 regression test 釘住合約：
+   - `test_step67_filter_valid_forwards_bg_to_safe_zone_rule`：
+     spec.composition=None 時，傳 bg ↔ 不傳 bg 對 outside-zone candidate
+     應有不同行為（不傳=keep、傳=drop）。
+   - `test_step67_filter_valid_bg_defers_when_composition_present`：
+     設 `spec.composition = CompositionDirective(...)` 後，即使傳 bg，
+     outside-zone candidate 仍應 survive（Step 63 deference 不可被誤殺）。
+
+**測試**：`test_quality_checker_position_hints.py` + `test_quality_checker_coverage.py`
++ `test_quality_checker_text_gradient.py` + `test_composition_step62.py`
++ `test_generator_corner.py` 合計 **101 passed / 3 skipped / 0 failed**。
+**未跑實驗**（行為零變更，無需 live run 重測）。
+
+**重要說明**：此修正屬程式碼正確性/API hygiene，**不是** silent generator
+behavior fix。所有 [[project_step66_constraint_solver]] 與
+[[project_generator_bounded_line_closed]] 之前的負面結論皆**不受影響**——
+那些實驗都是 composition pipeline 跑出來的，bg 沒進 filter_valid 也跟
+deference short-circuit 結果一致（safe-zone 本來就應該讓位）。
+
+---
+
+### Step 68 — X plan：A+B 軸全指標驗證 + Crello N=100 fresh + PKU 997 indicative（2026/06/15）
+
+**動機（教授要求）**：教授希望論文有可對齊 SOTA 的指標。先前 Crello 主結果
+雖然引用 SEGA 6 軸，但：(1) 2026-06-13 的 SEGA Audit A1–A7 修了 alignment
+公式（width/height 寫錯）與 underlay_strict 流程；舊 cached 數字未經重算；
+(2) Step 22 N=100 的 phaseb 用的是 SDL/SQL/STV/SIO 4-axis、不是當前
+COLE 5-axis rubric；(3) PKU 從未跑過，缺跨資料集對照。X plan = 把這三件一次補齊。
+
+**步驟與產出**：
+
+1. **A 軸 zero-LLM 重算**（Task 7–9，`validate_geometric_metrics.py`）
+   - 對 6 個歷史 SEGA result file（step29 N=1895、step23 N=1897、
+     step22 N=100、step20 N=20、step20 refined、oracle N=100）
+     重算 alignment / overlay / underlay_loose / underlay_strict。
+   - **Overlay / Und_loose 全部 source bit-exact**（漂移 0、tolerance 1e-6）
+   - **Alignment 全部 source 系統性漂移**（M1 漂移 1.18e-05、worst 樣本 0.465）
+     → SEGA Audit A1 修正後新值，**論文應更新引用**
+   - **Underlay_strict 在 M1 漂移 0.0857**（0.4428 → 0.5285）：
+     AgentLayout vs designer GT 領先從 ~1.66× 拉到 ~1.98×，**變更強**
+   - 報告：`layout_agent/output/validate_metrics_report.md`
+
+2. **B 軸 sanity（N=5 cached step22）**（Task 10，`validate_b_axis_judge.py`）
+   - 確認當前 `JudgeAesthetic`（Step 30 COLE 5-axis 1-10 rubric）能跑、
+     mean Smean 6.08 在 sanity band 3–8 內、5 個軸全 in 5.6–6.6
+
+3. **Crello N=100 fresh 重炸**（Task 3 + 6a，`step22_coldstart_render.py --force`）
+   - --force 旗標新增（idempotent skip bypass）；20 sanity → 100 final
+   - 100/100 fresh candidates；vision refusal ~3/20 在 step 64 後預期範圍
+   - LLM cost ~$6
+
+4. **Crello N=100 fresh A 軸 aggregate**（Task 12，`recompute_sega_n100_fresh.py`）
+   - 重用 step20_sega_eval helpers；100/100 ok
+   - **AgentLayout 在 overlay (5.66e-04 vs 2.34e-02、40× 好)、
+     underlay_loose (0.532 vs 0.452)、underlay_strict (0.523 vs 0.440)
+     三軸勝 designer GT**；alignment / readability / occlusion 同量級略輸
+   - 比舊 cached N=100 顯著進步（舊 Und=0、Ove tie）
+   - 產出 `step22_sega_n100_fresh.json`
+
+5. **Crello N=100 fresh B 軸 re-judge**（Task 11，`validate_b_axis_judge.py --n 100`）
+   - 100/100 ok、**Smean mean = 6.322**（範圍 5.6–7.6）
+   - 5 軸 mean：design_layout 6.28 / content_relevance 7.00 /
+     typography_color 6.00 / graphics_images 6.16 / innovation_originality 6.17
+   - 比舊 4-axis 4.93 大幅提升、接近 Step 58d 6.78（後者帶 composition
+     director）→ **論文新 main B 軸 headline**
+   - 產出 `b_axis_n100_fresh_results.json`、LLM cost ~$5
+
+6. **PKU 997 跨資料集 indicative**（Task 4 + 5 + 6b，`run_pku_batch.py --n 997`）
+   - 寫 ~200 行 glue：HF `creative-graphic-design/PKU-PosterLayout`
+     `ralf-style` `test` 997 樣本 → `inpainted_poster` 當 canvas
+     → 固定模板 DesignSpec (1 title + 1 body + 1 logo, asset_ref=None)
+     bypass Analyst → PlanAssets + resolve_background + GenerateLayout
+     → 第一 candidate 轉 `[(cls, xyxy)]` → sega_metrics 6 軸
+   - 三次 smoke 迭代修正：`canvas=None` 改用 `inpainted_poster`、
+     enum 名稱 UPPERCASE、importance 改 int
+   - **997/997 ok、零 crash**
+   - 結果：Ali **1.42e-03 (agent) vs 2.27e-03 (gt)** 勝、
+     Ove **4.79e-04 vs 1.94e-03** 勝、Und=0 (schema scope forfeit)、
+     Rea/Occ 同量級略輸
+   - **2/6 軸勝 designer、2/6 by-design forfeit、2/6 同量級略輸**
+   - LLM cost ~$52
+
+**論文 framing 建議**：
+
+- 主結果 N=100 fresh 同時引 A 軸（Und_l/Und_s/Ove 三勝）與 B 軸（Smean 6.32），
+  是當前最強 head-to-head 數字
+- PKU 為 indicative 跨資料集驗證、明標 Und=0 為 schema scope 邊界，
+  不可宣稱對標 SOTA；但 Ali/Ove 勝 designer 可寫成「placement-axis 跨資料集
+  generalize」
+- A 軸 N=1895 的 Ali/Und_s 引用值需從舊版改為 SEGA Audit 後重算值
+
+**證據檔（layout_agent/output/）**：`validate_geometric_metrics_results.json`、
+`validate_metrics_report.md`、`validate_metrics_inventory.md`、
+`step22_sega_n100_fresh.json`、`b_axis_n100_fresh_results.json`、
+`pku_run/run_pku_final_n997.json`、`recompute_sega_n100_fresh.py`、
+`validate_geometric_metrics.py`、`validate_b_axis_judge.py`、`run_pku_batch.py`。
+
+**X plan total LLM cost**：~$64（Crello fresh $6 + B 軸 N=100 re-judge $5 +
+PKU 997 $52 + 各 micro smoke ~$1）。
+
+---
+
+*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/15*
