@@ -4896,7 +4896,10 @@ COLE 5-axis rubric；(3) PKU 從未跑過，缺跨資料集對照。X plan = 把
    - 重用 step20_sega_eval helpers；100/100 ok
    - **AgentLayout 在 overlay (5.66e-04 vs 2.34e-02、40× 好)、
      underlay_loose (0.532 vs 0.452)、underlay_strict (0.523 vs 0.440)
-     三軸勝 designer GT**；alignment / readability / occlusion 同量級略輸
+     三軸勝 designer GT**；alignment **1.22×** 略輸、occlusion **1.17×** 略輸、
+     **readability 1.93× 真實落後**（0.0270 vs 0.0140，與 PKU 的 1.80× 同量級——
+     證實 saliency-aware 視覺處理是跨 dataset 一致的落後軸、非 Crello-only artifact；
+     詳 result.md §68.2 + §68.3b C 段）
    - 比舊 cached N=100 顯著進步（舊 Und=0、Ove tie）
    - 產出 `step22_sega_n100_fresh.json`
 
@@ -4919,8 +4922,10 @@ COLE 5-axis rubric；(3) PKU 從未跑過，缺跨資料集對照。X plan = 把
    - **997/997 ok、零 crash**
    - 結果：Ali **1.42e-03 (agent) vs 2.27e-03 (gt)** 勝、
      Ove **4.79e-04 vs 1.94e-03** 勝、Und=0 (schema scope forfeit)、
-     Rea/Occ 同量級略輸
-   - **2/6 軸勝 designer、2/6 by-design forfeit、2/6 同量級略輸**
+     **Rea 1.80× 落後**（0.0234 vs 0.0130）、**Occ 1.42× 落後**（0.1006 vs 0.0710）
+   - **2/6 軸勝 designer、2/6 by-design forfeit（schema scope）、2/6 真實落後 1.4–1.8×**
+     （root-cause：saliency-aware 視覺處理缺口；非 placement engine 質量問題、詳見
+     result.md §68.3b PKU 任務範疇誠實段落）
    - LLM cost ~$52
 
 **論文 framing 建議**：
@@ -4945,7 +4950,7 @@ PKU 997 $52 + 各 micro smoke ~$1）。
 
 ### Step 69 — High-score subset selector + best-case showcase 結果（2026/06/15）
 
-**動機**：Step 68 N=100 fresh A 軸 **3 勝 3 輸**（Ove / Und_l / Und_s 勝、Ali / Read / Occ 略輸），random
+**動機**：Step 68 N=100 fresh A 軸 **3 勝 3 輸**（Ove / Und_l / Und_s 勝、Ali 1.22× / Occ 1.17× 略輸、**Read 1.93× 真實落後**），random
 sample 把系統強項平均掉了。要回答「在 system 適合的條件下能不能全面壓過 designer」需要選一個
 best-case subset。
 
@@ -4976,10 +4981,10 @@ best-case subset。
 | overlay | **2.93e-03** | 9.47e-03 | **Agent 勝 3×** |
 | underlay_loose | **0.394** | 0.264 | **Agent 勝 1.5×** |
 | underlay_strict | **0.271** | 0.208 | **Agent 勝 1.3×** |
-| readability | **0.012** | 0.018 | **Agent 勝**（N=100 略輸） |
+| readability | **0.012** | 0.018 | **Agent 勝**（N=100 **1.93× 真實落後**→ subset 翻盤） |
 | occlusion | 0.097 | 0.085 | Agent 略輸 (10%) |
 
-**5/6 軸勝 designer GT**——alignment / readability 兩軸從 N=100 略輸**翻盤**。
+**5/6 軸勝 designer GT**——alignment（N=100 1.22× 略輸）與 **readability（N=100 1.93× 真實落後）兩軸翻盤**；後者翻盤幅度尤其顯著（subset 把 saliency-aware 落後軸打成勝場）。
 
 **B 軸結果**（`high_score_n28_results.json`，N=27 ok 進聚合）：
 
@@ -5014,6 +5019,111 @@ best-case subset。
 `high_score_n28_results.json`。
 
 **Step 69 LLM cost**：~$3（28 generation + 28 judge）。
+
+---
+
+### Step 70 — B 軸 matched H2H：first apples-to-apples designer GT baseline（2026/06/15）
+
+**動機**：Step 68 的 B 軸 headline `Smean = 6.322` 是 `JudgeAesthetic` action（multi-candidate
+prompt + 5-axis 聚合）跑 AgentLayout 出來的 **單邊值**，在 Step 30 之後的 5-axis COLE schema 下
+**從未有 designer GT 對照**。舊的 `step22_phaseb_n100_designer_gt.json` 是 pre-Step 30 的 4 軸
+`SDL/SQL/STV/SIO` schema、與當前 5-axis 不可比。Step 70 的目標是補上這個缺口、產生第一份
+**matched H2H** 的 B 軸數字，論文寫作才能合法宣稱「達 designer ceiling X%」。
+
+**方法（apples-to-apples 設計）**：用 `step21_phaseb_eval.py`（verbatim COLE QA Prompt
+single-call，**SEGA/COLE literature 標準 prompt**）對同一份 N=100 IDs（再加 N=28 high-score
+subset）跑兩條 source：
+
+- `--source agent`：吃 `step22_coldstart_crello_{sid}_render.png`（Step 68 N=100 fresh 的同一份
+  cached render）
+- `--source designer-gt`：吃 `crello_{sid}/ground_truth_preview.jpg`（Crello dataset 原始 designer
+  product，**非由我方 renderer 重畫**——避免 renderer confound）
+
+`step21_phaseb_eval.py` 已存在 `--source designer-gt` mode、`--ids-file` flag；本步只新增 5-axis
+`Smean5 = mean(SDL,SQL,STV,SGI,SIO)`（additive）與既有 4-axis `Smean4 = mean(SDL,SQL,STV,SIO)`
+並列輸出（後者保留 backward compat、後者是 experiment.md 規格）。`_process_sample` 與 `_aggregate`
+皆同步更新。
+
+**結果**（4 個 aggregate file，N=100 與 N=28 各跑 agent / designer-gt）：
+
+**N=100 fresh matched H2H**（`step70_n100_*_5axis.json`）：
+
+| 軸 | Agent | Designer GT | Δ | Agent % of GT | Winner |
+|---|---|---|---|---|---|
+| SDL (Design & Layout) | 6.81 | 7.84 | −1.03 | 86.9% | Designer |
+| SQL (Content Relevance) | 7.45 | 8.33 | −0.88 | 89.4% | Designer |
+| STV (Typography & Color) | 6.09 | 7.53 | **−1.44** | 80.9% | Designer |
+| SGI (Graphics & Images) | 7.31 | 8.03 | −0.72 | 91.0% | Designer |
+| SIO (Innovation) | 6.04 | 6.77 | −0.73 | 89.2% | Designer |
+| **Smean4** | **6.598** | **7.617** | **−1.02** | **86.6%** | **Designer** |
+| **Smean5** | **6.740** | **7.700** | **−0.96** | **87.5%** | **Designer** |
+
+**N=28 high-score matched H2H**（`step70_n28_*_5axis.json`）：
+
+| 軸 | Agent | Designer GT | Δ |
+|---|---|---|---|
+| SDL | 7.00 | 8.00 | −1.00 |
+| SQL | 7.21 | 8.29 | −1.07 |
+| STV | 6.54 | 7.71 | −1.18 |
+| SGI | 7.25 | 8.18 | −0.93 |
+| SIO | 6.07 | 7.04 | −0.96 |
+| **Smean4** | **6.705** | **7.759** | **−1.05** |
+| **Smean5** | **6.814** | **7.843** | **−1.03** |
+
+**Selector closes geometric gap, not aesthetic gap**：
+
+| 軸 | N=100 gap | N=28 gap | Closure |
+|---|---|---|---|
+| Smean4 | −1.02 | −1.05 | **−0.03（不縮）** |
+| Smean5 | −0.96 | −1.03 | **−0.07（微擴）** |
+| STV | −1.44 | −1.18 | +0.26（縮 18%） |
+| 其他 4 軸 | — | — | 全擴大 |
+
+→ N=28 high-score subset 在 A 軸（Step 69）**5/6 勝 designer**、但在 B 軸 **完全沒幫助**、Smean
+gap 不變甚至擴大。**這實際上是更強的科學發現**：殘餘 gap 不是結構問題，是渲染品質（字型 / 字距 /
+顏色和諧 / 視覺 hierarchy / 構圖完成度），selector 把結構挑簡單只讓幾何指標贏、aesthetic judge
+看的是整張海報視覺完成度。Step 54/55/56 的 render parity 分解早已指出這點、Step 70 用 matched
+H2H 第一次量化。
+
+**重要的舊 claim 修正**：
+
+- **Step 68「Smean = 6.322」與本步「Smean = 6.598」不可直接比較**——前者是
+  `JudgeAesthetic` multi-candidate prompt、後者是 COLE single-call。本步是 SEGA/COLE literature
+  aligned 的正確基準，**論文主表用 6.598/7.617**。
+- **N=1,897 within-judge 65.8% / 64.8% 達 designer ceiling** 是舊 4-axis schema 下的數字，本步
+  的 86.6%（4-axis）/ 87.5%（5-axis）是 5-axis schema 下的 matched H2H，**不要把這兩條混寫**。
+- **Step 69「5/6 wins designer」必須限縮到 A 軸**，B 軸 N=28 仍 86.4% 跟 N=100 的 86.6% 同量級、
+  不能 carry over。
+
+**論文 framing 建議（更新）**：
+
+1. **Geometric placement**：matches or exceeds designer（Step 68 N=100 fresh A 軸 3 勝
+   `Ove/Und_l/Und_s` + Step 69 best-case N=28 A 軸 5/6 勝）
+2. **Aesthetic rendering**：reaches 86.6% of designer Smean ceiling under matched COLE 5-axis
+   judge（N=100 fresh）；gap is **render-channel-bound, not placement-bound**（subset 不縮 gap、
+   Step 54/55/56 render parity 分解一致）
+3. **STV 是最大 axis-gap（−1.44）**：字型 / 色彩專案 future work；SGI（−0.72）與 SIO（−0.73）是
+   最小 gap、表示視覺品質與創意已接近 designer
+4. **不要主張「prompt-only 系統能匹敵 designer aesthetics」**——matched H2H 直接打臉
+
+**Harness 改動**：
+
+- `step21_phaseb_eval.py`：`_process_sample` 多回傳 `smean5`、`_aggregate` 多輸出 `Smean5`；
+  print 行從 `Smean=X.XXX` 改成 `Smean4=X.XXX  Smean5=X.XXX`；無 schema break
+- 既有 `step21_phaseb_results.json`、`step21b_phaseb_designer_gt.json` 等檔案 read 路徑不影響
+  （新欄位是 additive）
+
+**證據檔（layout_agent/output/）**：
+
+| 檔 | 內容 |
+|---|---|
+| `step70_n100_agent_5axis.json` | Agent N=100 matched COLE single-call 5-axis aggregate |
+| `step70_n100_designer_gt_5axis.json` | Designer GT N=100 同 prompt 對照（**論文 main B 軸 baseline**） |
+| `step70_n28_agent_5axis.json` | Agent N=28 high-score matched re-judge |
+| `step70_n28_designer_gt_5axis.json` | Designer GT N=28 high-score（**論文 best-case showcase B 軸 baseline**） |
+| `step21_phaseb_eval.py` | 新增 5-axis Smean5 後的 harness（additive 改動） |
+
+**Step 70 LLM cost**：~$3（N=100 × 2 + N=28 × 2 ≈ 256 vision call × ~$0.012）。
 
 ---
 

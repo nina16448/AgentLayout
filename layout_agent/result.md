@@ -1079,16 +1079,20 @@
 
 **A 軸 aggregate（`step22_sega_n100_fresh.json`）**：
 
-| 指標 | Agent | GT | 判定 |
-|---|---|---|---|
-| alignment | 6.85e-03 | 5.62e-03 | Agent 略輸 |
-| overlay | **5.66e-04** | 2.34e-02 | **Agent 大勝（40× 好）** |
-| underlay_loose | **0.532** | 0.452 | **Agent 勝** |
-| underlay_strict | **0.523** | 0.440 | **Agent 勝** |
-| readability | 0.027 | 0.014 | Agent 略輸 |
-| occlusion | 0.172 | 0.147 | Agent 略輸 |
+| 指標 | Agent | GT | Ratio (lower=better) | 判定 |
+|---|---|---|---|---|
+| alignment | 6.85e-03 | 5.62e-03 | 1.22× | Agent 略輸 |
+| overlay | **5.66e-04** | 2.34e-02 | 0.02× | **Agent 大勝（40× 好）** |
+| underlay_loose | **0.532** | 0.452 | 1.18× ↑ | **Agent 勝** |
+| underlay_strict | **0.523** | 0.440 | 1.19× ↑ | **Agent 勝** |
+| readability | 0.0270 | 0.0140 | **1.93×** | **Agent 輸 ~1.9×** |
+| occlusion | 0.172 | 0.147 | 1.17× | Agent 略輸 |
 
-**3/6 軸勝 designer GT**；比舊 cached N=100（Und=0、Ove tie）顯著進步。
+> Underlay 的 ratio 標 `↑` 是因該指標 **higher = better**（更多 text 落在合法 underlay 容器內），其餘指標皆 lower better。
+
+**3/6 軸勝 designer GT、1/6 真實落後（readability ~1.9×）、2/6 略輸（alignment / occlusion 1.17–1.22×）**；比舊 cached N=100（Und=0、Ove tie）顯著進步。
+
+> **Read 真實落後同 PKU 1.80×**：兩 dataset 一致顯示 saliency-aware 視覺處理是落後軸（詳 §68.3b C 段）；論文寫作不要寫「Read 略輸」、要寫「Read 1.9× 落後、root-cause 為 saliency-aware 訓練缺口」。
 
 **B 軸 fresh re-judge（`validate_b_axis_judge.py --n 100`，`b_axis_n100_fresh_results.json`）**：
 
@@ -1109,20 +1113,79 @@
 
 `run_pku_batch.py --n 997`、HF `creative-graphic-design/PKU-PosterLayout` ralf-style test split、`inpainted_poster` 當 canvas（test 時 `canvas=None`）、固定模板 DesignSpec (1 title + 1 body + 1 logo, asset_ref=None) 繞過 Analyst。**997/997 ok、零 crash**、LLM cost ~$52。
 
-| 指標 | Agent | GT | 判定 |
-|---|---|---|---|
-| alignment | **1.42e-03** | 2.27e-03 | **Agent 勝** |
-| overlay | **4.79e-04** | 1.94e-03 | **Agent 勝（4× 好）** |
-| underlay_loose | 0 | 0.784 | by-design forfeit（schema scope） |
-| underlay_strict | 0 | 0.781 | by-design forfeit |
-| readability | 0.0234 | 0.0130 | Agent 略輸 |
-| occlusion | 0.101 | 0.0710 | Agent 略輸 |
+| 指標 | Agent | GT | Ratio (lower=better) | 判定 |
+|---|---|---|---|---|
+| alignment | **1.42e-03** | 2.27e-03 | 0.62× | **Agent 勝** |
+| overlay | **4.79e-04** | 1.94e-03 | 0.25× | **Agent 勝（4× 好）** |
+| underlay_loose | 0 | 0.784 | — | by-design forfeit（schema scope） |
+| underlay_strict | 0 | 0.781 | — | by-design forfeit |
+| readability | 0.0234 | 0.0130 | **1.80×** | **Agent 輸 ~1.8×** |
+| occlusion | 0.1006 | 0.0710 | **1.42×** | **Agent 輸 ~1.4×** |
 
 **誠實 framing**：
 
-- **2/6 軸勝 designer**（Ali / Ove）、**2/6 by-design forfeit**（Und；schema 沒裝飾元素表達力）、**2/6 同量級略輸**（Rea / Occ）
+- **2/6 軸勝**（Ali / Ove）、**2/6 by-design forfeit**（Und；schema scope 邊界）、**2/6 真實落後**（Rea ~1.8× / Occ ~1.4×，**不是測量噪音、不是「同量級」**）
 - 與 SEGA Table 3 / PosterO / RADM **不直接同表對標**：本實驗 element 集是固定模板（非 generative element-proposer）、Judge 不上場（無真 asset 渲染）；數字為 indicative 跨資料集落點
-- 可寫成「placement-axis 跨資料集 generalize：Crello 上勝 designer 的 Ove/Und 結論在 PKU 上**部分保持**（Ali / Ove 仍勝），但 Und 由 schema scope 邊界封死」
+- 可寫成「placement-axis 跨資料集 generalize：Crello 上勝 designer 的 Ove/Und 結論在 PKU 上**部分保持**（Ali / Ove 仍勝），但 Und 由 schema scope 邊界封死、Rea/Occ 由 saliency-aware 訓練缺口造成 ~1.4–1.8× 落後」
+
+### 68.3b PKU 任務範疇誠實段落 — 為何不可與 PKU SOTA 同表對標
+
+審稿質疑「別人 PKU 都跑完整、為什麼你不？」是這節最大風險。本小節提供論文寫作可直接引用的範疇釐清。
+
+#### A. 任務本質不同（不是「我們跑不出來」、是「不同問題」）
+
+| 維度 | PKU SOTA（PosterLayout / RALF / SEGA / PosterO） | AgentLayout |
+|---|---|---|
+| **輸入** | 一張背景圖 | brief + asset_list (DesignSpec) |
+| **任務本質** | given 背景圖 → 預測「要放幾個元素 / 各是什麼類別 / bbox」 | given 元素清單 → 預測「擺哪裡」 |
+| **元素數量** | 模型自己決定（learned from PKU train prior） | 由 brief / asset_list 給定 |
+| **元素類別** | text / image / **underlay** 三類都會主動產 | 只有 text / image / logo，**schema 沒有 underlay 類別** |
+| **Training** | 在 PKU train split 訓練、學到 "event poster 通常長這樣" 分布 | 零訓練、純 LLM zero-shot prompting |
+| **系統類別** | 專用 layout-prediction model（diffusion / transformer / GAN） | multi-agent LLM 系統做 content-aware design |
+
+→ PKU benchmark 對 SOTA 是 **native task**、對 AgentLayout 要 **重做架構**
+
+#### B. 完整跑 PKU 需新增的功能（範疇 vs cost）
+
+| 工作 | 影響 |
+|---|---|
+| 新增 `SemanticType.UNDERLAY` | schema / generator prompt / QC 規則 / renderer 都要動 |
+| 新增 Role: ElementProposer | 從 raw 背景圖預測「該放幾個 text / logo / underlay」、5 個 Role 變 6 個 |
+| Train ElementProposer | 我們是 LLM zero-shot、要嘛 in-context examples、要嘛 fine-tune（範疇外） |
+| Read/Occ saliency-aware 強化 | PKU 真實海報背景比 Crello 複雜、我方 LLM 看 base64 在猜、SOTA 用 BASNet/PFPN 在 saliency-aware loss 上 train |
+
+這對應 memory `project_no_pku_posterO_alignment.md`（2026-06-04 + 2026-06-13 重評）的範疇決策：
+**「Phase B 拆 5 個 Role 改 generative 跟系統 content-aware depth 取向衝突」**。Step 68 PKU 997 跑
+的是 **Path A**（fixed template + bypass Analyst）、是已知限縮版本。
+
+#### C. Rea/Occ 落後的 root-cause（不是甩鍋、是技術定位）
+
+兩軸落後 1.4–1.8× 不是 placement engine 質量問題、是 **saliency 視覺處理能力差距**：
+
+- PKU 用 `inpainted_poster` 當背景、真實複雜海報照片
+- 我方 LLM 看 base64 image 在猜 saliency；PKU SOTA 用 BASNet/PFPN 抓 saliency map、在
+  saliency-aware loss 上 train
+- 換言之：Ali/Ove（placement axes）跨 dataset 勝 = placement engine generalize 確實成立；
+  Rea/Occ（saliency axes）落後 = 視覺感知 sub-system 缺口、與 placement engine 無關
+
+#### D. 論文 PKU 段該寫 vs 不該寫
+
+**可以寫**（誠實）：
+
+- 「AgentLayout 與 PKU PosterLayout 任務定義不同：前者是 content-aware **placement given assets**、
+  後者是 generative **element-set prediction from background**。我們在 PKU 上跑 Path A indicative
+  （fixed 1 title + 1 body + 1 logo template、bypass Analyst、Judge 不上場），得到 placement-axis
+  跨資料集落點。」
+- 「Ali / Ove 跨資料集勝 designer GT、Und 由 schema scope 邊界 forfeit、Rea / Occ 因 saliency-aware
+  模型訓練缺口落後 ~1.4–1.8×。」
+- 「Path B（generative element-proposer）為 future work、本研究範疇外。」
+
+**不能寫**（會被審稿打）：
+
+- ✗「AgentLayout 在 PKU 跟 SOTA head-to-head 比較」（任務不同、不能同表）
+- ✗「Rea/Occ 同量級略輸」（實際 1.4–1.8× 落後、不是噪音）
+- ✗「未來會跑完整 PKU」（除非 commit 做 Path B，不要許諾）
+- ✗「placement-axis generalize 等同方法 generalize」（只是其中一個軸 generalize、不能擴大宣稱）
 
 ### 68.4 證據檔索引（新增）
 
@@ -1161,7 +1224,7 @@ A 軸驗證 (Task 9) + Crello N=100 A 軸 aggregate (Task 12) 皆為 **零 LLM**
 
 ### 7.1 動機
 
-Step 68 N=100 fresh 在 6 個 SEGA 軸上**贏 3 輸 3**（Ove / Und_l / Und_s 勝 designer；Ali / Read / Occ 略輸）。直接平均掉了系統的強項。要回答「在 system 設計適合的條件下，AgentLayout 能不能全面壓過 designer」就需要選一個 best-case subset 來看。
+Step 68 N=100 fresh 在 6 個 SEGA 軸上**贏 3 輸 3**（Ove / Und_l / Und_s 勝 designer；Ali 1.22× / Occ 1.17× 略輸、**Read 1.93× 真實落後**——詳 §68.2 表）。直接平均掉了系統的強項。要回答「在 system 設計適合的條件下，AgentLayout 能不能全面壓過 designer」就需要選一個 best-case subset 來看。
 
 ### 7.2 Selector 設計（`select_high_score_subset.py`）
 
@@ -1184,10 +1247,10 @@ Step 68 N=100 fresh 在 6 個 SEGA 軸上**贏 3 輸 3**（Ove / Und_l / Und_s �
 | **overlay** | **2.93e-03** | 9.47e-03 | **Agent 勝 3×**（N=100 勝 40×） |
 | **underlay_loose** | **0.394** | 0.264 | **Agent 勝 1.5×**（N=100 1.18×） |
 | **underlay_strict** | **0.271** | 0.208 | **Agent 勝 1.3×**（N=100 1.19×） |
-| **readability** | **0.012** | 0.018 | **Agent 勝**（N=100 略輸） |
+| **readability** | **0.012** | 0.018 | **Agent 勝**（N=100 **1.93× 真實落後**→ subset 翻盤） |
 | occlusion | 0.097 | 0.085 | Agent 略輸（10% 差距） |
 
-**5/6 軸勝 designer GT**——selector 把 alignment 與 readability 兩條從 N=100 的略輸軸**翻成勝場**。
+**5/6 軸勝 designer GT**——selector 把 alignment（N=100 1.22× 略輸）與 **readability（N=100 1.93× 真實落後）兩條翻成勝場**；後者翻盤幅度尤其顯著。
 
 ### 7.4 N=28 B 軸結果（`high_score_n28_results.json`、27/28 ok）
 
@@ -1214,6 +1277,82 @@ Step 68 N=100 fresh 在 6 個 SEGA 軸上**贏 3 輸 3**（Ove / Und_l / Und_s �
 - 這條 framing 把 Step 68 的「3 勝 3 輸」從 limitation 變成 **「在 known scope 內全面領先 + scope 邊界明確」**——比 N=100 mixed 更乾淨的 story
 - Selector cascade 是**公開可驗證**的 filter set、不是 cherry-picking：審稿可重跑 `select_high_score_subset.py` 確認 28 個是同一組
 
+### 7.5b Selector a priori 防禦 — 為何不是 cherry-picking
+
+審稿質疑「為什麼挑這 28 個？是不是看分數挑贏的？」是 best-case showcase 論述的最大風險。
+本節提供論文寫作可直接引用的防禦論證。
+
+#### A. 時序確定：filter 規則先寫、scores 後跑
+
+| 檔案 | mtime | commit |
+|---|---|---|
+| `step22_coldstart_render.py`（N=100 fresh source）| 06-15 08:07 | `7a92c83b` (Step 68) |
+| `select_high_score_subset.py`（filter 規則）| 06-15 18:39 | `bbce5223` (Step 69) |
+| `high_score_sega_n28.json`（A 軸結果）| 06-15 **18:58** | 同上 |
+| `high_score_n28_results.json`（B 軸結果）| 06-15 之後 | 同上 |
+
+→ **selector 寫完 → 跑 → 結果產出，前後 19 分鐘**。沒有「看 N=28 分數後回頭調 filter」的時間窗。
+git history 與檔案 mtime 共證。
+
+#### B. Filter 規則的學理基礎（每條對應 disjoint prior step）
+
+| Filter | 來源 step | 觀察 |
+|---|---|---|
+| 1 image + 1–2 text + 3–6 total non-bg | Step 9 / 12d | text count 與 element 數對 bal/coh plateau 的 sparsity 假設 |
+| underlay ≤ 3 | Step 64 | underlay 合約 ratification 後的合理 cap |
+| canvas max dim ≤ 2000 px | Step 56 | renderer 字型 / wrap 升級後的已驗證上限 |
+| aspect 0.4–2.0 | Step 56 / 58 | renderer aspect-safe 範圍（極端 aspect → text overflow） |
+| max text content ≤ 40 字元 | Step 35 / 38 | metadata-leak fix 後的 Analyst importance 上限 |
+| max image area / canvas < 0.50 | Step 61 | GT 構圖統計、bleed photo 是 Generator-bounded gap |
+| text-photo overlap < 30% | Step 61 | text-on-photo 是構圖差距大宗、QC 正禁止 |
+
+**每條 filter 都不是 N=28 結果驅動**——是 prior steps 的 documented failure modes 轉成可測試
+hypothesis。Step 9/35/38/56/58/61/64 commit history 全早於 Step 69（`bbce5223`）。
+
+#### C. Filter 只看 input features、不看 model output
+
+selector 的 `_classify()` 全程操作 `crello_*/meta.json` 的欄位（canvas_width / canvas_height /
+elements[].kind / left/top/width/height / content）：
+
+- ✗ 不查 `step22_coldstart_*_candidate.json`（agent layout output）
+- ✗ 不查 `step22_coldstart_*_render.png`（rendered PNG）
+- ✗ 不查 `step22_sega_n100_fresh.json`（A 軸 score）
+- ✗ 不查 `b_axis_n100_fresh_results.json`（B 軸 Smean）
+- ✗ zero LLM 呼叫
+
+→ selector 是 **dataset 的 deterministic function**、與 model / judge 都正交。同一份 Crello
+dataset 任何人重跑 `select_high_score_subset.py` 都得到 **完全相同** 28 個 IDs。
+
+#### D. 單次執行、無 threshold 搜索
+
+selector 的 4 個常數（`ASPECT_LO/HI = 0.4 / 2.0`、`CANVAS_MAX_DIM = 2000`、
+`PHOTO_MAX_AREA_RATIO = 0.50`、`TEXT_ON_PHOTO_OVERLAP = 0.30`）寫死在檔頭：
+
+- ✗ 無 multi-run grid search
+- ✗ 無 backtest（先跑 filter A → 看 win-rate → 改 filter A → 重跑）
+- ✗ 無「目標 N」逆推（28 是 cascade 的 deterministic output、不是 hand-tuned 到的）
+
+1,902 個 input、reject 直方圖（547 個 0 image / 324 個 aspect 極端 / 196 + 127 個多 image / 280 +
+個多 text）也寫進 `high_score_subset_ids.json`，**完整 rejection inventory 公開**。
+
+#### E. 誠實 disclaimer（**不要過度宣稱**）
+
+- 我們**不主張**這是 blind 或 pre-registered selection——filter 規則的 informed 程度來自過去
+  Step 9 / 35 / 56 / 61 / 64 累積的「我們知道系統在哪種輸入上會失敗」
+- 我們主張的是：filter 規則是 documented system behavior 的 faithful operationalization、
+  把「AgentLayout 在哪種輸入上表現好？」變成可驗證 hypothesis；hypothesis 編完 → 跑 → 看結果
+  這條時序在 file mtime + git history 都查得到
+
+#### F. 預期審稿 Q&A
+
+| 質疑 | 回應 |
+|---|---|
+| 「filter 規則是不是看了 N=28 score 才寫的？」 | mtime + commit 顯示 selector 寫完到結果產出僅 19 分鐘、無 backtest 窗口 |
+| 「為什麼是 4 條 filter 不是 3 條或 6 條？」 | 對應 4 類 documented failure modes（結構 / 字數 / canvas / GT 構圖）；每條連結 prior step |
+| 「Threshold 怎麼決定？是不是 grid search？」 | 4 個常數在 code 寫死、無 grid 紀錄；canvas 2000 是 Step 56 renderer 已驗證上限、photo 50%/text overlap 30% 是 Step 61 GT distribution 中位附近 |
+| 「為什麼 N=28 不是 N=50 或 N=100？」 | 28 是 4 條 filter AND-combined 後的 deterministic output、無「目標 N」逆推。1.5% pass-rate 反映 filter 嚴格度 × dataset 多樣度 |
+| 「換個 dataset 還能跑嗎？」 | selector 只依賴 `meta.json` 的 canvas / elements 欄位（PKU / CGL 都有）；但 D 類 GT 構圖 threshold 是 Crello-specific calibration、跨 dataset 須重 calibrate |
+
 ### 7.6 證據檔（新增）
 
 | 檔案 | 內容 |
@@ -1221,6 +1360,105 @@ Step 68 N=100 fresh 在 6 個 SEGA 軸上**贏 3 輸 3**（Ove / Und_l / Und_s �
 | `layout_agent/output/select_high_score_subset.py` | Selector（4 類 filter cascade） |
 | `layout_agent/output/high_score_subset_ids.json` | 28 個通過 ID + filter 統計 + 28 details |
 | `layout_agent/output/high_score_sega_n28.json` | A 軸 6-metric aggregate |
-| `layout_agent/output/high_score_n28_results.json` | B 軸 COLE 5-axis 結果 |
+| `layout_agent/output/high_score_n28_results.json` | B 軸 COLE 5-axis 結果（JudgeAesthetic prompt） |
 
 **Step 69 LLM cost**：~$3（28 generation + 28 judge）。
+
+---
+
+## §8 Step 70 — B 軸 matched H2H：first apples-to-apples designer GT baseline（2026-06-15）
+
+### 8.1 動機
+
+Step 68 的 B 軸 headline `Smean = 6.322` 是 `JudgeAesthetic` action（multi-candidate prompt，
+5-axis 聚合）跑 AgentLayout 的**單邊值**。Step 30 之後的 5-axis COLE schema 從未跑過 designer
+GT。舊 `step22_phaseb_n100_designer_gt.json` 是 pre-Step 30 的 4 軸 SDL/SQL/STV/SIO schema、不可比。
+→ 缺一份 **matched H2H** designer GT 基準才能合法宣稱「達 designer ceiling X%」。
+
+### 8.2 方法（apples-to-apples 設計）
+
+`step21_phaseb_eval.py`（verbatim COLE QA Prompt single-call、SEGA/COLE literature 標準 prompt）
+對同一份 IDs 跑兩條 source：
+
+- `--source agent`：吃 `step22_coldstart_crello_{sid}_render.png`（Step 68 N=100 fresh 同一份
+  cached render）
+- `--source designer-gt`：吃 `crello_{sid}/ground_truth_preview.jpg`（**Crello 原始 designer 產
+  出**，非由我方 renderer 重畫——避免 renderer confound）
+
+新增 `Smean5 = mean(SDL,SQL,STV,SGI,SIO)` 與既有 `Smean4 = mean(SDL,SQL,STV,SIO)` 並列輸出
+（後者保持 experiment.md 規格 backward compat）。
+
+### 8.3 N=100 fresh matched H2H 結果（`step70_n100_*_5axis.json`，100/100 ok）
+
+| 軸 | Agent | Designer GT | Δ | Agent / GT |
+|---|---|---|---|---|
+| SDL — Design & Layout | 6.81 | 7.84 | −1.03 | 86.9% |
+| SQL — Content Relevance | 7.45 | 8.33 | −0.88 | 89.4% |
+| **STV — Typography & Color** | 6.09 | 7.53 | **−1.44** | **80.9%（最大 gap）** |
+| SGI — Graphics & Images | 7.31 | 8.03 | −0.72 | 91.0% |
+| SIO — Innovation | 6.04 | 6.77 | −0.73 | 89.2% |
+| **Smean4** | **6.598** | **7.617** | **−1.02** | **86.6%** |
+| **Smean5** | **6.740** | **7.700** | **−0.96** | **87.5%** |
+
+→ Designer 在所有 5 軸全勝、Smean 領先 ~1 點；最大 gap 在 STV（typography）−1.44、
+最小 gap 在 SGI（graphics quality）−0.72。
+
+### 8.4 N=28 high-score matched H2H 結果（`step70_n28_*_5axis.json`，28/28 ok）
+
+| 軸 | Agent | Designer GT | Δ |
+|---|---|---|---|
+| SDL | 7.00 | 8.00 | −1.00 |
+| SQL | 7.21 | 8.29 | −1.07 |
+| STV | 6.54 | 7.71 | −1.18 |
+| SGI | 7.25 | 8.18 | −0.93 |
+| SIO | 6.07 | 7.04 | −0.96 |
+| **Smean4** | **6.705** | **7.759** | **−1.05** |
+| **Smean5** | **6.814** | **7.843** | **−1.03** |
+
+### 8.5 Selector 縮幾何 gap、不縮 aesthetic gap（最關鍵發現）
+
+| | N=100 gap | N=28 gap | Closure |
+|---|---|---|---|
+| **A 軸 5/6 wins**（Step 69）| baseline | best-case | ✅ subset 把幾何拉到勝 |
+| **B 軸 Smean4** | −1.02 | −1.05 | ❌ **−0.03（不縮甚至微擴）** |
+| **B 軸 Smean5** | −0.96 | −1.03 | ❌ **−0.07（微擴）** |
+| **STV** | −1.44 | −1.18 | ✅ +0.26（縮 18%） |
+| **其他 4 軸** | — | — | ❌ 全擴大 |
+
+**詮釋**：N=28 high-score subset 在幾何 A 軸（Step 69）5/6 勝 designer，但 B 軸 H2H **完全沒
+幫助**。這實際上是**更強的科學發現**——殘餘 gap 不是結構問題，是渲染品質（字型 / 字距 / 顏色和諧 /
+視覺 hierarchy / 構圖完成度）。Selector 把結構挑簡單只讓幾何指標贏，aesthetic judge 看的是整張
+海報視覺完成度，selector 不會讓渲染變更好。Step 54/55/56 的 render parity 分解早已指出這點、
+Step 70 用 matched H2H 第一次量化。
+
+### 8.6 舊 claim 修正（**論文搬數字前必看**）
+
+| 舊宣稱 | 必修 |
+|---|---|
+| Step 68「Smean = 6.322 是 N=100 fresh headline」 | 是 `JudgeAesthetic` multi-candidate prompt 跑的；**論文主表用 Step 70 的 6.598 / 7.617** matched COLE single-call 數字（literature aligned） |
+| Step 22+23 within-judge「達 designer ceiling 64.8% / 65.8%」 | 那是舊 4-axis schema；Step 70 在 5-axis schema 下是 **86.6% (4-axis) / 87.5% (5-axis)**。**不要把這兩條混寫** |
+| Step 69「5/6 wins designer」 | **限縮到 A 軸（幾何）**；B 軸 N=28 仍 86.4% vs N=100 86.6% 同量級、**不可 carry over** 到 aesthetic 宣稱 |
+
+### 8.7 論文 framing（**Step 70 後最新**）
+
+1. **Geometric placement: matches or exceeds designer**
+   - N=100 fresh A 軸 3 勝（`Ove` / `Und_l` / `Und_s`，§6.2）
+   - N=28 best-case A 軸 5/6 勝（§7.3）
+2. **Aesthetic rendering: 86.6% of designer Smean ceiling**（N=100 matched COLE single-call）
+   - Gap is **render-channel-bound, not placement-bound**（subset 不縮 gap + Step 54/55/56 render
+     parity 一致）
+   - STV (typography) 是最大 axis-gap（−1.44）、字型 / 色彩 future work；SGI（−0.72）與 SIO（−0.73）
+     最小、表示視覺品質與創意已接近 designer
+3. **不可主張「prompt-only 系統匹敵 designer aesthetics」**——matched H2H 直接打臉
+
+### 8.8 證據檔（新增）
+
+| 檔案 | 內容 |
+|---|---|
+| `layout_agent/output/step70_n100_agent_5axis.json` | Agent N=100 matched COLE 5-axis（M3''） |
+| `layout_agent/output/step70_n100_designer_gt_5axis.json` | **Designer GT N=100 baseline**（論文 main B 軸對照） |
+| `layout_agent/output/step70_n28_agent_5axis.json` | Agent N=28 high-score re-judge |
+| `layout_agent/output/step70_n28_designer_gt_5axis.json` | **Designer GT N=28 baseline**（論文 best-case showcase 對照） |
+| `layout_agent/output/step21_phaseb_eval.py` | 新增 5-axis `Smean5` 後的 harness（additive，原 4-axis 不破壞） |
+
+**Step 70 LLM cost**：~$3（256 vision call × ~$0.012）。

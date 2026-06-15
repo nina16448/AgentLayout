@@ -223,16 +223,18 @@ async def _process_sample(
         return {"id": sample_id, "status": "parse_failed"}
 
     smean = statistics.mean(scores[k] for k in REPORT_AXES)
+    smean5 = statistics.mean(scores[k] for k in ("SDL", "SQL", "STV", "SGI", "SIO"))
     print(
         f"[{idx:2d}/{total}] {sample_id}  "
         f"SDL={scores['SDL']}  SQL={scores['SQL']}  STV={scores['STV']}  "
-        f"SIO={scores['SIO']}  (SGI={scores['SGI']})  Smean={smean:.3f}"
+        f"SIO={scores['SIO']}  (SGI={scores['SGI']})  Smean4={smean:.3f}  Smean5={smean5:.3f}"
     )
     return {
         "id": sample_id,
         "status": "ok",
         "scores": scores,
         "smean": smean,
+        "smean5": smean5,
     }
 
 
@@ -242,6 +244,7 @@ def _aggregate(samples: List[dict]) -> Dict[str, float]:
     for axis in ("SDL", "SQL", "STV", "SGI", "SIO"):
         agg[axis] = float(statistics.mean(s["scores"][axis] for s in ok)) if ok else 0.0
     agg["Smean"] = float(statistics.mean(s["smean"] for s in ok)) if ok else 0.0
+    agg["Smean5"] = float(statistics.mean(s["smean5"] for s in ok)) if ok else 0.0
     return agg
 
 

@@ -187,6 +187,7 @@ tests/data/serdeser_storage/
 *.png
 # Paper-figure showcase folder is tracked even though *.png is normally ignored.
 !layout_agent/good_result/*.png
+!layout_agent/good_result/**/*.png
 htmlcov
 htmlcov.*
 cov.xml
