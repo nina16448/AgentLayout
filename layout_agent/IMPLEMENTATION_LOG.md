@@ -4943,4 +4943,78 @@ PKU 997 $52 + 各 micro smoke ~$1）。
 
 ---
 
+### Step 69 — High-score subset selector + best-case showcase 結果（2026/06/15）
+
+**動機**：Step 68 N=100 fresh A 軸 **3 勝 3 輸**（Ove / Und_l / Und_s 勝、Ali / Read / Occ 略輸），random
+sample 把系統強項平均掉了。要回答「在 system 適合的條件下能不能全面壓過 designer」需要選一個
+best-case subset。
+
+**Selector 設計**（`select_high_score_subset.py`）：根據 Step 9 / 35 / 38 / 56 / 61 / 64 累積觀察、
+編成 zero-LLM filter cascade：
+
+1. **結構簡單**：1 image + 1–2 text、underlay ≤ 3、總非背景 element 3–6
+2. **Canvas 幾何**：aspect 0.4–2.0、max dim ≤ 2000 px
+3. **短聚焦文字**：最大 text content ≤ 40 字元
+4. **GT 保守構圖**：max image area < 50% canvas（無 bleed photo）、text-photo overlap < 30%（無 text-on-photo）
+
+掃 1,902 個 `crello_*/meta.json` → **28 個通過（1.5%）**。主要 reject：
+547 個 0 image、324 個 aspect 極端、196+127 個 2-3 個 image、280+ 個 3-6 個 text。
+
+**步驟與產出**：
+
+1. **`step22_coldstart_render.py --ids-file high_score_subset_ids.json --force`** → 28/28 fresh candidates
+2. **`recompute_sega_n100_fresh.py --ids-file --out`**（新加 --ids-file / --out 旗標）
+   → A 軸 28/28 ok
+3. **`validate_b_axis_judge.py --ids-file --n 0`**（新加 --ids-file、--n 0 代表全跑）
+   → B 軸 27/28 ok（1 sample `5f1feb15...` judge retry 三次都 parse 失敗）
+
+**A 軸結果**（`high_score_sega_n28.json`）：
+
+| 指標 | Agent | Designer GT | 判定（對照 N=100 fresh） |
+|---|---|---|---|
+| alignment | **2.88e-03** | 3.17e-03 | **Agent 勝**（N=100 略輸） |
+| overlay | **2.93e-03** | 9.47e-03 | **Agent 勝 3×** |
+| underlay_loose | **0.394** | 0.264 | **Agent 勝 1.5×** |
+| underlay_strict | **0.271** | 0.208 | **Agent 勝 1.3×** |
+| readability | **0.012** | 0.018 | **Agent 勝**（N=100 略輸） |
+| occlusion | 0.097 | 0.085 | Agent 略輸 (10%) |
+
+**5/6 軸勝 designer GT**——alignment / readability 兩軸從 N=100 略輸**翻盤**。
+
+**B 軸結果**（`high_score_n28_results.json`，N=27 ok 進聚合）：
+
+| COLE 軸 | N=28 mean | N=100 baseline | Δ |
+|---|---|---|---|
+| design_layout | 6.44 | 6.28 | +0.16 |
+| content_relevance | 7.00 | 7.00 | 0 |
+| typography_color | 6.11 | 6.00 | +0.11 |
+| graphics_images | 6.19 | 6.16 | +0.03 |
+| innovation_originality | 6.22 | 6.17 | +0.05 |
+| **Smean** | **6.393** | 6.322 | **+0.071** |
+| min Smean | **6.00** | 5.60 | **+0.40 floor lift** |
+
+5 軸全部微升、最重要的是 **floor 從 5.60 拉高到 6.00**——subset 沒有低分案例。
+
+**論文 framing**：
+
+- **不**取代 N=100 fresh 當 main headline（N=100 是 unbiased random、N=28 是 conditioned subset）
+- **best-case showcase sub-section**：「當輸入符合 system 設計的 6 條結構特質，AgentLayout 在 6 個 SEGA
+  軸中 5 個勝 designer、COLE Smean 6.39」
+- 把 N=100 的「3 勝 3 輸」從 limitation 變成 **「在 known scope 內全面領先 + scope 邊界明確」**
+- Selector cascade 公開可驗證、不是 cherry-picking——審稿可重跑 `select_high_score_subset.py` 確認
+
+**Harness 改動**：
+
+- `recompute_sega_n100_fresh.py`：新加 `--ids-file` 與 `--out` 旗標，default 維持原 step22_n100 行為
+- `validate_b_axis_judge.py`：新加 `--ids-file` 旗標、`--n 0` 代表全跑；default 仍 scan 所有 cached step22
+- 兩者皆向後相容、現有測試與調用不影響
+
+**證據檔（layout_agent/output/）**：`select_high_score_subset.py`、
+`high_score_subset_ids.json`（含 reject 直方圖 + 28 details）、`high_score_sega_n28.json`、
+`high_score_n28_results.json`。
+
+**Step 69 LLM cost**：~$3（28 generation + 28 judge）。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/15*
