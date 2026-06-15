@@ -1094,6 +1094,65 @@
 
 > **Read 真實落後同 PKU 1.80×**：兩 dataset 一致顯示 saliency-aware 視覺處理是落後軸（詳 §68.3b C 段）；論文寫作不要寫「Read 略輸」、要寫「Read 1.9× 落後、root-cause 為 saliency-aware 訓練缺口」。
 
+### 68.2b N=100 3 輸軸 per-sample root-cause（B1，2026-06-15）
+
+`b1_root_cause_n100.py` zero-LLM 分析（`b1_root_cause_n100.json` / `.md`）：把 N=100 拆成 per-sample agent − gt delta、按 worst 排序、bucket by canvas geometry + element count。**關鍵發現：aggregate「3 輸軸」其實 win/lose 結構大不相同**。
+
+#### 68.2b.1 Per-sample win/lose 重點翻盤
+
+| 軸 | Agent wins | Agent loses | Tied | 翻盤詮釋 |
+|---|---|---|---|---|
+| **alignment** | **65** | **3** | 32 | **65/100 樣本 agent 勝**；aggregate mean Δ +0.0012 完全被 3 個 outlier（最大 459×）撐起來。**論文應改寫**：「alignment 65/100 samples win designer (3 catastrophic outliers on 851×315 banner format)」 |
+| **readability** | 21 | **41** | 38 | 真實系統性落後（21:41）；38 個 tie 是 gt=0 的 perfect 樣本，agent 在這些上引入額外 overlap |
+| **occlusion** | 45 | **55** | 0 | 樣本數接近 45:55、但落敗幅度大（mean Δ +0.025）；大輸案例集中於 agent 把文字放在 image 主體上 |
+
+→ alignment 應**從「輸軸」改寫為「3 outlier 帶來尾部風險、典型樣本壓制 designer」**；Read/Occ 仍是真實 limitation 但有可量化的 pattern。
+
+#### 68.2b.2 失敗 pattern（canvas / element 結構）
+
+**Alignment 的 3 個 catastrophic outlier**：
+
+| id (8c) | Δ | canvas | 結構 | title |
+|---|---|---|---|---|
+| `5c88efb7` | +0.306 (459×) | **851×315** | 3 text / 0 img | Retro roller skates Offer |
+| `58898cbf` | +0.218 (32×) | **851×315** | 1 text / 0 img | Think outside the box citation |
+| `5a218ae4` | +0.153 (308×) | **851×315** | 1 text / 0 img | Advanced Technologies Research |
+
+→ **全部都是 851×315 橫幅廣告格式**（aspect 2.7 landscape、高度僅 315px）。Agent 在這個極端 banner 比例下對齊崩壞；其他 canvas 對齊正常。**這是 1 個明確 failure-mode、可寫進 limitation**。
+
+**Readability bucket 分析**：
+
+| 維度 | 最差 bucket | mean Δ | 最佳 bucket | mean Δ | 詮釋 |
+|---|---|---|---|---|---|
+| canvas size | **small ≤600 px** | +0.017 | large >1200 px | +0.006 | **canvas 越小 → readability 越爛**；小 canvas 字會被擠出可讀範圍 |
+| aspect | portrait | +0.015 | square_ish | +0.012 | aspect 差異不大、size 是主因 |
+
+→ Readability failure mode = **小 canvas + agent 不會 shrink-fit 字**（renderer 字型升級 Step 55 部分緩解但未消除）。
+
+**Occlusion bucket 分析**：
+
+| 維度 | 最差 bucket | mean Δ | 詮釋 |
+|---|---|---|---|
+| canvas size | mid 600-1200 px | +0.041 | mid-size 樣本內常見「中央 hero image + text 想擠進去」失敗 |
+| aspect | portrait | +0.060 | portrait 上半部圖片、下半部文字、若 agent 把文字推上 hero 區就大輸 |
+
+最戲劇性 occlusion 失敗：`5c6d19e0` Δ +0.67（agent 0.671 vs gt 0.0008、791× 差）— 1080×1920 portrait 海報「Easter Bunny riding bicycle」、1 個 text，agent 把文字直接擺在主體上。
+
+#### 68.2b.3 論文 framing 修正
+
+| 舊 framing | 改寫成 |
+|---|---|
+| 「Ali / Read / Occ 略輸 designer」 | 「Ali **65/100 wins** with 3 outliers on 851×315 banner format; Read 1.9× lag dominant on small canvas; Occ losses concentrate on portrait hero-image samples」 |
+| 「3 軸落後是系統性問題」 | 「**只有 Read / Occ 是系統性 limitation**（saliency-aware gap + canvas-size sensitivity）；Ali 是 outlier 尾部風險」 |
+| （無 actionable pattern） | 「Future work: (1) banner 851×315 format 專門 align rule；(2) saliency-aware text placement；(3) shrink-fit for small canvas」 |
+
+#### 68.2b.4 證據檔
+
+| 檔 | 內容 |
+|---|---|
+| `layout_agent/output/b1_root_cause_n100.json` | Per-sample loss + structural features + worst-top10 + bucket analysis |
+| `layout_agent/output/b1_root_cause_n100.md` | 人類可讀完整報告（worst-10 表 + 3 維度 bucket × 3 軸） |
+
 **B 軸 fresh re-judge（`validate_b_axis_judge.py --n 100`，`b_axis_n100_fresh_results.json`）**：
 
 - 100/100 ok、**Smean mean = 6.322**（範圍 5.6–7.6）
@@ -1462,3 +1521,113 @@ Step 70 用 matched H2H 第一次量化。
 | `layout_agent/output/step21_phaseb_eval.py` | 新增 5-axis `Smean5` 後的 harness（additive，原 4-axis 不破壞） |
 
 **Step 70 LLM cost**：~$3（256 vision call × ~$0.012）。
+
+---
+
+## §9 Future work（paper-ready，consolidated 2026-06-15）
+
+§4 是 historic limitation list（已完成/open 混雜）；本節是**論文 Future Work 章節可直接搬**的
+prioritized, scoped roadmap，把 §68.3b、§68.2b、§8.7、Step 71 / memory `project_no_pku_posterO_alignment`
+散落的 future work 集中起來、附 priority + scope + 預估成本。
+
+### 9.1 優先級總表
+
+| # | 項目 | Priority | Scope | 預估成本 | 對應 |
+|---|---|---|---|---|---|
+| **F1** | **PKU Path B**（ElementProposer + UNDERLAY schema + training） | 🔴 high | 跨研究問題 | ~$200+ + ~2-4 週工程 | §68.3b B + `PKU_FEASIBILITY.md` |
+| **F2** | **Saliency-aware text placement**（Rea / Occ root-cause） | 🟡 mid | 同系統內擴充 | ~$30 + 1 週工程 | §68.2b §68.3b C + `b1_root_cause_n100.json` |
+| **F3** | **Banner 851×315 alignment rule**（B1 失敗模式 1） | 🟢 low | 小修補 | $0 (zero-LLM rule) + ~1 天 | §68.2b §68.2b.2 |
+| **F4** | **Small-canvas shrink-fit**（B1 失敗模式 2） | 🟡 mid | renderer 擴充 | $0 (renderer) + ~3 天 | §68.2b.2 + Step 55 renderer |
+| **F5** | **Fine-tuning**（generator-bounded 唯一未試的解法） | 🔴 high | 研究級 | ~$1000+ + GPU + 訓練 pipeline | memory `project_generator_bounded_line_closed` |
+| **F6** | **CGL benchmark** | 🟢 low | indicative validation | ~$50 | `CGL_FEASIBILITY.md` |
+| **F7** | **VILA-7B judge head-to-head**（消 judge calibration caveat） | 🟢 low | 環境裝設 | ~$0 (local model) + checkpoint download | §4 + §3.1 |
+| **F8** | **B 軸 N=1,897 matched H2H**（補齊 large-N 證據） | 🟡 mid | scale-up Step 70 | ~$80 (1,897 × 2 vision call) | §8 + `EXPERIMENT_MATRIX` |
+
+### 9.2 F1 — PKU Path B（最大架構改動）
+
+**為什麼是 highest priority but not done**：審稿一定問「為什麼 PKU 只跑 Path A」、必須有明確的
+工程清單與 scope-out 理由。
+
+**已知工程清單**（從 `PKU_FEASIBILITY.md` §3 與 memory `project_no_pku_posterO_alignment`）：
+
+1. **新增 `SemanticType.UNDERLAY`**：schema / generator prompt / QC 規則 / renderer 全動
+2. **新增 `ElementProposerRole`**：第 6 個 Role，從 raw 背景圖預測「該放幾個 text / logo /
+   underlay」；in-context examples 從 PKU train split 取
+3. **Background → spec adapter**：PKU 沒有 brief / asset_list、需要 image-only entry
+4. **5-axis Smean → PKU layout-aware aesthetic 對齊**：PKU SOTA 主要報 IoU 與 underlay metric、
+   無 Smean
+
+**為什麼**目前 scope-out（2026-06-04 決定）：
+
+- 拆 5 個 Role 改 generative 跟系統 content-aware depth 取向衝突
+- ElementProposer 要 in-context 範例或 fine-tune、跟「pure prompting multi-agent」研究問題不一致
+- 本研究 task 定義是 **content-aware placement given assets**，非 generative element prediction
+
+**翻案 trigger**：若日後 paper reviewer 要求 cross-dataset SOTA 對標、或 PKU benchmark 規範改成
+接受 brief-driven 系統、即可重啟。所有已查清的工程細節留在 `PKU_FEASIBILITY.md` §3.3 + memory。
+
+### 9.3 F2 — Saliency-aware text placement（最有 leverage 的中型改動）
+
+**證據**：
+
+- §68.2b.2 Occlusion failure mode：portrait hero-image 樣本 mean Δ +0.06、最戲劇 `5c6d19e0`
+  Δ +0.67（agent 把文字擺在主體上）
+- §68.3b C：PKU Rea 1.80× / Occ 1.42× 落後 root-cause 確認是「LLM 看 base64 在猜 saliency」
+- 跨 dataset 一致：Crello Read 1.93× ≈ PKU 1.80×
+
+**工程方向**：
+
+1. 把 `BackgroundAnalyzer.safe_zones` 從 binary mask 升級為 **continuous saliency score**（U2Net
+   raw output、不要 threshold）
+2. Generator prompt 從「avoid safe zones」改為「prefer low-saliency regions」、附 saliency 直方圖
+3. QC 加 `TEXT_ON_HIGH_SALIENCY`（占主體 saliency mass > X%）
+
+**成本估算**：~$30（Crello N=100 fresh 重跑 + matched H2H 重評）；工程 ~1 週（背景模組已存在、
+只需閾值改連續 + 1 條 QC + 1 段 prompt）。
+
+### 9.4 F3 — Banner 851×315 alignment rule（最小可做）
+
+**證據**：§68.2b.2 — 3 個最差 alignment 樣本**全部** 851×315、平均 ratio 266×。其他 canvas
+alignment 正常。明確 1 個 failure mode、明確 1 個 input pattern。
+
+**工程方向**：QC 加一條 `BANNER_LANDSCAPE_ALIGN`：當 `851×315 aspect 且高度<=400px`、強制所有
+element 共用 baseline grid（top/bottom snap to multiples of 20px）。
+
+**成本**：$0 / ~1 天。
+
+### 9.5 F4 — Small-canvas shrink-fit
+
+**證據**：§68.2b.2 — Read mean Δ small_<=600 px = +0.017（最差 bucket）、large_>1200 = +0.006。
+
+**工程方向**：renderer 對小 canvas（max dim ≤600）開啟自動 font-size shrink-fit、確保文字寬度
+不超過 element bbox。Step 55 renderer 升級已做 wrap 但未做 shrink-fit。
+
+**成本**：$0（renderer 改動）/ ~3 天。
+
+### 9.6 F5 — Fine-tuning（generator-bounded 唯一未試的方向）
+
+memory `project_generator_bounded_line_closed`（2026-06-13）：「使用者決定停止突破；文字/視覺/
+constraint 三路收斂為 limitation、唯一未試=fine-tuning」。
+
+**為什麼 future work 不 now work**：
+
+- 需要訓練 pipeline、GPU、labeled paired data（Crello + better-than-designer 標註）
+- 跟「pure prompting multi-agent」研究問題正交
+- 屬另一個論文等級的研究問題
+
+**翻案 trigger**：若 reviewer 要求「為什麼不試 fine-tuning」、直接引此節 + memory 決策時序。
+
+### 9.7 F6–F8 — 其他
+
+- **F6 CGL benchmark**：類似 PKU、`CGL_FEASIBILITY.md` 已查、scope-out 同理由
+- **F7 VILA-7B judge**：消最後一條 judge calibration caveat、但需要 local model 裝設與 checkpoint
+- **F8 B 軸 N=1,897 matched**：Step 70 是 N=100、擴到 N=1,897 可消「matched H2H 樣本不夠大」
+  caveat、成本 ~$80
+
+### 9.8 寫論文時的優先順序建議
+
+| 章節 | 建議引用 |
+|---|---|
+| Future Work 主體（必寫） | **F1 + F2 + F5**（一個架構問題 / 一個技術問題 / 一個研究問題） |
+| Limitation discussion（必寫） | **F3 + F4**（concrete failure patterns from Step 71 analysis） |
+| Reviewer Q&A 防禦（可寫） | **F6 + F7 + F8**（消剩餘 caveat、表達已知 + 範疇邊界） |

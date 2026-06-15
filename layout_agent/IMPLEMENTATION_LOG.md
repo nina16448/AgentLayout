@@ -5127,4 +5127,45 @@ H2H 第一次量化。
 
 ---
 
+### Step 71 — B1 N=100 3 輸軸 per-sample root-cause（2026/06/15）
+
+**動機**：B 區第 1 項。Step 68 aggregate 寫「Ali / Read / Occ 三軸略輸」是 mean-driven、缺 per-sample 分布，無法判斷是「**系統性 limitation**」還是「**outlier 撐起的尾部風險**」，論文 limitation 章節無 actionable pattern 可寫。
+
+**方法**：`b1_root_cause_n100.py` zero-LLM 純資料分析：
+
+- 對 `step22_sega_n100_fresh.json` 每個 sample 算 `agent − gt` delta 與 ratio
+- 按 worst 排序、各軸取 top-10 + structural features（canvas geometry / element counts / max text chars）
+- bucket by aspect / canvas size / element count 看 mean delta 隨輸入 vary 的趨勢
+
+**結果（per-sample win/lose 重點翻盤）**：
+
+| 軸 | Agent wins | Agent loses | Tied | 翻盤詮釋 |
+|---|---|---|---|---|
+| **alignment** | **65** | 3 | 32 | **65/100 win**；aggregate +0.0012 是 3 個 outlier 撐起來（最大 459×、全部都是 851×315 banner format）。**應從「輸軸」改寫為「outlier 尾部風險」** |
+| readability | 21 | 41 | 38 | 真實系統性落後；bucket: small canvas (≤600 px) 最差 mean Δ +0.017 / large >1200 px 最好 +0.006 |
+| occlusion | 45 | 55 | 0 | 樣本數接近、但落敗幅度大；mid canvas + portrait 最差；最戲劇案例 `5c6d19e0` Δ +0.67（791×、agent 把文字擺在主體上） |
+
+**3 個 alignment outlier 共通特徵**：全部 `851×315`（aspect 2.7 landscape、高度 315px），3 個樣本均屬此 banner format。**1 個明確 failure-mode，可寫進論文 limitation**。
+
+**Readability failure mode**：canvas 越小、agent 越爛；**small canvas + 不會 shrink-fit 字** = 文字超出可讀範圍。Step 55 renderer 字型升級部分緩解但未消除。
+
+**Occlusion failure mode**：agent 缺強 saliency-aware「避開主體」prior，把文字推上 hero image 區；portrait 海報尤其嚴重（上半部圖、下半部文字、若 agent 推錯就大輸）。
+
+**論文 framing 修正**（result.md §68.2b.3 全表）：
+
+- 「Ali / Read / Occ 略輸」→ 「Ali 65/100 wins with 3 outliers on 851×315 banner; Read 1.9× lag dominant on small canvas; Occ losses concentrate on portrait hero-image samples」
+- 「3 軸落後是系統性」→ 「**只有 Read / Occ 是系統性 limitation**；Ali 是 outlier 尾部」
+- Future work 3 條：(1) banner 851×315 專門 align rule；(2) saliency-aware text placement；(3) shrink-fit for small canvas
+
+**證據檔（layout_agent/output/）**：
+
+| 檔 | 內容 |
+|---|---|
+| `b1_root_cause_n100.json` | Per-sample loss + features + worst-top10 + bucket analysis |
+| `b1_root_cause_n100.md` | 人類可讀報告（worst-10 表 + 3 維度 bucket × 3 軸） |
+
+**Step 71 LLM cost**：$0（純資料分析、無 LLM 呼叫）。
+
+---
+
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/15*
