@@ -5168,4 +5168,94 @@ H2H 第一次量化。
 
 ---
 
-*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/15*
+### Step 72 — F2 saliency-aware text placement：full implementation + N=100 validation = NET NEGATIVE（2026/06/16）
+
+**動機**：B 區 future-work item F2，預期最大 leverage。計畫見 result.md §9.3、calibration GO 證據見
+commit `8e4df8b5`（designer p95 saliency 0.38 / pct>0.5 1.3%）、smoke 結果見 commit `af6c9bb6`
+（N=3 2/3 改善）。
+
+**實作**（commit `af6c9bb6`，4 個 production module + 90 regression test 全綠）：
+
+| 模組 | 改動 |
+|---|---|
+| `schema.py` | BackgroundAnalysis 加 3 個 optional 欄位（saliency_map / histogram / low_saliency_regions） |
+| `tools/background_analyzer.py` | `_energy_map` 暴露 continuous saliency；3 新 helper（downsample / 3x3 / top-K NMS） |
+| `actions/generate_layout.py` | PROMPT_TEMPLATE 加 saliency 區塊 + Rule 6b 政策段 |
+| `tools/quality_checker.py` | TEXT_ON_HIGH_SALIENCY rule @ tau=0.5（Step 63 deference + graceful skip） |
+
+**N=100 validation 結果**（`step72_f2_n100_*`，100/100 ok、37 vision refusal、~$6 + $3 cole）：
+
+A 軸 SEGA 比 Step 68 baseline：
+
+| 軸 | Baseline | F2 | Δ | 詮釋 |
+|---|---|---|---|---|
+| alignment | 6.85e-03 | 6.81e-03 | -0.6% | 噪音 |
+| overlay | 5.66e-04 | 5.50e-04 | -2.9% | 微改善（已大勝、無關鍵差） |
+| underlay_loose | 0.532 | 0.524 | -1.5% | 微微退（仍勝 designer） |
+| underlay_strict | 0.523 | 0.525 | +0.4% | 噪音 |
+| **readability** | **0.0270** | **0.0252** | **-6.7%** | **方向對、ratio 1.93×→1.80×** |
+| **occlusion** | **0.1719** | **0.1654** | **-3.8%** | **方向對、ratio 1.17×→1.13×** |
+
+B 軸 COLE single-call H2H 比 Step 70 baseline：
+
+| 軸 | Step 70 baseline | F2 | Δ | gap closure |
+|---|---|---|---|---|
+| SDL | 6.81 | 6.68 | **-0.13** | -12.6% (widened) |
+| SQL | 7.45 | 7.21 | **-0.24** | **-27.3% (widened most)** |
+| STV | 6.09 | 6.04 | -0.05 | 噪音內 |
+| SGI | 7.31 | 7.23 | -0.08 | 噪音內 |
+| SIO | 6.04 | 6.05 | +0.01 | 噪音內 |
+| **Smean4** | **6.598** | **6.495** | **-0.103** | **-10.0%（gap widened 10%）** |
+| **Smean5** | **6.740** | **6.642** | **-0.098** | -10.2% |
+
+**§9.3 success criteria 對照**：
+
+| 標準 | 目標 | 實際 | 達成 |
+|---|---|---|---|
+| Occlusion N=100 | ≤ 0.150 | 0.165 | ❌ |
+| Readability N=100 | ≤ 0.018 | 0.025 | ❌ |
+| Smean4 matched H2H | ≥ 6.80 | 6.495 | ❌（反向）|
+| B1 worst-occ 改善 | ≥ 3/4 | 2/3（smoke）→ 推到 N=100 變 net negative | ❌ |
+
+**判定：F2 NET NEGATIVE**。雖縮 A 軸 saliency overlap（Read 6.7% / Occ 3.4%）、但 judge B 軸大輸
+（Smean -0.10 = 10% gap widened、SQL 最差 -0.24）。
+
+**Root cause 假設**（未實證）：
+
+1. **Prompt bloat**：F2 區塊 +~150 token 占用 Generator reasoning capacity；Step 49 prompt 強化也是
+   類似 pattern（graphics tie 唯一動的軸、主軸不動）。
+2. **Saliency-low ≠ aesthetic**：被迫推到 saliency 低區可能造成 dull 「角落擺文字」構圖、judge 認為
+   缺視覺中心。
+3. **Designer aesthetic 不是 saliency-driven**：是 compositional / typographic / hierarchy 的
+   micro-decisions、避主體只是必要不充分。
+
+**這條結果同 Step 49/65/66 一致**——**Generator-bounded 在 prompt-only / QC-only 槓桿下、結構性
+干預難以顯著推 B 軸 Smean**。F2 不是反例、是新一筆同方向證據。
+
+**Engineering disposition**（待 user 決定）：
+
+| 選項 | 利弊 |
+|---|---|
+| (a) keep F2 code on（current） | B 軸 production 數字會持續 -0.10；schema/saliency 暴露對未來分析有用 |
+| (b) 加 config flag、預設 OFF | 保留 code、production behavior 回到 baseline；F2 可作 ablation 重啟 |
+| (c) full revert（delete prompt 區塊 + QC rule、保留 schema） | production 100% baseline；schema 留給未來 |
+| (d) full revert all | 完全清掉 F2、但失去 calibration + N=100 negative 證據的可重現性 |
+
+**論文 framing**：F2 結果寫進 Step 73 follow-up commit + result.md §9.3 改寫；F2 變成 Generator-
+bounded 反證鏈的最新一筆證據（Step 49 → 50 → 65 → 66 → 72）、不是 limitation 而是 **paper finding**。
+
+**證據檔（layout_agent/output/）**：
+
+| 檔 | 內容 |
+|---|---|
+| `step72_f2_n100_sega.json` | F2 N=100 SEGA A 軸 aggregate |
+| `step72_f2_n100_cole.json` | F2 N=100 COLE single-call agent re-judge |
+| `step72_f2_n100_crello_{sid}_{render.png,candidate.json,spec.json}` | F2 N=100 fresh renders |
+| `step72_f2_smoke_crello_{sid}_*` | N=3 smoke 證據 |
+| `f2_calibration.{json,md}` | calibration 前置證據（commit `8e4df8b5`） |
+
+**Step 72 LLM cost**：~$10（render $6 + COLE H2H $3 + smoke $0.2 + small）。
+
+---
+
+*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/16*

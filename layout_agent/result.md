@@ -1610,6 +1610,38 @@ prioritized, scoped roadmap，把 §68.3b、§68.2b、§8.7、Step 71 / memory `
 
 **證據檔（新增）**：`layout_agent/output/f2_calibration.{json,md}`
 
+#### F2 N=100 validation 結果（Step 72，2026-06-16）= **NET NEGATIVE**
+
+實作完成後跑 N=100 fresh validation：
+
+| 軸 | Baseline (§6.2/§8.3) | F2 | Δ |
+|---|---|---|---|
+| A 軸 Read | 0.0270 (1.93×) | 0.0252 (1.80×) | **-6.7% ✅** 方向對 |
+| A 軸 Occ | 0.1719 (1.17×) | 0.1654 (1.13×) | **-3.8% ✅** 方向對 |
+| **B 軸 Smean4** | **6.598** | **6.495** | **-0.103 ❌ gap widened 10%** |
+| **B 軸 Smean5** | **6.740** | **6.642** | **-0.098 ❌** |
+
+**Success criteria 對照**：
+
+- Occ ≤ 0.150 → **0.165 ❌**（達不到 designer parity）
+- Read ≤ 0.018 → **0.025 ❌**
+- Smean4 ≥ 6.80 → **6.495 ❌**（反向，比 baseline 還低）
+
+**判定**：A 軸 saliency overlap 縮 3-7% 是真實小改善，但 judge 在 B 軸大輸（Smean -0.10、SQL -0.24
+最差）。F2 net negative。
+
+**詮釋（root cause 假設）**：
+
+1. **Prompt bloat**：+150 token saliency 區塊占用 reasoning capacity（同 Step 49 pattern）
+2. **Saliency-low ≠ aesthetic**：被迫推到 saliency 低區→ dull「角落擺文字」構圖
+3. **Designer aesthetic 不是 saliency-driven**：是 compositional/typographic micro-decisions
+
+**論文 framing**：F2 從「最有 leverage 的 future work」改寫成「**Generator-bounded 反證鏈最新一筆證據**」
+（Step 49→50→65→66→72）。calibration GO 假設成立但實際結果 fail 也是 paper finding——「即使有
+strong prior 證據支持的結構性干預、prompt-only/QC-only 槓桿也無法顯著推 B 軸 Smean」。
+
+**證據檔**：`step72_f2_n100_sega.json`、`step72_f2_n100_cole.json`、`step72_f2_n100_crello_*`（IMPLEMENTATION_LOG Step 72 詳述）
+
 ### 9.4 F3 — Banner 851×315 alignment rule（最小可做）
 
 **證據**：§68.2b.2 — 3 個最差 alignment 樣本**全部** 851×315、平均 ratio 266×。其他 canvas

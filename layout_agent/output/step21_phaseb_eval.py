@@ -114,9 +114,15 @@ def _png_b64(sample_id: str, source: str = "agent", render_prefix: Optional[str]
     if render_prefix:
         # Same protocol as step51_blind_judge_audit: last attempt's render.
         pngs = sorted(OUT.glob(f"{render_prefix}_crello_{sample_id}_r1a*.png"))
-        if not pngs:
-            return None
-        return base64.b64encode(pngs[-1].read_bytes()).decode()
+        if pngs:
+            return base64.b64encode(pngs[-1].read_bytes()).decode()
+        # F2 (Step 72, 2026-06-16): fall back to the step22-style single
+        # render so the F2 N=100 validation can be judged with --render-prefix
+        # step72_f2_n100 directly.
+        single = OUT / f"{render_prefix}_crello_{sample_id}_render.png"
+        if single.exists():
+            return base64.b64encode(single.read_bytes()).decode()
+        return None
     for cand in (
         OUT / f"step22_coldstart_crello_{sample_id}_render.png",
         OUT / f"role_live_crello_{sample_id}_last_reject.png",
