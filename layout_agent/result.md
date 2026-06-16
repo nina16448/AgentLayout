@@ -1575,15 +1575,40 @@ prioritized, scoped roadmap，把 §68.3b、§68.2b、§8.7、Step 71 / memory `
 - §68.3b C：PKU Rea 1.80× / Occ 1.42× 落後 root-cause 確認是「LLM 看 base64 在猜 saliency」
 - 跨 dataset 一致：Crello Read 1.93× ≈ PKU 1.80×
 
+**F2 假設 calibration（2026-06-16，zero-LLM）**：
+
+`f2_calibration.py` 對 Crello N=100 IDs 跑 designer 文字元素在 background 上的繁忙度分布
+（local luminance std proxy）。84/100 sample 成功（16 個無背景圖跳過）、共 153 個文字元素：
+
+| 統計 | 值 | 意義 |
+|---|---|---|
+| mean | 0.117 | designer 平均把文字放在很安靜的地方 |
+| median (p50) | 0.044 | 一半 designer 文字放在繁忙度 < 0.05 |
+| p90 | 0.327 | 90% < 0.33 |
+| **p95** | **0.380** | **95% < 0.38**（遠低於 tau=0.5）|
+| pct > 0.5 | **1.3%** | 設 TEXT_ON_HIGH_SALIENCY @ tau=0.5 只會誤殺 1.3% designer |
+
+**結論**：**F2 假設成立、GO**。Designer 確實避開高繁忙區放文字（不是「我們想太多」），QC tau=0.5
+不會大規模誤殺合法 designer placement。
+
 **工程方向**：
 
 1. 把 `BackgroundAnalyzer.safe_zones` 從 binary mask 升級為 **continuous saliency score**（U2Net
    raw output、不要 threshold）
 2. Generator prompt 從「avoid safe zones」改為「prefer low-saliency regions」、附 saliency 直方圖
-3. QC 加 `TEXT_ON_HIGH_SALIENCY`（占主體 saliency mass > X%）
+3. QC 加 `TEXT_ON_HIGH_SALIENCY`（tau=0.5、calibrated）
 
-**成本估算**：~$30（Crello N=100 fresh 重跑 + matched H2H 重評）；工程 ~1 週（背景模組已存在、
-只需閾值改連續 + 1 條 QC + 1 段 prompt）。
+**成本估算**：~$15（Crello N=100 fresh 重跑 + matched H2H 重評）；工程 ~5-7 天（背景模組已存在、
+只需閾值改連續 + 1 條 QC + 1 段 prompt + 整合測試）。
+
+**Success criteria**（重跑後看）：
+
+- Occlusion N=100：agent 0.172 → ≤ 0.150（達 designer parity 0.147）
+- Readability N=100：0.0270 → ≤ 0.018（縮 50% gap）
+- Matched H2H Smean4：6.598 → ≥ 6.80（達 89% of designer 7.617，目前 86.6%）
+- B1 worst-case 4 個 occ 樣本：3/4 改善 occ delta（特別 `5c6d19e0` Bunny）
+
+**證據檔（新增）**：`layout_agent/output/f2_calibration.{json,md}`
 
 ### 9.4 F3 — Banner 851×315 alignment rule（最小可做）
 
