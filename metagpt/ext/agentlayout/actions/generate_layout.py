@@ -149,6 +149,7 @@ by assigning precise pixel coordinates to each element.
 # Context
 Design Spec: {design_spec}
 Safe zones: {safe_zones}
+Saliency landscape (F2, Step 72): {saliency_landscape}
 Dominant palette: {dominant_palette}
 Recommended text color (default, override if needed): {recommended_text_color}
 Feedback from previous round (if any): {feedback}
@@ -334,6 +335,21 @@ these. Generate candidates that already comply so retries are not wasted:
    Decorative elements may straddle safe / unsafe boundaries since their
    job is to anchor text, but the primary text/photo MUST sit inside a
    safe zone. Use the provided safe zones; do not invent your own.
+
+6b. SALIENCY-AWARE TEXT PLACEMENT (F2, Step 72). The `Saliency landscape`
+    block above (3x3 grid + top-K low-saliency rectangles) is a pixel-finer
+    signal than `safe_zones`. When the saliency block is populated (not
+    "None"):
+    - For TEXT primaries (title / subtitle / body_text): the bbox should
+      have a mean saliency <= 0.50. Use the listed low-saliency rectangles
+      as PREFERRED placement targets -- they are explicitly the calmest
+      regions in the whole canvas (ranked by 1 - mean_saliency).
+    - The 3x3 grid tells you the gross subject layout: a cell with
+      saliency > 0.6 has a face/product/focal subject in it -- do NOT cover
+      it with text.
+    - Hero IMAGE primaries (product_image, large image) may sit on high-
+      saliency cells (those ARE the subject); this rule targets text only.
+    - QC rule TEXT_ON_HIGH_SALIENCY (tau=0.5) will reject violators.
 
 7. COVERAGE / DEAD SPACE (Step 57, 2026-06-11). Counting every element
    EXCEPT background_image as foreground:
@@ -816,6 +832,7 @@ class GenerateLayout(Action):
         safe_zones_str = json.dumps(
             [sz.model_dump() for sz in bg.safe_zones], indent=2, ensure_ascii=False
         )
+        saliency_landscape_str = self._format_saliency_landscape(bg)
         palette_str = json.dumps(bg.dominant_palette, ensure_ascii=False)
         feedback_str = (
             "None"
@@ -828,6 +845,7 @@ class GenerateLayout(Action):
         return PROMPT_TEMPLATE.format(
             design_spec=spec_str,
             safe_zones=safe_zones_str,
+            saliency_landscape=saliency_landscape_str,
             dominant_palette=palette_str,
             recommended_text_color=bg.recommended_text_color,
             feedback=feedback_str,
@@ -838,6 +856,42 @@ class GenerateLayout(Action):
             composition_directive=self._format_composition_directive(spec),
             self_render=_SELF_RENDER_NOTE if self_render_attached else "None",
             exemplars=exemplars or "None",
+        )
+
+    @staticmethod
+    def _format_saliency_landscape(bg: BackgroundAnalysis) -> str:
+        """Render the F2 saliency block.
+
+        Returns "None" when the BackgroundAnalysis has no saliency data
+        (solid-color stub path or pre-F2 cached pickles), so the Generator
+        sees an unchanged prompt shape.
+        """
+        if not bg.saliency_histogram and not bg.low_saliency_regions:
+            return "None (no real background image; ignore)."
+
+        hist = bg.saliency_histogram or []
+        cells = ["TL", "TM", "TR", "ML", "MM", "MR", "BL", "BM", "BR"]
+        if len(hist) == len(cells):
+            hist_line = ", ".join(f"{c}={v:.2f}" for c, v in zip(cells, hist))
+        else:
+            hist_line = json.dumps(hist)
+
+        regions_lines = []
+        for i, sz in enumerate(bg.low_saliency_regions, 1):
+            regions_lines.append(
+                f"  {i}. bbox={sz.bbox} confidence={sz.confidence} "
+                f"(calmness=high; prefer text here)"
+            )
+        regions_block = "\n".join(regions_lines) if regions_lines else "  (none)"
+
+        return (
+            "Continuous-saliency summary (higher value = busier background "
+            "region; saliency-aware placement policy: prefer LOW-saliency "
+            "areas for TEXT, allow HIGH-saliency for hero images).\n"
+            f"3x3 grid mean (row-major): {hist_line}\n"
+            f"Top-{len(bg.low_saliency_regions)} low-saliency rectangles "
+            "(canvas-pixel bbox=[left,top,right,bottom]):\n"
+            f"{regions_block}"
         )
 
     @staticmethod

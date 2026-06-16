@@ -172,6 +172,13 @@ class ViolationType(str, Enum):
     # rejections are waived for text riding the focal photo, but readability
     # must then be protected the designer way: an underlay beneath the text.
     TEXT_ON_PHOTO_NO_UNDERLAY = "text_on_photo_no_underlay"
+    # F2 (Step 72, 2026-06-16): a text primary's bbox mean saliency on the
+    # background must stay below TEXT_ON_HIGH_SALIENCY_TAU = 0.5. Calibrated
+    # on Crello N=100 designer GT distribution: p95 of designer-text-mean-
+    # saliency = 0.38, only 1.3% of designer text > 0.5 -> tau=0.5 is safe
+    # (false-positive rate ~= 1.3%). Graceful skip when
+    # BackgroundAnalysis.saliency_map is None (solid-color stub path).
+    TEXT_ON_HIGH_SALIENCY = "text_on_high_saliency"
 
 
 class Violation(BaseModel):
@@ -226,6 +233,10 @@ def check_candidate(
     violations.extend(_check_title_peripheral(candidate, spec))
     # Step 43 (2026-06-10): primary content must overlap a safe_zone.
     violations.extend(_check_primary_in_safe_zone(candidate, spec, bg))
+    # F2 (Step 72, 2026-06-16): text bbox mean saliency on background must
+    # stay below TEXT_ON_HIGH_SALIENCY_TAU. Graceful skip when bg has no
+    # saliency_map (stub path / pre-F2 caller).
+    violations.extend(_check_text_on_high_saliency(candidate, spec, bg))
     # Step 57 (2026-06-11): coverage / dead-space degenerate-layout guardrails.
     violations.extend(_check_canvas_coverage(candidate, spec))
     # Step 59 (2026-06-11): text on busy background texture (Rea deficit).
@@ -563,6 +574,14 @@ TEXT_SEMANTIC_TYPES = frozenset(
     }
 )
 
+TEXT_ON_HIGH_SALIENCY_TAU: float = 0.50
+"""F2 (Step 72, 2026-06-16): mean background saliency inside a text primary's
+bbox above this threshold triggers TEXT_ON_HIGH_SALIENCY. Calibrated on
+Crello N=100 designer GT distribution (`f2_calibration.json`, 2026-06-16):
+designer text mean-saliency p95 = 0.380, pct > 0.5 = 1.3%, so tau=0.5 has
+~1.3% expected false-positive rate against designer placements."""
+
+
 TEXT_OBSCURED_RATIO_THRESHOLD: float = 0.20
 """Step 35: text element is flagged TEXT_OBSCURED_BY_OVERLAY when an above-z
 (or same-z) non-text element covers >= 20% of its area.
@@ -809,6 +828,100 @@ least one of the safe_zones returned by BackgroundAnalyzer. Less than
 50% means the primary content is mostly sitting on top of the
 background saliency subject, obscuring both the background and the
 content itself."""
+
+
+_TEXT_SEMANTIC_TYPES = frozenset(
+    {SemanticType.TITLE, SemanticType.SUBTITLE, SemanticType.BODY_TEXT}
+)
+
+
+def _mean_saliency_in_bbox(
+    saliency_map: List[List[float]],
+    element: LayoutElement,
+    canvas_w: float,
+    canvas_h: float,
+) -> Optional[float]:
+    """Mean saliency under ``element``'s bbox, scaling element coords from
+    canvas-pixel space into the downsampled saliency-map grid.
+
+    Returns None if the saliency_map is malformed or the clipped bbox is
+    degenerate (zero-area). Callers should treat None as "no signal -- skip".
+    """
+    if not saliency_map or not saliency_map[0]:
+        return None
+    sh = len(saliency_map)
+    sw = len(saliency_map[0])
+    sx = sw / float(canvas_w) if canvas_w > 0 else 0.0
+    sy = sh / float(canvas_h) if canvas_h > 0 else 0.0
+    x0 = max(0, int(float(element.left) * sx))
+    y0 = max(0, int(float(element.top) * sy))
+    x1 = min(sw, int((float(element.left) + float(element.width)) * sx))
+    y1 = min(sh, int((float(element.top) + float(element.height)) * sy))
+    if x1 <= x0 or y1 <= y0:
+        return None
+    total = 0.0
+    count = 0
+    for row in saliency_map[y0:y1]:
+        for v in row[x0:x1]:
+            try:
+                total += float(v)
+                count += 1
+            except (TypeError, ValueError):
+                return None
+    if count == 0:
+        return None
+    return total / count
+
+
+def _check_text_on_high_saliency(
+    candidate: Candidate,
+    spec: DesignSpec,
+    bg: Optional[BackgroundAnalysis],
+) -> List[Violation]:
+    """F2 (Step 72): flag TEXT primaries whose bbox mean saliency exceeds
+    ``TEXT_ON_HIGH_SALIENCY_TAU``. No-op when saliency_map is None (stub /
+    solid-color path) so all pre-F2 callers stay bit-identical.
+
+    Calibration: Crello designer GT N=100 -> text mean saliency p95=0.38,
+    pct>0.5 = 1.3% (`f2_calibration.json`, 2026-06-16). tau=0.5 has a
+    bounded false-positive rate vs designer placements.
+
+    Step 63 deference: when a CompositionDirective is present we defer to
+    the directive (same logic as `_check_primary_in_safe_zone`) -- the
+    Composition Director already inspected the rendered background and
+    chose where text goes; overriding it would re-create the step62
+    double-bind.
+    """
+    if bg is None or not bg.saliency_map:
+        return []
+    if getattr(spec, "composition", None) is not None:
+        return []
+
+    cw = float(spec.canvas.width)
+    ch = float(spec.canvas.height)
+    sem = _spec_semantic_map(spec)
+    out: List[Violation] = []
+    for el in candidate.elements:
+        if sem.get(el.id) not in _TEXT_SEMANTIC_TYPES:
+            continue
+        mean_sal = _mean_saliency_in_bbox(bg.saliency_map, el, cw, ch)
+        if mean_sal is None:
+            continue
+        if mean_sal > TEXT_ON_HIGH_SALIENCY_TAU:
+            out.append(
+                Violation(
+                    type=ViolationType.TEXT_ON_HIGH_SALIENCY,
+                    targets=[el.id],
+                    detail=(
+                        f"Text '{el.id}' mean background saliency "
+                        f"{mean_sal:.3f} > tau {TEXT_ON_HIGH_SALIENCY_TAU:.2f}. "
+                        "Move it to a low-saliency region (see "
+                        "BackgroundAnalysis.low_saliency_regions) -- the "
+                        "text currently overlaps a hero/subject area."
+                    ),
+                )
+            )
+    return out
 
 
 def _check_primary_in_safe_zone(

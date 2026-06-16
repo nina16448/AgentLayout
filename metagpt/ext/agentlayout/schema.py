@@ -160,7 +160,15 @@ class SafeZone(BaseModel):
 
 
 class BackgroundAnalysis(BaseModel):
-    """Background Analyzer output, consumed by Layout Generator and Aesthetic Judge."""
+    """Background Analyzer output, consumed by Layout Generator and Aesthetic Judge.
+
+    F2 (Step 72, 2026-06-16) added three optional continuous-saliency fields
+    (saliency_map / saliency_histogram / low_saliency_regions). They are
+    populated by analyze_background() when a real background image is
+    available, but stay None / empty for the solid-color stub path
+    (pipeline.py:_default_white_background) so backward compatibility is
+    preserved.
+    """
 
     safe_zones: List[SafeZone] = Field(default_factory=list)
     dominant_palette: List[str] = Field(
@@ -170,6 +178,34 @@ class BackgroundAnalysis(BaseModel):
     recommended_text_color: str = Field(
         default="#111111",
         description="Suggested foreground color based on background luminance.",
+    )
+
+    # F2 (Step 72) continuous-saliency fields. All optional / default empty so
+    # consumers that ignore them keep working unchanged.
+    saliency_map: Optional[List[List[float]]] = Field(
+        default=None,
+        description=(
+            "Downsampled saliency map (typically 32x32) with values in [0, 1]. "
+            "Higher value = busier region. Layout Generator may inspect this "
+            "to avoid placing text on hero/subject regions; QC rule "
+            "TEXT_ON_HIGH_SALIENCY uses it to flag bad placements."
+        ),
+    )
+    saliency_histogram: Optional[List[float]] = Field(
+        default=None,
+        description=(
+            "Compact 3x3 grid (length 9, row-major: TL, TM, TR, ML, MM, MR, "
+            "BL, BM, BR) of mean saliency per cell. Cheap prompt summary."
+        ),
+    )
+    low_saliency_regions: List[SafeZone] = Field(
+        default_factory=list,
+        description=(
+            "Top-K continuous-rank low-saliency rectangles, ranked by "
+            "(1 - mean_saliency). Distinct from safe_zones which are the "
+            "binary subject-avoidance bands; these are pixel-precise calm "
+            "areas the Generator should prefer for text."
+        ),
     )
 
 

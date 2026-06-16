@@ -58,6 +58,23 @@ _MIN_SAFE_AREA_FRAC = 0.03
 # black empty region reads as calm and doodle/edge clutter reads as busy.
 _ENERGY_TAU = 0.18
 
+# F2 (Step 72) — continuous-saliency export config.
+# Downsampled grid resolution for saliency_map field (HxW). 32x32 keeps the
+# JSON serialization small (~1024 floats) while preserving placement-scale
+# structure (the QC rule TEXT_ON_HIGH_SALIENCY only needs ~canvas/32 spatial
+# resolution to detect "text on hero subject").
+_SALIENCY_MAP_SIDE = 32
+
+# How many low-saliency rectangles to surface. Top-K by (1 - mean_saliency)
+# from a sliding-window scan; Generator prompt will list these as preferred
+# text-placement targets.
+_LOW_SAL_K = 5
+
+# Minimum area (as fraction of canvas) for a low-saliency rectangle to count.
+# Same rationale as _MIN_SAFE_AREA_FRAC: tiny calm patches are useless for
+# placement.
+_LOW_SAL_MIN_AREA_FRAC = 0.04
+
 
 def _luminance_text_color(rgb: Tuple[int, int, int]) -> str:
     """Dark text on light backgrounds, light text on dark (Rec. 601 luma)."""
@@ -108,13 +125,17 @@ def _rembg_alpha(img: Image.Image) -> Optional[np.ndarray]:
     return alpha
 
 
-def _occupancy_mask(img: Image.Image) -> np.ndarray:
-    """Bool mask (canvas-sized), True == visually busy => avoid placing here.
+def _energy_map(img: Image.Image) -> np.ndarray:
+    """Continuous saliency map (canvas-sized, float32 in [0, 1]).
 
     Energy = max(local luminance std, rembg matte). Low-energy regions are
     the visually calm areas where text/elements read well -- the signal the
     content-aware poster-layout literature (e.g. PKU PosterLayout) actually
     uses, and robust to backgrounds with no photographic subject.
+
+    F2 (Step 72) split out from the old _occupancy_mask: callers wanting the
+    binary occupancy mask should call ``_occupancy_mask`` (now a thin wrapper),
+    callers wanting the raw continuous saliency call this function directly.
     """
     import cv2
 
@@ -131,7 +152,141 @@ def _occupancy_mask(img: Image.Image) -> np.ndarray:
 
     alpha = _rembg_alpha(img)
     energy = std_norm if alpha is None else np.maximum(std_norm, alpha)
-    return energy > _ENERGY_TAU
+    return energy.astype(np.float32)
+
+
+def _occupancy_mask(img: Image.Image) -> np.ndarray:
+    """Bool mask (canvas-sized), True == visually busy => avoid placing here.
+
+    Thin wrapper around :func:`_energy_map` + ``_ENERGY_TAU`` threshold,
+    kept for the existing binary safe_zones derivation path.
+    """
+    return _energy_map(img) > _ENERGY_TAU
+
+
+def _downsample_saliency(energy: np.ndarray, side: int = _SALIENCY_MAP_SIDE) -> np.ndarray:
+    """Downsample the canvas-sized saliency map to a ``side x side`` grid by
+    block-mean. Keeps values in [0, 1]. Used to populate
+    ``BackgroundAnalysis.saliency_map`` without bloating prompt JSON.
+    """
+    import cv2
+
+    return cv2.resize(energy, (side, side), interpolation=cv2.INTER_AREA).astype(np.float32)
+
+
+def _saliency_3x3_histogram(energy: np.ndarray) -> List[float]:
+    """Row-major 3x3 mean saliency (length 9): TL, TM, TR, ML, MM, MR, BL,
+    BM, BR. Compact prompt summary that the Generator can reason over without
+    parsing a 32x32 grid.
+    """
+    h, w = energy.shape
+    cells: List[float] = []
+    for ri in range(3):
+        for ci in range(3):
+            y0 = (h * ri) // 3
+            y1 = (h * (ri + 1)) // 3
+            x0 = (w * ci) // 3
+            x1 = (w * (ci + 1)) // 3
+            cells.append(round(float(energy[y0:y1, x0:x1].mean()), 3))
+    return cells
+
+
+def _rank_low_saliency_regions(
+    energy: np.ndarray,
+    canvas_w: int,
+    canvas_h: int,
+    k: int = _LOW_SAL_K,
+) -> List[SafeZone]:
+    """Top-K low-saliency rectangles via a coarse sliding-window scan.
+
+    We scan over a 6x6 grid of candidate rectangles spanning the canvas,
+    score each by ``1 - mean_saliency``, filter by ``_LOW_SAL_MIN_AREA_FRAC``,
+    suppress overlapping picks, and return the top-K as SafeZone records.
+    Pixel-precise enough for placement guidance, cheap enough to be free.
+
+    Distinct from the binary subject-avoidance bands in ``_safe_zones_from_mask``:
+    those describe "where the subject isn't"; this returns "the calmest
+    rectangles in the whole canvas" regardless of subject geometry.
+    """
+    h, w = energy.shape
+    sx = w / float(canvas_w)
+    sy = h / float(canvas_h)
+    canvas_area = float(canvas_w * canvas_h)
+    min_area = canvas_area * _LOW_SAL_MIN_AREA_FRAC
+
+    # 6x6 = 36 base cells; also consider 1x2 / 2x1 / 2x2 unions for larger
+    # rectangles that the Generator can use for headlines / body blocks.
+    GRID = 6
+    cell_w = canvas_w / GRID
+    cell_h = canvas_h / GRID
+    candidates: List[Tuple[float, str, List[int]]] = []  # (score, label, bbox)
+
+    def _score_and_add(r0: int, c0: int, r1: int, c1: int) -> None:
+        bbox_canvas = [
+            int(c0 * cell_w),
+            int(r0 * cell_h),
+            int(c1 * cell_w),
+            int(r1 * cell_h),
+        ]
+        l, t, r, b = bbox_canvas
+        if (r - l) * (b - t) < min_area:
+            return
+        y0 = max(0, int(t * sy))
+        y1 = min(h, int(b * sy))
+        x0 = max(0, int(l * sx))
+        x1 = min(w, int(r * sx))
+        if y1 <= y0 or x1 <= x0:
+            return
+        m = float(energy[y0:y1, x0:x1].mean())
+        score = round(max(0.0, 1.0 - m), 3)
+        label = f"low_sal_r{r0}-{r1 - 1}c{c0}-{c1 - 1}"
+        candidates.append((score, label, bbox_canvas))
+
+    for r0 in range(GRID):
+        for c0 in range(GRID):
+            _score_and_add(r0, c0, r0 + 1, c0 + 1)  # 1x1 cell
+            if r0 + 2 <= GRID:
+                _score_and_add(r0, c0, r0 + 2, c0 + 1)  # 2x1
+            if c0 + 2 <= GRID:
+                _score_and_add(r0, c0, r0 + 1, c0 + 2)  # 1x2
+            if r0 + 2 <= GRID and c0 + 2 <= GRID:
+                _score_and_add(r0, c0, r0 + 2, c0 + 2)  # 2x2
+
+    candidates.sort(key=lambda x: -x[0])
+
+    # Non-max suppression: drop later picks that overlap >50% with any
+    # already-picked region. Keeps the top-K diverse.
+    picked: List[Tuple[float, str, List[int]]] = []
+    for sc, lbl, bbox in candidates:
+        ok = True
+        for _, _, prev in picked:
+            if _bbox_iou(bbox, prev) > 0.5:
+                ok = False
+                break
+        if ok:
+            picked.append((sc, lbl, bbox))
+        if len(picked) >= k:
+            break
+
+    return [
+        SafeZone(region=lbl, bbox=bbox, confidence=sc)
+        for sc, lbl, bbox in picked
+    ]
+
+
+def _bbox_iou(a: List[int], b: List[int]) -> float:
+    """IoU of two [l, t, r, b] rectangles. 0 if disjoint."""
+    xl = max(a[0], b[0])
+    yt = max(a[1], b[1])
+    xr = min(a[2], b[2])
+    yb = min(a[3], b[3])
+    if xr <= xl or yb <= yt:
+        return 0.0
+    inter = (xr - xl) * (yb - yt)
+    area_a = max(0, a[2] - a[0]) * max(0, a[3] - a[1])
+    area_b = max(0, b[2] - b[0]) * max(0, b[3] - b[1])
+    denom = area_a + area_b - inter
+    return inter / denom if denom > 0 else 0.0
 
 
 def _safe_zones_from_mask(mask: np.ndarray, w: int, h: int) -> List[SafeZone]:
@@ -233,8 +388,16 @@ def analyze_background(image_path: str, canvas: Canvas) -> BackgroundAnalysis:
         img = img.resize((canvas.width, canvas.height), Image.BILINEAR)
     arr = np.asarray(img)
 
-    mask = _occupancy_mask(img)
+    # F2 (Step 72) — compute the continuous saliency map ONCE; the binary
+    # occupancy mask used for safe_zones is just energy > _ENERGY_TAU, and
+    # the three new fields (saliency_map / histogram / low_saliency_regions)
+    # are all summaries of the same energy field.
+    energy = _energy_map(img)
+    mask = energy > _ENERGY_TAU
     zones = _safe_zones_from_mask(mask, canvas.width, canvas.height)
+    saliency_map_small = _downsample_saliency(energy).round(3)
+    saliency_histogram = _saliency_3x3_histogram(energy)
+    low_sal_regions = _rank_low_saliency_regions(energy, canvas.width, canvas.height)
 
     palette = _dominant_palette(arr)
 
@@ -248,12 +411,16 @@ def analyze_background(image_path: str, canvas: Canvas) -> BackgroundAnalysis:
 
     logger.info(
         f"BackgroundAnalyzer: {Path(image_path).name} -> {len(zones)} safe zone(s), "
+        f"{len(low_sal_regions)} low-saliency region(s), "
         f"palette[0]={palette[0] if palette else 'n/a'}, text={text_color}"
     )
     return BackgroundAnalysis(
         safe_zones=zones,
         dominant_palette=palette,
         recommended_text_color=text_color,
+        saliency_map=saliency_map_small.tolist(),
+        saliency_histogram=saliency_histogram,
+        low_saliency_regions=low_sal_regions,
     )
 
 
