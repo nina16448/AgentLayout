@@ -862,10 +862,19 @@ class GenerateLayout(Action):
     def _format_saliency_landscape(bg: BackgroundAnalysis) -> str:
         """Render the F2 saliency block.
 
+        Gated by ``feature_flags.f2_saliency_enabled()`` (env var
+        ``AGENTLAYOUT_F2_SALIENCY``, default OFF). When disabled, returns
+        "None" regardless of bg so the Generator sees the pre-F2 prompt
+        shape. See feature_flags.py for the default-OFF rationale (Step
+        72 N=100 net negative aesthetic impact).
+
         Returns "None" when the BackgroundAnalysis has no saliency data
-        (solid-color stub path or pre-F2 cached pickles), so the Generator
-        sees an unchanged prompt shape.
+        (solid-color stub path or pre-F2 cached pickles).
         """
+        from metagpt.ext.agentlayout.feature_flags import f2_saliency_enabled
+
+        if not f2_saliency_enabled():
+            return "None (F2 saliency-aware prompting disabled; see Step 72)."
         if not bg.saliency_histogram and not bg.low_saliency_regions:
             return "None (no real background image; ignore)."
 

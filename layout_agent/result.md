@@ -1642,6 +1642,22 @@ strong prior 證據支持的結構性干預、prompt-only/QC-only 槓桿也無�
 
 **證據檔**：`step72_f2_n100_sega.json`、`step72_f2_n100_cole.json`、`step72_f2_n100_crello_*`（IMPLEMENTATION_LOG Step 72 詳述）
 
+#### F2 disposition：config flag、預設 OFF（Step 72 follow-up，2026-06-16）
+
+決定採 **(b) gate behind config flag**：保留 F2 code、production behavior 回 Step 70 baseline、可作 ablation 重啟。
+
+**實作**：
+
+- 新檔 `metagpt/ext/agentlayout/feature_flags.py`：中央化 env-var gating helper
+- `GenerateLayout._format_saliency_landscape()`：env 未設 → 回 "None"（等同 stub）
+- `_check_text_on_high_saliency()`：env 未設 → early return [] 
+- **預設 OFF**：不設環境變數時 production behavior = Step 70 baseline
+- **Ablation 重啟**：`export AGENTLAYOUT_F2_SALIENCY=1` 啟用
+
+**保留**：BackgroundAnalysis.saliency_map / histogram / low_saliency_regions 仍由 analyze_background() 持續計算填入（cheap、對未來分析有用）；schema 不動。
+
+**Smoke 驗證**：env 未設時 QC TEXT_ON_HIGH_SALIENCY 對 busy-title violator 不觸發；env=1 時觸發 1 個。90 regression test 全綠。
+
 ### 9.4 F3 — Banner 851×315 alignment rule（最小可做）
 
 **證據**：§68.2b.2 — 3 個最差 alignment 樣本**全部** 851×315、平均 ratio 266×。其他 canvas

@@ -882,6 +882,11 @@ def _check_text_on_high_saliency(
     ``TEXT_ON_HIGH_SALIENCY_TAU``. No-op when saliency_map is None (stub /
     solid-color path) so all pre-F2 callers stay bit-identical.
 
+    Gated by ``feature_flags.f2_saliency_enabled()`` (env var
+    ``AGENTLAYOUT_F2_SALIENCY``, default OFF). See feature_flags.py for
+    the default-OFF rationale (Step 72 N=100 net negative aesthetic
+    impact). Re-enable for ablation: ``export AGENTLAYOUT_F2_SALIENCY=1``.
+
     Calibration: Crello designer GT N=100 -> text mean saliency p95=0.38,
     pct>0.5 = 1.3% (`f2_calibration.json`, 2026-06-16). tau=0.5 has a
     bounded false-positive rate vs designer placements.
@@ -892,6 +897,10 @@ def _check_text_on_high_saliency(
     chose where text goes; overriding it would re-create the step62
     double-bind.
     """
+    from metagpt.ext.agentlayout.feature_flags import f2_saliency_enabled
+
+    if not f2_saliency_enabled():
+        return []
     if bg is None or not bg.saliency_map:
         return []
     if getattr(spec, "composition", None) is not None:
