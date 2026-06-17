@@ -5258,4 +5258,135 @@ bounded 反證鏈的最新一筆證據（Step 49 → 50 → 65 → 66 → 72）�
 
 ---
 
-*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/16*
+### Step 73-74 — F8 full-trace N=178 (partial of N=1,897)（2026/06/16–17）
+
+**動機**：F8 從 "B 軸 N=1,897 matched H2H scale-up" 升級到 "**N=1,897 full
+refinement-loop capture**"——user 要求每樣本存所有輪次 render + Judge 評分 + reject
+reasons + QC violations 等實驗細節給論文 §Implementation Details 用。
+
+**範疇變更**（重要 cost 教訓）：
+
+| 版本 | 行為 | 預估 cost | 實際 |
+|---|---|---|---|
+| F8 原提案（scale-up cached）| 既有 cached candidate × 2 judge calls/sample | $44 | （未跑） |
+| **F8 full-trace（此 Step）**| **重跑 full refinement loop（avg 3-5 rounds）+ judge + capture 所有 round** | $300-400（錯估）→ **~$1,000+** 實測 | ~$100 跑了 N=178 |
+
+→ User 在 N=178 時停手避免燒到 $1,000。**教訓**：refinement loop 跟 cold-start cost
+**差 10×**（Step 23 N=1,897 cold-start = $100、Step 74 full-loop projected $1,000）；
+未來估算須分清楚。
+
+**架構**（commit pending）：
+
+| 檔案 | 行 | 角色 |
+|---|---|---|
+| `step74_n1897_full_trace.py` | ~450 | 主 driver，replicate pipeline.run() 但每輪存 V1-V5 圖 + T1-T7 trace JSON + D1+D2+D5 |
+| `step74_diagnostics_fill.py` | ~180 | D3 SEGA per-sample（zero-LLM、含 fallback：用最後一輪 selected.json）|
+| `step74_cole_h2h.py` | ~180 | D4 matched COLE single-call H2H per-sample（含 fallback 同上）|
+| `step74_aggregate_stats.py` | ~330 | S1-S10 + INDEX.md + 8 個 .md report |
+
+**資料夾結構**（`layout_agent/full_result/`）：
+
+```
+full_result/
+├── INDEX.md                          # 全域指南
+├── _aggregate/                       # S1-S10 跨樣本統計
+│   ├── pipeline_stats.json           # raw aggregate
+│   ├── loop_distribution.md          # S1/S2/S10
+│   ├── reject_reasons_top20.md       # S3
+│   ├── qc_violations_top20.md        # S4
+│   ├── per_round_convergence.md      # S7
+│   ├── cost_walltime_summary.md      # S6
+│   ├── sega_aggregate.md             # D3 aggregate
+│   ├── cole_h2h_aggregate.md         # D4 aggregate
+│   └── per_axis_climb.md             # D5 aggregate
+└── <sample_id>/                      # 178 個（partial N=1,897）
+    ├── README.md                     # auto-generated per-sample index
+    ├── gt/designer_gt.jpg            # V1
+    ├── inputs/{brief.txt, asset_list.json, spec.json}
+    ├── rounds/round_NN_<label>/
+    │   ├── selected.png + selected.json  # V2/V3 Judge-selected + bbox
+    │   ├── candidates.json               # all raw Candidate objects
+    │   └── candidate_*.png               # V4 every raw render
+    ├── final/{final_render.png, final_candidate.json, compare_AL_vs_GT.png}  # V5
+    ├── trace/                        # T1-T7
+    │   ├── sample_meta.json          # T1
+    │   ├── per_round_judge.json      # T2 - per-round ACCEPT/REJECT + 5-axis
+    │   ├── feedback_history.md       # T3 - Judge feedback prose
+    │   ├── feedback_routing.json     # T4 - next_target per round
+    │   ├── qc_violations.json        # T5 - per-round per-candidate violations
+    │   ├── counts.json               # T6
+    │   └── timing.json               # T7
+    └── diagnostic/
+        ├── saliency_landscape.json   # D1
+        ├── element_fingerprint.json  # D2
+        ├── sega_metrics.json         # D3 (6-axis SEGA)
+        ├── cole_h2h.json             # D4 (matched COLE single-call)
+        └── per_axis_trace.json       # D5
+```
+
+**N=178 結果**（partial of 1,897，~9.3% complete、停在 user cost 警示）：
+
+**Loop convergence (S1/S2/S10)**：
+
+| 收斂模式 | count | % |
+|---|---|---|
+| max_rounds (5) 走完仍 0 consecutive-accept | **119** | **66.9%** |
+| 2+ consecutive accept 收斂 | 34 | 19.1% |
+| 至少 1 個 accept（含未收斂） | 79 | 44.4% |
+| Loop count: 0/1/2/3/4/5 | 17/1/18/9/7/**126** | 70% 走滿 5 輪 |
+
+→ refinement loop 大多數樣本**無法在 5 輪內穩定 accept 兩次**。同 Step 31/32 finding 一致。
+
+**A 軸 SEGA D3**（`_aggregate/sega_aggregate.md`，N=162 ok）：
+
+| 軸 | Agent | GT | Δ | 判定 |
+|---|---|---|---|---|
+| alignment | 0.000 | 5.24e-04 | -5e-04 | **Agent 勝** |
+| overlay | 0.0169 | 0.0432 | -0.026 | **Agent 勝 2.5×** |
+| underlay_loose | **0.480** | 0.340 | +0.140 ↑ | **Agent 勝 1.4×** |
+| underlay_strict | **0.459** | 0.356 | +0.103 ↑ | **Agent 勝 1.3×** |
+| readability | 0.0249 | 0.0229 | +0.002 | Agent 略輸 9% |
+| occlusion | 0.205 | 0.191 | +0.014 | Agent 略輸 7.5% |
+
+→ **4/6 軸勝 designer**（比 Step 68 N=100 的 3/6 多 1 軸 underlay_loose）、Read/Occ 仍輸但比 N=100 縮小（1.93×→1.09×、1.17×→1.08×）。
+
+**B 軸 matched COLE H2H D4**（`_aggregate/cole_h2h_aggregate.md`，N=161 ok）：
+
+| 軸 | Agent | GT | Δ |
+|---|---|---|---|
+| SDL | 6.58 | 7.98 | -1.39 |
+| SQL | 7.25 | 8.65 | -1.40 |
+| STV | 6.04 | 7.57 | -1.53 |
+| SGI | 7.15 | 8.20 | -1.05 |
+| SIO | 5.76 | 6.80 | -1.04 |
+| **Smean4** | **6.407** | **7.748** | **-1.34 (82.7% of designer)** |
+| **Smean5** | **6.555** | **7.839** | **-1.28 (83.6%)** |
+
+→ Smean4 **82.7%** vs Step 70 N=100 baseline **86.6%**——**全 refinement loop 反而略傷 B 軸**
+（**-4 pts**）。這條同 Step 32 finding 一致（loop -0.35 vs cold-start）、Step 74 在 N=178 規模
+再次確認：**refinement loop on aesthetic 是 net negative**。
+
+**Honest framing**：N=178 是 unintended partial、不能取代 Step 70 N=100 當 main B 軸 headline
+（不同 driver、不同 N）。但 N=178 **single-pass full-loop** 證實了**refinement loop 不收斂 +
+不改善 B 軸**這條結構性 limitation 在 ~2× N=100 規模下仍成立。
+
+**Engineering disposition**：N=178 partial 留在 disk（7.1 GB）+ trace 全保留、未來想續跑可
+`--skip-existing` 不會重做。下游 script 都 ready、執行流程 reproducible。
+
+**證據檔**：
+
+| 檔 | 內容 |
+|---|---|
+| `layout_agent/full_result/INDEX.md` | 全域指南 + per-sample folder schema |
+| `layout_agent/full_result/_aggregate/pipeline_stats.json` | S1-S10 + D3+D4+D5 raw |
+| `layout_agent/full_result/_aggregate/*.md` | 8 個 human-readable report |
+| `layout_agent/full_result/<id>/` | 178 個 sample folder（V1-V5 + T1-T7 + D1-D5）|
+| `layout_agent/output/step74_*.py` | 4 個 script（driver / diag / cole_h2h / aggregate）|
+
+**Step 73-74 LLM cost**：~$103（pipeline N=178 ~$98 + D4 ~$5 + smoke ~$0.2）。
+
+**Disk**：full_result/ ~7.1 GB（178 sample × avg 40 MB）。
+
+---
+
+*本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/17*

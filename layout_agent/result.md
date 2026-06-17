@@ -1704,3 +1704,133 @@ constraint 三路收斂為 limitation、唯一未試=fine-tuning」。
 | Future Work 主體（必寫） | **F1 + F2 + F5**（一個架構問題 / 一個技術問題 / 一個研究問題） |
 | Limitation discussion（必寫） | **F3 + F4**（concrete failure patterns from Step 71 analysis） |
 | Reviewer Q&A 防禦（可寫） | **F6 + F7 + F8**（消剩餘 caveat、表達已知 + 範疇邊界） |
+
+---
+
+## §10 Step 73-74 — F8 full-trace N=178（partial of 1,897）+ refinement-loop net-negative 再驗證（2026-06-17）
+
+### 10.1 動機與範疇變更
+
+F8 原規劃是「**B 軸 N=1,897 matched H2H scale-up**」（複用 cached step22 candidate、~$44）。執行時 user 升級需求成「**N=1,897 full refinement-loop capture**」——每樣本存所有輪次 render + Judge per-axis 評分 + reject reasons + QC violations 等，供論文 §Implementation Details 直接引用。
+
+**Cost 教訓**：
+
+| 版本 | cost/sample | N=1,897 total |
+|---|---|---|
+| Cold-start only（Step 23 baseline）| ~$0.053 | ~$100 |
+| Cached scale-up（F8 原提案）| ~$0.023 | $44 |
+| **Full refinement loop（Step 74）**| **~$0.55** | **~$1,000+** |
+
+→ 估算落差 10×（refinement avg 3-5 round × top-up batch × 大 prompt × 5-axis judge）。**User 在 N=178 / $103 時停手**避免燒到 $1,000。
+
+### 10.2 N=178 partial 結果
+
+**A 軸 SEGA D3**（`full_result/_aggregate/sega_aggregate.md`，N=162 ok）：
+
+| 軸 | Agent | GT | 判定 |
+|---|---|---|---|
+| alignment | 0.000 | 5.24e-04 | **Agent 勝** |
+| overlay | 0.0169 | 0.0432 | **Agent 勝 2.5×** |
+| **underlay_loose** | **0.480** | 0.340 | **Agent 勝 1.4× ↑** |
+| **underlay_strict** | **0.459** | 0.356 | **Agent 勝 1.3× ↑** |
+| readability | 0.0249 | 0.0229 | 略輸 9% |
+| occlusion | 0.205 | 0.191 | 略輸 7.5% |
+
+→ **4/6 軸勝 designer**（比 §6.2 Step 68 N=100 的 3/6 多 1 軸）。Read/Occ 微輸幅度比 N=100 縮小（1.93×→1.09×、1.17×→1.08×）。
+
+**B 軸 matched COLE H2H D4**（`full_result/_aggregate/cole_h2h_aggregate.md`，N=161 ok）：
+
+| 軸 | Agent | GT | Δ |
+|---|---|---|---|
+| SDL | 6.58 | 7.98 | −1.39 |
+| SQL | 7.25 | 8.65 | −1.40 |
+| STV | 6.04 | 7.57 | −1.53 |
+| SGI | 7.15 | 8.20 | −1.05 |
+| SIO | 5.76 | 6.80 | −1.04 |
+| **Smean4** | **6.41** | **7.75** | **−1.34 (82.7% of designer)** |
+| **Smean5** | **6.56** | **7.84** | **−1.28 (83.6%)** |
+
+→ Smean4 **82.7%** vs Step 70 N=100 cold-start matched H2H **86.6%**——**全 refinement loop 反而退 −4 pts**。
+
+### 10.3 最重要 finding：refinement loop 是 net negative
+
+這是**整條 Generator-bounded 因果鏈最大樣本的再驗證**：
+
+| Step | N | Loop vs cold-start Smean Δ | 評語 |
+|---|---|---|---|
+| Step 31/32 | 5 | −0.35 | 第一筆證據（噪音內疑慮） |
+| Step 74（本步） | **178** | **−4 pts (% of designer)** | **規模拉到 N=178 仍 net negative** |
+
+**Loop convergence 證據**（`full_result/_aggregate/loop_distribution.md`）：
+
+| 收斂模式 | count / 178 | % |
+|---|---|---|
+| **max_rounds (5) 走完仍 0 consecutive-accept** | **119** | **66.9%** |
+| 2+ consecutive-accept 真收斂 | 34 | 19.1% |
+| 至少 1 個 accept（未連續）| 79 | 44.4% |
+
+→ **70% 樣本走滿 5 輪**仍無法穩定 accept 兩次。`max_total_rounds=5` 是 ceiling、refinement
+**沒有實質收斂**。
+
+### 10.4 論文 framing
+
+加入 **Generator-bounded counter-evidence chain 最新一筆**（接 Step 32 N=5 → Step 74 N=178）：
+
+> 「LLM-coordinate-generation-bounded 在 N=178 規模再驗證：full refinement-loop 5 輪走完
+> 66.9% 樣本不收斂，B 軸 Smean 比 single-pass cold-start 退 −4 pts。Refinement 架構在
+> Crello commercial design 不僅無實質改善、且因 prompt 累積反而稍傷 aesthetic judge」。
+
+### 10.5 資料夾結構（`layout_agent/full_result/`）
+
+```
+full_result/
+├── INDEX.md                          # 全域指南
+├── _aggregate/                       # S1-S10 + D3+D4+D5 跨樣本統計
+│   ├── pipeline_stats.json
+│   ├── loop_distribution.md          # S1/S2/S10
+│   ├── reject_reasons_top20.md       # S3
+│   ├── qc_violations_top20.md        # S4
+│   ├── per_round_convergence.md      # S7
+│   ├── cost_walltime_summary.md      # S6
+│   ├── sega_aggregate.md             # D3
+│   ├── cole_h2h_aggregate.md         # D4
+│   └── per_axis_climb.md             # D5
+└── <sample_id>/  (178 個)
+    ├── README.md                     # auto-generated 每樣本索引
+    ├── gt/designer_gt.jpg            # V1
+    ├── inputs/{brief.txt, asset_list.json, spec.json}
+    ├── rounds/round_NN_<label>/
+    │   ├── selected.{png,json}       # V2/V3 Judge-selected
+    │   ├── candidates.json           # 所有 raw Candidate
+    │   └── candidate_*.png           # V4 每個 raw render（含 QC-filtered）
+    ├── final/{final_render.png, final_candidate.json, compare_AL_vs_GT.png}  # V5
+    ├── trace/                        # T1-T7（per-round 決策軌跡 JSON）
+    └── diagnostic/                   # D1-D5
+```
+
+完整 schema 與每檔語意見 `layout_agent/full_result/INDEX.md` + 每個 sample 的 `README.md`。
+
+### 10.6 證據檔（新增）
+
+| 檔 | 內容 |
+|---|---|
+| `layout_agent/full_result/` | 178 個 per-sample folder + _aggregate/ + INDEX.md（7.1 GB） |
+| `layout_agent/output/step74_n1897_full_trace.py` | 主 driver（450 行、replicate pipeline.run() + capture）|
+| `layout_agent/output/step74_diagnostics_fill.py` | D3 SEGA per-sample（zero-LLM、含 fallback）|
+| `layout_agent/output/step74_cole_h2h.py` | D4 matched COLE H2H per-sample（含 fallback）|
+| `layout_agent/output/step74_aggregate_stats.py` | S1-S10 + INDEX.md + 8 個 .md report 生成器 |
+| `layout_agent/output/step74_smoke_ids.json` | N=5 smoke IDs 集合（驗 driver）|
+
+**Step 73-74 LLM cost**：~$103（N=178 pipeline ~$98 + D4 ~$5 + smoke ~$0.2）。
+
+### 10.7 續跑提示
+
+178/1,897 partial 留 disk + trace、未來補跑可：
+```bash
+conda run -n meta python layout_agent/output/step74_n1897_full_trace.py \
+    --ids-file layout_agent/output/step23_full_ids.json --skip-existing
+# 後續：step74_diagnostics_fill.py --skip-existing 
+#       step74_cole_h2h.py --skip-existing 
+#       step74_aggregate_stats.py
+```
+`--skip-existing` 跳過已完成 178、續跑剩 1,719 個。預估再 $900 + 7 天。
