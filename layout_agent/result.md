@@ -2,7 +2,7 @@
 
 > 本文件為**獨立**版：不需閱讀 `README.md` 或 `live_runs_table.md` 即可理解每個實驗的動機、方法、數值與誠實定調。供論文 results / limitations / honesty 章節直接取用。
 > 數值 source-of-truth：`layout_agent/live_runs_table.md`、`layout_agent/output/step13_sota_winrate_results.json`、`layout_agent/output/step11_winrate_results.json`、`layout_agent/output/step23_phasea_full.json`、`layout_agent/output/step23_phaseb_full.json`、`layout_agent/output/step23_phaseb_designer_gt_full.json`。
-> 最後更新：2026-06-12（補錄 Step 30–64 oracle-loop / QC / renderer / 構圖師實驗鏈；§2 後半全部為新 judge schema 鏈）。
+> 最後更新：2026-06-17（§6–§10 補錄 Step 67–74：N=100 fresh Crello + PKU 997 indicative + matched H2H + per-sample root-cause + F2 saliency-aware NET NEGATIVE + F8 N=178 refinement-loop net-negative 再驗證）。
 >
 > ⚠️ **Step 30 Baseline 警示（2026-06-09）：** in-pipeline Aesthetic Judge 已從 4 軸 0-25 / total 0-100 改為 COLE 5 軸 1-10 / total 5-50（`ACCEPT_THRESHOLD` 75 → 35）。本文件目前所有 Phase A/B/win-rate 數值都是 **pre-Step 30 schema 產出**（git tag `step29-baseline-pre-judge-migration`、commit `0956f2bb`），跟 Step 30+ 之後的新 trace JSON / Phase B 結果**不可直接比較**。Step 30 動機與設計見 `IMPLEMENTATION_LOG.md`「Step 30」一節；若要跑新 baseline 並 cross-compare，需重跑 Phase B（~$30 / N=100）。
 
@@ -28,8 +28,15 @@
     - **Phase A**（N=1,896）：Ali=0.0004 < GT 0.0010（勝 ~2.2×）、Ove=0.0050 << GT 0.1038（勝 ~20.6×）、Occ=0.1249 < GT 0.1279（**flipped 勝**，saliency 校準後）、Read 近平手、Und_l/Und_s = 0（已知 limitation）。**Ali/Ove 跨 N=20/100/1,897 三 scale 全部勝、N=1,897 還多 Occ 勝——這是論文最 robust 的 contribution**。
     - **Phase B Smean within-judge ratio**：N=100 64.8% → **N=1,897 65.8%**（1pp 內、跨 scale 穩定）。**Smean capability ratio 跨三個 scale robust**——第二個論文可宣稱 claim。
     - **🚨 Per-axis ranking 再次 flip**：N=100「SIO 75% 最強、SQL 56% 最弱」→ N=1,897「**SQL 69.1% 最強、SIO 63.4% 最弱**」。**axis-ranking 又一次被推翻**，small-sample selection bias systematically misleads per-axis claim → 第三個 methodology contribution。
-  - **Underlay-enabled 端到端（Step 29，最新，2026-05-28）**：把 Step 23「Und=0」當 baseline、underlay redesign 後重跑 N=1,895 cold-start 當 **ablation 對照**。AL Und_l 0→**0.5518** > designer 0.3542、Und_s 0→**0.4428** > 0.2674（4 幾何指標 Ali/Ove/Und_l/Und_s 全勝 designer），Ali/Ove 雙勝跨三設置（Step 23 舊 GT / Step 28 cached / Step 29 re-render）維持；但 Read/Occ 略退（over-containment），**Und 勝是 metric-level containment、非視覺更好**，視覺品質（Phase B COLE 5-axis）尚未重評。流程先 N=5 smoke gate（0 role-reversal）才燒 $110 全跑。
-- **誠實定調（最重要，post-N=1,897 final）**：**不宣稱勝設計師 aesthetic、不宣稱勝 SEGA Smean、不宣稱 Refinement Loop 帶來測量上的改善、不宣稱跨 paper SEGA Table 3 數值可直比、不宣稱 per-axis ranking（SIO 最強 / STV 最強等都已被 N=1,897 推翻）**；可宣稱「**(1) Phase A Ali/Ove 純幾何勝 designer GT 跨 N=20/100/1,897 三個 scale 全部維持，N=1,897 還多 Occ 勝（Step 20+22+23 三重 robust，judge-drift-free）；(2) Within-judge Phase B Smean AL 達 designer ceiling 65.8%（N=1,897，與 N=100 64.8% 跨 scale 穩定）；(3) 三個 methodology contribution：judge 跨 paper 漂移（Step 21b）+ N=20→100 STV selection bias（Step 22）+ N=100→1,897 SIO/SQL selection bias（Step 23b）→ full-scale validation that per-axis claims need ≥1,000 sample**」。task-aligned pairwise 下設計師仍勝（step 11 N=3：2:1）；N=20 Win rate 80% 的 self-preference confound 已由 Step 14 獨立 judge 排除，但 judge≠VILA-7B caveat 仍在；N=1,897 ≈ SEGA full Crello (1,971) 的 96.2% coverage 消除「N=20≠1,971」caveat。AesthetiQ 仍僅作 qualitative/indicative 對照、不進勝負表。Render quality（背景/字型/裝飾合成）為 by-design 不做的 scope 外能力。
+  - **Underlay-enabled 端到端（Step 29，2026-05-28）**：把 Step 23「Und=0」當 baseline、underlay redesign 後重跑 N=1,895 cold-start 當 **ablation 對照**。AL Und_l 0→**0.5518** > designer 0.3542、Und_s 0→**0.4428** > 0.2674（4 幾何指標 Ali/Ove/Und_l/Und_s 全勝 designer），Ali/Ove 雙勝跨三設置（Step 23 舊 GT / Step 28 cached / Step 29 re-render）維持；但 Read/Occ 略退（over-containment），**Und 勝是 metric-level containment、非視覺更好**，視覺品質（Phase B COLE 5-axis）尚未重評。流程先 N=5 smoke gate（0 role-reversal）才燒 $110 全跑。
+  - **Step 67 API hygiene（2026-06-14）**：`filter_valid` 漏傳 `bg` 參數修正——純程式碼正確性 fix，Crello composition pipeline 運行時零影響（Step 63 deference short-circuit），101 test passed。
+  - **Step 68 X plan：A+B 全軸驗證 + Crello N=100 fresh + PKU 997（2026-06-15）**：教授要求可對齊 SOTA 的指標，一次補齊。A 軸 zero-LLM 重算確認 Ove/Und_l bit-exact、Ali 系統性漂移（A1 width/height 公式修正）、Und_s 從 0.4428 拉到 0.5285（1.98× 勝 designer）。**Crello N=100 fresh COLE 5-axis Smean = 6.322**（design_layout 6.28 / content_relevance 7.00 / typography_color 6.00 / graphics_images 6.16 / innovation_originality 6.17）——**新 B 軸 main headline**。A 軸 N=100 fresh：3/6 軸勝 designer（Ove 40×、Und_l/Und_s 1.18-1.19×）、**Read 1.93× 真實落後**、Ali/Occ 略輸。**PKU 997 indicative**（fixed template bypass Analyst）：Ali/Ove 勝 designer、Rea 1.80×/Occ 1.42× 落後——跨資料集確認 saliency-aware 是落後軸。
+  - **Step 69 Best-case showcase（2026-06-15）**：從 N=100 選 high-score subset（per-sample 6 軸全部 ≤ designer），5/6 勝 designer。
+  - **Step 70 Matched H2H（2026-06-15）**：首個 apples-to-apples designer GT baseline——同 N=100 同 COLE judge 同 prompt 同時判 agent + GT render。**Smean4 Agent 6.598 / GT 7.617 = 86.6%**、每軸 Agent 都輸（SDL 87.1% / SQL 89.7% / STV 78.3% / SGI 91.6%）——但這是 **first honest lower-bound**，先前 within-judge ratio 65.8% 是 cross-session 不可直比。
+  - **Step 71 per-sample root-cause（2026-06-15，§6.2b）**：N=100 三「輸軸」拆 per-sample 後翻盤——**Ali 65/100 wins（aggregate 被 3 個 851×315 banner outlier 撐起）**；Read 21:41 真實系統性落後（小 canvas worst）；Occ 45:55（portrait hero-image worst）。**Ali 應從「輸軸」改寫為「outlier 尾部風險」**。
+  - **Step 72 F2 saliency-aware NET NEGATIVE（2026-06-16，§9.3）**：B 區 future-work F2 實作完成 + N=100 validation。A 軸 Read -6.7% / Occ -3.8% 方向對，**但 B 軸 Smean -0.10（gap widened 10%、SQL -0.24 最差）**。判定 NET NEGATIVE。F2 從「最有 leverage 的 future work」改寫為 **Generator-bounded 反證鏈最新一筆證據**（Step 49→65→66→72）。Disposition：config flag 預設 OFF、保留 code 作 ablation。
+  - **Step 73-74 F8 full-trace N=178（2026-06-17，§10）**：F8 從 matched H2H scale-up 升級為 **full refinement-loop capture**（每樣本存所有輪次 render + Judge 評分 + reject reasons + QC violations）。Cost 教訓：$0.55/sample（vs 原估 $0.023）、user 在 N=178/$103 停手。**最重要 finding**：full loop Smean4 82.7% vs cold-start 86.6%（**退 −4 pts**），66.9% 樣本走滿 5 輪仍無法穩定 accept——**refinement loop 在 N=178 規模再驗證為 net negative**，接 Step 31/32 N=5（−0.35）的同方向證據。A 軸 4/6 勝 designer（比 N=100 多 1 軸）。
+- **誠實定調（最重要，post-Step 74 final）**：**不宣稱勝設計師 aesthetic、不宣稱勝 SEGA Smean、不宣稱 Refinement Loop 帶來測量上的改善（Step 31/32 N=5 + Step 74 N=178 雙重 net-negative）、不宣稱跨 paper SEGA Table 3 數值可直比、不宣稱 per-axis ranking（SIO 最強 / STV 最強等都已被 N=1,897 推翻）、不宣稱 F2 saliency-aware 改善 B 軸（Step 72 NET NEGATIVE，gated OFF）**；可宣稱「**(1) Phase A Ali/Ove 純幾何勝 designer GT 跨 N=20/100/1,897 三個 scale 全部維持，N=1,897 還多 Occ 勝（Step 20+22+23 三重 robust，judge-drift-free）；(2) Within-judge Phase B Smean AL 達 designer ceiling 65.8%（N=1,897，與 N=100 64.8% 跨 scale 穩定）；Step 70 matched H2H Smean4 = 86.6% of designer（first honest lower-bound）；(3) 三個 methodology contribution：judge 跨 paper 漂移（Step 21b）+ N=20→100 STV selection bias（Step 22）+ N=100→1,897 SIO/SQL selection bias（Step 23b）→ full-scale validation that per-axis claims need ≥1,000 sample；(4) Generator-bounded 反證鏈 6 筆一致證據（Step 49→65→66→72→74）：prompt-only/QC-only/saliency-aware/constraint-solver/refinement-loop 五路結構性干預皆無法顯著推 B 軸 Smean，ceiling 只剩 fine-tuning（Step 34 oracle 10% 通過率 = LLM zero-shot 上限）**」。task-aligned pairwise 下設計師仍勝（step 11 N=3：2:1）；N=20 Win rate 80% 的 self-preference confound 已由 Step 14 獨立 judge 排除，但 judge≠VILA-7B caveat 仍在；N=1,897 ≈ SEGA full Crello (1,971) 的 96.2% coverage 消除「N=20≠1,971」caveat。AesthetiQ 仍僅作 qualitative/indicative 對照、不進勝負表。Render quality（背景/字型/裝飾合成）為 by-design 不做的 scope 外能力。**Ali 65/100 wins（Step 71）重寫為 outlier 尾部風險，非系統性落後。Read/Occ 跨 Crello+PKU 一致落後——root cause 是 saliency-aware 訓練缺口。**
 
 ---
 
@@ -958,6 +965,14 @@
 
 **誠實定調**：constraint-solver placement = **negative result，但是最強的 Generator-bounded 反證**。先前七次「Generator-bounded」都可被質疑為 LLM 幾何執行力問題；本步把 LLM 完全移出幾何、由構造數學最優，judge 仍 55/55 偏好設計師——證明 gap 不在「誰擺 bbox」，而在 **QC 可驗證的幾何合規性 vs judge 整體美學偏好之間的本質落差**（置中規則 vs 設計師非對稱動態構圖）。**核心命題：QC 數學合規 ≠ MLLM judge 美學偏好。** 限定：(1)「gate-clean by construction」成立於 18/20，2 個邊角樣本（`5f9815e2` 超 sparse 短文字、`589d7bd9` hero 窄照片）solver 修復迴圈未完全消除，被 driver QC gate 正確攔截未進 judge，不影響 55/55 統計；(2) `low_contrast_text` 仍 36 次——`_pick_text_color` 取 stack 區域平均亮度，busy 中暗背景局部深處對比仍不足，單一文字色無法對所有局部高對比，呼應 Step 11「schema 表達力 scope boundary」。引用須帶 judge 曝光 55（史上最高）＋「QC-compliant ≠ judge-preferred」脈絡。ceiling 未試路線只剩 fine-tuning（1,902 GT）。產物：`step66_smoke.*`、`step66_live.*`、`step66_sanity_*.png`（gitignored）；程式 `metagpt/ext/agentlayout/tools/constraint_solver.py`。
 
+### Step 67 — filter_valid 漏接 bg：API hygiene 修正（2026-06-14）
+
+**方法**：`quality_checker.py` 的 `filter_valid(candidates, spec)` 缺 `bg` 參數、內部不傳 bg 給 `check_candidate`。修正：簽名加 `bg: Optional[BackgroundAnalysis] = None`、兩個呼叫點（`pipeline.py:383`、`roles/layout_generator.py:125`）補傳 `bg=bg`。
+
+**結果**：**零行為變更**——Crello composition pipeline 中 `_check_primary_in_safe_zone` 因 Step 63 deference short-circuit（`spec.composition is not None → return []`）本來就不觸發。影響範圍僅 oracle drivers / ablation harnesses 等「非 composition 路徑」的呼叫端。101 test passed / 3 skipped / 0 failed、**未跑實驗**。
+
+**誠實定調**：純 API hygiene 修正，不影響 Step 66 以前任何負面結論——那些實驗都走 composition pipeline、bg 不進 filter_valid 與 deference 結果一致。
+
 ---
 
 ## §3 核心誠實定調（consolidated — 論文 honesty 章節用）
@@ -1018,6 +1033,14 @@
 | SOTA-context 數字出處 | AesthetiQ, CVPR 2025, arXiv 2503.00591 — Table 1（judge=VILA-7B、Crello test 1,971；FlexDM/LACE/PosterLLaVa/LayoutNUWA/AesthetiQ-1B…8B 之 Mean IoU% + Win-Rate%） |
 | Step 30–64 oracle / blind / QC / 構圖師實驗鏈原始數據 | `layout_agent/output/step3x..step64` 各 `*.log` / `*_results.json` / renders（gitignored）；逐步技術細節 `layout_agent/IMPLEMENTATION_LOG.md` 對應條目；showcase 圖 `layout_agent/good_result/`（7 組 GT+AL 對） |
 | commit 紀錄 | `git log --oneline -- metagpt/ext/agentlayout/`（step 12b = `a87b5034`、step 13 doc = `a2f85a58`） |
+| Step 67 API hygiene（2026-06-14） | commit `7a92c83b`；程式：`quality_checker.py`（`filter_valid` 簽名）、`pipeline.py:383`、`roles/layout_generator.py:125`；test：`test_quality_checker_position_hints.py` 等 101 passed |
+| Step 68 X plan A+B 全軸驗證（2026-06-15） | 詳見 §6、§6.4 證據檔索引 |
+| Step 69 best-case showcase（2026-06-15） | 詳見 §7；`layout_agent/output/select_high_score_subset.py`、`high_score_subset_*.json` |
+| Step 70 matched H2H（2026-06-15） | 詳見 §8；`layout_agent/output/matched_h2h_*.json` |
+| Step 71 per-sample root-cause（2026-06-15） | 詳見 §6.2b；`layout_agent/output/b1_root_cause_n100.{json,md}` |
+| Step 72 F2 saliency-aware（2026-06-16） | 詳見 §9.3；`layout_agent/output/step72_f2_n100_{sega,cole}.json`、`step72_f2_n100_crello_*`、`f2_calibration.{json,md}`；commit `af6c9bb6`（impl）+ `84403a92`（docs）+ `d9b9d4b2`（gate OFF） |
+| Step 73-74 F8 full-trace（2026-06-17） | 詳見 §10；`layout_agent/full_result/`（178 per-sample folder + `_aggregate/`）；`layout_agent/output/step74_*.py`；commit `3f521c49` |
+| Feature flags | `metagpt/ext/agentlayout/feature_flags.py`（Step 72 F2 gating，env `AGENTLAYOUT_F2_SALIENCY`，預設 OFF） |
 
 ---
 
