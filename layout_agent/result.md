@@ -36,7 +36,9 @@
   - **Step 71 per-sample root-cause（2026-06-15，§6.2b）**：N=100 三「輸軸」拆 per-sample 後翻盤——**Ali 65/100 wins（aggregate 被 3 個 851×315 banner outlier 撐起）**；Read 21:41 真實系統性落後（小 canvas worst）；Occ 45:55（portrait hero-image worst）。**Ali 應從「輸軸」改寫為「outlier 尾部風險」**。
   - **Step 72 F2 saliency-aware NET NEGATIVE（2026-06-16，§9.3）**：B 區 future-work F2 實作完成 + N=100 validation。A 軸 Read -6.7% / Occ -3.8% 方向對，**但 B 軸 Smean -0.10（gap widened 10%、SQL -0.24 最差）**。判定 NET NEGATIVE。F2 從「最有 leverage 的 future work」改寫為 **Generator-bounded 反證鏈最新一筆證據**（Step 49→65→66→72）。Disposition：config flag 預設 OFF、保留 code 作 ablation。
   - **Step 73-74 F8 full-trace N=178（2026-06-17，§10）**：F8 從 matched H2H scale-up 升級為 **full refinement-loop capture**（每樣本存所有輪次 render + Judge 評分 + reject reasons + QC violations）。Cost 教訓：$0.55/sample（vs 原估 $0.023）、user 在 N=178/$103 停手。**最重要 finding**：full loop Smean4 82.7% vs cold-start 86.6%（**退 −4 pts**），66.9% 樣本走滿 5 輪仍無法穩定 accept——**refinement loop 在 N=178 規模再驗證為 net negative**，接 Step 31/32 N=5（−0.35）的同方向證據。A 軸 4/6 勝 designer（比 N=100 多 1 軸）。
-- **誠實定調（最重要，post-Step 74 final）**：**不宣稱勝設計師 aesthetic、不宣稱勝 SEGA Smean、不宣稱 Refinement Loop 帶來測量上的改善（Step 31/32 N=5 + Step 74 N=178 雙重 net-negative）、不宣稱跨 paper SEGA Table 3 數值可直比、不宣稱 per-axis ranking（SIO 最強 / STV 最強等都已被 N=1,897 推翻）、不宣稱 F2 saliency-aware 改善 B 軸（Step 72 NET NEGATIVE，gated OFF）**；可宣稱「**(1) Phase A Ali/Ove 純幾何勝 designer GT 跨 N=20/100/1,897 三個 scale 全部維持，N=1,897 還多 Occ 勝（Step 20+22+23 三重 robust，judge-drift-free）；(2) Within-judge Phase B Smean AL 達 designer ceiling 65.8%（N=1,897，與 N=100 64.8% 跨 scale 穩定）；Step 70 matched H2H Smean4 = 86.6% of designer（first honest lower-bound）；(3) 三個 methodology contribution：judge 跨 paper 漂移（Step 21b）+ N=20→100 STV selection bias（Step 22）+ N=100→1,897 SIO/SQL selection bias（Step 23b）→ full-scale validation that per-axis claims need ≥1,000 sample；(4) Generator-bounded 反證鏈 6 筆一致證據（Step 49→65→66→72→74）：prompt-only/QC-only/saliency-aware/constraint-solver/refinement-loop 五路結構性干預皆無法顯著推 B 軸 Smean，ceiling 只剩 fine-tuning（Step 34 oracle 10% 通過率 = LLM zero-shot 上限）**」。task-aligned pairwise 下設計師仍勝（step 11 N=3：2:1）；N=20 Win rate 80% 的 self-preference confound 已由 Step 14 獨立 judge 排除，但 judge≠VILA-7B caveat 仍在；N=1,897 ≈ SEGA full Crello (1,971) 的 96.2% coverage 消除「N=20≠1,971」caveat。AesthetiQ 仍僅作 qualitative/indicative 對照、不進勝負表。Render quality（背景/字型/裝飾合成）為 by-design 不做的 scope 外能力。**Ali 65/100 wins（Step 71）重寫為 outlier 尾部風險，非系統性落後。Read/Occ 跨 Crello+PKU 一致落後——root cause 是 saliency-aware 訓練缺口。**
+  - **Step 76–88 SEGA-style 前處理線＋深審迭代線（2026-07-02～03，§11.1–11.2）**：輸入端革命三連（SEGA half-finished-poster 前處理→frame/solid 板型修正（過半 Crello 底襯是透明描邊框）→**text-as-image**（文字用設計師渲染圖、天然尺寸，render-parity gap 消除：graphics 軸 9/9 tie、innovation 首度 cand 7/9））；深審迭代機制全鏈落地（量測錨點/逐元素評語/issue ledger/LEDGER OVERRIDE/回歸複檢/KEEP 約束），live compliance 87–89%、每環單元測試釘死。中途最強單點：Run2 B 臂 blind design_layout 4–0（p≈0.053）、`589b457b` blind overall 五連勝 GT。
+  - **Step 89 N=100 雙臂最終實驗（2026-07-03，§11.3）**：**A 基線（3 概念/rounds3/loop off）blind overall cand 12＋tie 7／100 vs designer GT＝規模化最強數字**；B 深審棧 9＋5、配對 n.s.＝**深審全家桶無淨增益**。逐輪曲線：**R1 +0.45 分、R3 起淨害**；best-of-3 R0 +1.6 分。SEGA 幾何：B 的 **Occ 0.2733 勝 GT 0.2937**、Rea/panel 勝 A，但 **Ali 崩壞（0.0435）且逐輪曲線證明是後期輪次拆散對齊群所致**（R1 0.011→R4 0.048）。資料驅動設計規則：**best-of-3＋一輪修復＋停（rounds=2）**。
+- **誠實定調（最重要，post-Step 74 final）**：**不宣稱勝設計師 aesthetic、不宣稱勝 SEGA Smean、不宣稱 Refinement Loop 帶來測量上的改善（Step 31/32 N=5 + Step 74 N=178 雙重 net-negative）、不宣稱跨 paper SEGA Table 3 數值可直比、不宣稱 per-axis ranking（SIO 最強 / STV 最強等都已被 N=1,897 推翻）、不宣稱 F2 saliency-aware 改善 B 軸（Step 72 NET NEGATIVE，gated OFF）**；可宣稱「**(1) Phase A Ali/Ove 純幾何勝 designer GT 跨 N=20/100/1,897 三個 scale 全部維持，N=1,897 還多 Occ 勝（Step 20+22+23 三重 robust，judge-drift-free）；(2) Within-judge Phase B Smean AL 達 designer ceiling 65.8%（N=1,897，與 N=100 64.8% 跨 scale 穩定）；Step 70 matched H2H Smean4 = 86.6% of designer（first honest lower-bound）；(3) 三個 methodology contribution：judge 跨 paper 漂移（Step 21b）+ N=20→100 STV selection bias（Step 22）+ N=100→1,897 SIO/SQL selection bias（Step 23b）→ full-scale validation that per-axis claims need ≥1,000 sample；(4) Generator-bounded 反證鏈 6 筆一致證據（Step 49→65→66→72→74）：prompt-only/QC-only/saliency-aware/constraint-solver/refinement-loop 五路結構性干預皆無法顯著推 B 軸 Smean，ceiling 只剩 fine-tuning（Step 34 oracle 10% 通過率 = LLM zero-shot 上限）**」。task-aligned pairwise 下設計師仍勝（step 11 N=3：2:1）；N=20 Win rate 80% 的 self-preference confound 已由 Step 14 獨立 judge 排除，但 judge≠VILA-7B caveat 仍在；N=1,897 ≈ SEGA full Crello (1,971) 的 96.2% coverage 消除「N=20≠1,971」caveat。AesthetiQ 仍僅作 qualitative/indicative 對照、不進勝負表。Render quality（背景/字型/裝飾合成）為 by-design 不做的 scope 外能力。**Ali 65/100 wins（Step 71）重寫為 outlier 尾部風險，非系統性落後。Read/Occ 跨 Crello+PKU 一致落後——root cause 是 saliency-aware 訓練缺口。** **Post-Step 89 增補（§11.4）**：可宣稱 (5) text-as-image 協定下 A 基線 blind overall 12 勝＋7 tie／100 vs designer GT（協定揭露必附：合成層與文字 bitmap 沿用 GT 素材/字型/尺寸、候選差異僅文字 placement）；(6) 迭代修復價值集中第 1 輪（+0.45、Ali 修復），第 3 輪起淨害→設計規則 best-of-3＋單輪修復；(7) B 深審 Occ 勝 GT（0.2733 vs 0.2937）＝內容感知放置直接證據。不可宣稱：深審棧優於基線（配對 n.s. 反向）、12/100 為總體勝設計師。
 
 ---
 
@@ -1857,3 +1859,223 @@ conda run -n meta python layout_agent/output/step74_n1897_full_trace.py \
 #       step74_aggregate_stats.py
 ```
 `--skip-existing` 跳過已完成 178、續跑剩 1,719 個。預估再 $900 + 7 天。
+
+---
+
+## 10.8 Step 75 補充數據（2026-06-27）：QC gate-off Ove（乾淨配對）+ loop 收斂細分
+
+> 為 Slide 35（QC ablation）與 Slide 36（loop 收斂圖）補的數據。
+> 來源腳本：`step75_gateoff_paired.py`（乾淨配對，N=100，唯一需 LLM 的一支 ~$2）、
+> `step75_gateoff_sega.py`（舊 proxy，零 LLM）、`step75_loop_convergence.py`（零 LLM）。
+> 對應產物：`step75_gateoff_paired.json` / `step75_gateoff_sega.json` / `step75_loop_convergence.json`。
+
+### 10.8.1 QC gate-off Ove — ✅ 乾淨配對（Slide 35 主用，2026-06-27 補跑）
+
+**動機**：Slide 35 要證「低重疊是 QC 選擇的功勞、不是 LLM 運氣」。
+
+**方法（乾淨、可對標 5.66e-4）**：用 `git stash` 暫時還原成 **v1 generator**，對 **step22 同批 N=100 IDs** 跑配對：
+- **gate-ON** = step22 已存的 committed 候選 Ove（main-table 5.66e-4 的來源）。
+- **gate-OFF** = 同 v1 generator 現跑的**原始 5 候選池（完全不過 QC）**Ove。
+- 來源：`layout_agent/output/step75_gateoff_paired.py` → `step75_gateoff_paired.json`，N=100 全 ok、跑完 `git stash pop` 還原 v2。
+
+| 條件 | Ove | 對 5.66e-4 |
+|---|---|---|
+| **gate-ON（QC committed）** | **5.66e-4** | **完美重現 published 5.6607e-4 → 設定驗證 ✓** |
+| **gate-OFF（raw 5 池，無 QC）** | **8.26e-4** | **1.46× 高** |
+| gate-ON 同 run QC-pass 候選 | 0.00 | 真正過 QC 者零重疊（樣本少、僅佐證）|
+| alignment（gate-off / gate-on）| 5.80e-3 / 7.66e-3 | — |
+
+**誠實定調**：
+1. **設定已驗證**：gate-ON 重現 5.66e-4 到小數點（5.6607e-4），證明這組 gate-off 數字與 main table 可直接並列。
+2. **QC 確實降重疊，但幅度溫和**：拿掉 QC 選擇 Ove 由 5.66e-4 → 8.26e-4（**+46%**）。可主張「低重疊有 QC 的功勞（~1.5×）」，但**不可誇大**——LLM 原始輸出本身重疊已很低（8.26e-4 仍是小數量級），QC 是錦上添花而非唯一來源。
+3. Slide 35 建議講法：「QC selection lowers element overlap ~1.46× (8.26e-4 → 5.66e-4) on N=100; the generator's raw output is already low-overlap, so QC refines rather than rescues.」
+
+---
+
+### 10.8.1b（已被 §10.8.1 取代）QC gate-off SEGA proxy — ⚠️ 舊 proxy
+
+> 下表是補跑乾淨版**之前**的零 LLM proxy（Step 74 trace raw 池 vs committed），方向一致（1.41× ≈ 上面的 1.46×）但 committed 對不上 5.66e-4。保留供交叉佐證，**正式引用請用 §10.8.1**。
+
+**proxy 方法**：Step 53 的 gate-off run 沒存 bbox，故改用 Step 74 `full_result/<id>/rounds/round_00_cold_start/` 的「raw 15 候選池」對「committed」當 proxy，N=162、零 LLM。
+
+| 指標 | gate-OFF（raw 池均值）| gate-ON（committed）| off/on |
+|---|---|---|---|
+| **overlay (Ove)** | **3.10e-3** | **2.21e-3** | **1.41×** |
+| alignment | 1.61e-4 | 5.19e-4 | 0.31× |
+| underlay_loose | 0.490 | 0.492 | 0.99× |
+| underlay_strict | 0.488 | 0.513 | 0.95× |
+| readability | 0.029 | 0.025 | 1.16× |
+| occlusion | 0.212 | 0.208 | 1.02× |
+
+**誠實定調（三點，引用前必讀）**：
+1. **對不上 5.66e-4 錨點**：此處 committed Ove=2.21e-3 來自 Step 74 refinement-loop 資料集，**不是** Step 22 cold-start N=100 的 5.66e-4；兩者 N/run 不同，不可並列。
+2. **效果只有 1.41×、且 alignment 反而 raw 池較好（0.31×）**：在此 v1 refinement 資料集 QC 幾乎不 pass（多走 degradation），gate-on/off 對比本就弱。本 proxy 只能說「選擇機制讓重疊降約 30%」，**不足以強力支撐「低重疊全是 QC 的功勞」**，部分指標甚至反證。
+3. **若 Slide 35 要對得上 5.66e-4 的乾淨 gate-off 數字**：唯一嚴謹做法是依 Step 22 cold-start 設定重跑一次「gate-on vs gate-off 配對生成 + 存 bbox」（需 LLM，~17–20 樣本、約 $1–2）。本 proxy 僅作方向性參考、放 ablation/limitation 語氣。
+
+證據檔：`layout_agent/output/step75_gateoff_sega.json`。
+
+### 10.8.2 Refinement loop 收斂細分（Slide 36）
+
+來源：`full_result/_aggregate/loop_distribution.md`（既有），Step 75 重算交叉驗證一致。N=178、mean 4.06 輪、median 5。
+
+| 跑幾輪 n_rounds | 樣本數 | 佔 178 |
+|---|---|---|
+| 0（errored / 無 trace）| 17 | 9.6% |
+| 1 | 1 | 0.6% |
+| 2 | 18 | 10.1% |
+| 3 | 9 | 5.1% |
+| 4 | 7 | 3.9% |
+| **5（走滿 ceiling）** | **126** | **70.8%** |
+
+- **converged（2+ 連續 accept，提早停）= 34（19.1%）**；max_rounds exhausted（走滿 5 輪仍無 2 連 accept）= **119（66.9%）**。
+- **提早收斂那群（n_rounds 1–4，共 35）的分布**：第 2 輪停最多（18）> 第 3 輪（9）> 第 4 輪（7）> 第 1 輪（1）。
+- Slide 36 可用：圓餅「66.9% 不收斂 vs 33.1%」，或長條（上表 n_rounds histogram）。
+
+證據檔：`layout_agent/output/step75_loop_convergence.json`、`full_result/_aggregate/loop_distribution.md`。
+
+---
+
+## 10.9 Threats to Validity — 「會不會是實作 bug 害的？」三個 falsification 控制（2026-06-28）
+
+> **動機**：「loop 無正 ROI / Generator-bounded」是負面結論。負面結論最大的威脅是「其實是我自己 code 寫錯」。本節以三個**針對性反證（falsification）**，逐一排除「能一次推翻結論」的 bug；任一若失敗即代表結論無效。
+
+### 檢查 1 — 回饋是否真的進到 Generator prompt？（零 LLM，code-level）
+
+**最危險的 bug**：若回饋根本沒注入 prompt，則「Generator 無視回饋」其實是「Generator 沒收到」，會**同時**假造「無視回饋＋不收斂＋loop 沒用」。
+
+**結果（v1，`git show HEAD`）**：PROMPT_TEMPLATE 第 155 行有 `Feedback from previous round (if any): {feedback}` slot；`_build_prompt`（837–851 行）`feedback_str = json.dumps(feedback.model_dump(...))` 後 `feedback=feedback_str` 代入 `.format()`。→ **回饋（含完整 structured_suggestions）確實進 prompt。「無視回饋」是真行為，非漏接線。✅**
+
+### 檢查 2 — Renderer 是否默默把 agent 畫爛？（零 LLM render + 視覺）
+
+**風險**：agent 經我們的 renderer、designer GT 用原始 `ground_truth_preview.jpg`。若 renderer 默默劣化 agent，judge 的低分就不是版面問題。GT-judge 正控只驗 judge、驗不到 agent renderer。
+
+**結果**：用 `step54_render_parity.build_gt_spec_and_candidate` 把 designer GT 的完整元素集（最多 14 個）**經我們的 renderer 重畫**，與原始 GT 並排（`demo_v2_compare/parity_<id>.png`，4 樣本）。重畫結果與原始 GT **幾乎一模一樣**（潛艇/魚群/波浪/縱排字全忠實重現），唯一差異是字型粗細選擇。→ **renderer 忠實；agent 低分是版面決策、非 renderer mangling。✅**
+
+> 補強：renderer 這條**先前已嚴謹查證並修正**——Step 54 量到 render channel 佔 blind gap 61–68%（當年確實是 confound）、Step 55 把 renderer 天花板 22.5%→55%、Step 56 live 重測。屬「定位→修復→重測」的完整鏈，非賭它沒事。
+
+### 檢查 3 — Generator 到底會不會照指令做？（小量 LLM，positive control）
+
+**目的**：區分「能執行、但美學能力受限（Generator-bounded，真結論）」vs「根本不吃指令（bug）」。
+
+**結果**（1000×1000 canvas、單一 title）：
+| 明確指令 | title 中心 (cx, cy) | 落點象限 |
+|---|---|---|
+| "the TOP-LEFT corner" | (0.17, 0.07) | 左上 ✓ |
+| "the BOTTOM-RIGHT corner" | (0.85, 0.95) | 右下 ✓ |
+
+→ **Generator 精準服從明確空間指令。** 它「修不動美學」是**能力上限**，不是 parsing/wiring bug。✅
+
+### 三角驗證結論
+
+**沒有任何單一 bug 能同時解釋這五條互相獨立的程式路徑**：
+1. 回饋有進 prompt（檢查 1）｜2. renderer 忠實重現 GT（檢查 2）｜3. Generator 服從明確指令（檢查 3）｜4. judge 對 designer GT 給高分 7.5–8.0（Phase B GT 正控，§10.8/Step 21b）｜5. Oracle 給 GT-guided pairwise 回饋仍 5/5 敗（Step 34，獨立路徑）。
+
+→ **「Generator-bounded / refinement loop 無正 ROI」對實作錯誤是 robust 的**，不是 bug 假象。
+
+**誠實 caveat（口試也要會講）**：這些是針對性反證、非窮舉證明；檢查 3 測的是 model-level 指令服從（v2 current code）、檢查 2 視覺比對 4 樣本。它們刻意打在「能推翻結論的 bug」上，配合五路三角驗證足以支撐結論，但不宣稱「程式零 bug」。
+
+**證據檔**：`demo_v2_compare/parity_*.png`（renderer 保真並排）、v1 `generate_layout.py` 第 155 / 837–851 行（回饋注入）、檢查 3 為一次性 positive-control 腳本輸出（如需固化可存 `step75_instruction_control.py`）。
+
+---
+
+## §11 Step 76–89 — SEGA-style 前處理線 + 深審迭代線 + N=100 最終實驗（2026-07-02 ～ 07-03）
+
+### §11.1 輸入端革命：SEGA 前處理 → frame/solid → text-as-image（Step 76–81）
+
+**動機**：使用者判斷根因在資料集——Crello 素材列表混雜背景/裝飾/LOGO/底襯，連人都難分辨；Step 66 已證明幾何最優仍 55/55 全敗＝輸在素材語意。SEGA（ICCV 2025，GitHub `BruceW91/SEGA`）的官方解法是把 Crello 重整成「half-finished poster」：非文字圖層按設計師 GT 位置合成進背景、模型只排文字。其釋出的 PKU-style Crello 在百度網盤難取得，改在本地 1,902 樣本快取上復刻同協定。
+
+**方法演進（每步都由人眼抽查驅動）**：
+1. **Step 76**：`tools/crello_preprocessor.py` 非文字層按 GT z-order 合成 `bg_composite.png`；underlay 前饋（bbox+主色+對比色）走 feed-forward 不走 judge 回饋（Step 20b/59/65 三次負結果）。region 判定兩層過濾（尺寸＋GT 文字覆蓋≥50%——後者是人眼抽查抓到裝飾插畫誤判後補的）。
+2. **Step 79**：使用者從成品發現「文字沒在底襯上」→ 根因＝**過半 Crello 底襯（8/15 region）是透明描邊框非實心板**，主色取樣只看不透明像素把白邊框當白板→建議深字壓深背景。修：`panel_type`（opaque coverage<0.35＝frame）＋顏色解析延後到合成完成、frame 取樣畫布內實際 backdrop。`590afa87` 翻成 frame #28312A→建議白字，與 GT 一致。
+3. **Step 80**：使用者提議「Crello 有給文字渲染圖，用圖擺就不用擔心字型」→ text-as-image 模式：文字元素以設計師渲染 RGBA 圖進場（天然尺寸＝設計師尺寸），同時解掉字型 fidelity（Step 54：render channel 佔 blind gap 61–68%）與字太小兩問題，且更貼齊 PKU/AesthetiQ「元素以圖給定」協定。
+4. **Step 81**：GT 校準文字層級 prior（N=1,746：標題 cy p50=0.475 中上帶非貼頂、above-rate 66.2%、資訊文字壓底襯 52.4%）。
+
+**中途最強單點數字（N=19/N=9 smoke 級，非結論級）**：
+- Run 2（Step 76c 後）：B 臂 blind **design_layout 4–0 完封 A 臂**（one-sided Fisher p≈0.053）；`589b457b`（霓虹漢堡）blind overall 跨 run 連勝（最終累計 run1/run2/77d-off/78-off/79 五連勝，text-as-image 模式下中斷）。
+- Step 80 smoke（N=9）軸剖面劇變：graphics_images **9/9 tie（render parity 達成）**、innovation **cand 7/9（史上首個候選多數軸）**、content 9/9 tie；typography 仍 0/9 → **證明該軸實際評的是文字編排而非字體**——殘餘差距純化為 placement 品質。
+
+### §11.2 深審迭代機制線（Step 82–88b）：每個零件都會動，逐段驗屍全記錄
+
+**動機**：使用者連續質疑「結果不盡人意」「judge 太敷衍」「gen 根本沒理」「要有一套準則」「一張一張好好挑錯」——逐一驗證後每個直覺都命中一個結構問題。
+
+| Step | 使用者觸發 | 發現/修正 | 驗證 |
+|---|---|---|---|
+| 82 | 「存每輪的圖」 | `round_callback` 逐輪 trace：概念趨同（3 概念→同版面＝假選擇）、judge 全 34–39 空話、lockup 斷裂 | progress.png 對照 |
+| 83 | 「judge 太敷衍」 | 量測錨點：`layout_metrics.py` 中性幾何量測（GT 校準 lockup p50=0.014、**全置中版面佔 22.3%＝置中合法**）＋評分錨點＋空話無效合約＋單候選深審 | 31/32/31/31 連拒→R4 39；嫌棄變元素級 |
+| 84 | 「gen 根本沒理」 | **證實**：design-reject 路由丟棄批評（Director 無 feedback 參數）；修迴路＋Mapper revision 模式（被拒座標當對照，使用者提議） | 管線通；**但 judge 批評逐輪自相矛盾**（太遠→太擠→沒置中）、判決噪音 ~8 分 |
+| 85 | 「要有準則+具體範圍」「要 judge 看圖決定」 | 三層分工：優先序問卷＋judge 看圖估 target_bbox＋**issue ledger**（開帳目標原文持久、幾何銷帳、不准翻案） | **指哪打哪首次實現**：judge 估 [20,276,802,373]、Mapper 移入、振盪消失 |
+| 86 | 「底襯/可放置區也給 judge」 | 盤點：judge 從未拿過 safe zones、主判決連 panel 都看不到→補共用 canvas-resources 塊 | judge 用地形選「標題進白框」 |
+| 87 | 「逐元素評語+具體修法」 | 每元素一條 verdict（ok 合法防幻覺）、覆蓋率機器可查 | 6/6 全覆蓋 0 漏評；暴露 BINDING vs 帳本優先權死鎖 |
+| 88/88b | — | LEDGER OVERRIDE（帳本>概念指派）＋回歸複檢（銷帳非終身免檢）＋callback 順序修正 | 死鎖破（R1 即 1/1）；回歸兩次全被抓回 |
+| 89a | — | KEEP 約束（已修目標「不准拆」隨 feedback 進 Mapper） | 436 passed |
+
+**機制線總評**：全鏈（judge 看圖定目標→帳本鎖定→概念對齊→Mapper 執行→幾何銷帳→回歸複檢）每環有單元測試釘死、live compliance 87.4%——**執行面完全無辜**。但淨效益要 N=100 才能回答（見 §11.3）。
+
+### §11.3 Step 89 — N=100 雙臂正式實驗（2026-07-03，`output2/step89_n100/`）
+
+**設計**：eval100 ids（demo19+81 確定性補）；兩臂同 text-as-image 輸入；**A=基線**（3 概念、rounds≤3、loop off）vs **B=深審棧**（單候選、rounds≤5、loop on、83–89 全家桶）；order-matched blind、選擇效應免疫（exhausted 也判）、斷點續跑、每輪落盤。100/100 完成（B 臂 1 error＋1 crash＝judge 解析噪音）。
+
+**結果一：blind vs designer GT**
+| | internal acc | blind overall | design_layout | typography | 配對 overall（同樣本） |
+|---|---|---|---|---|---|
+| A 基線 | 24/100 | **cand 12／tie 7**／gt 81 | 12/7/81 | 17/23/60 | A較好 13 |
+| B 深審 | 19/100 | cand 9／tie 5／gt 84 | 11/2/85 | 10/14/74 | B較好 8（same 77，n.s.） |
+
+**結果二：逐輪進步曲線**（每輪 judge total 配對 Δ）
+- 兩臂 R1 均 **+0.45**；A 之後平台（R2 +0.14）；**B 之後轉負**（R2 −0.19、R3 −0.03、R4 −0.12），帳本未清數 1.51→1.75 不降反升＝後期輪次發現問題快於修復。
+- best-of-3 的 R0 起點優勢：A 32.70 vs B 31.11（**+1.6 分**）——「三選一」在分佈層面有效（Step 82 的趨同觀察在單樣本成立、在 N=100 被選擇的變異收益抵銷）。
+
+**結果三：SEGA 幾何指標**（`metrics.json`，與 Step 20/22 同一 `sega_metrics` 實作可比；Und 軸依 text-as-image 協定以 text_on_panel 替代，正文需註明）
+| | Ali↓ | Ove↓ | Rea↓ | Occ↓ | text_on_panel↑ |
+|---|---|---|---|---|---|
+| GT | 0.0042 | 0.0038 | 0.0229 | 0.2937 | 0.867 |
+| A 基線 | 0.0099 | 0.0153 | 0.0412 | 0.3155 | 0.761 |
+| B 深審 | 0.0435 | 0.0124 | 0.0343 | **0.2733（勝 GT）** | 0.817 |
+
+**結果四：Ali 逐輪曲線（因果閉合）**：B 臂 R0 0.035 → **R1 0.011（修好、追平 A）** → R3 0.050／R4 0.048。**後期輪次的帳本單元素搬移拆散對齊群**＝B 的 Ali 崩壞與 blind 失利主因；B 的內容感知面（Rea/Occ/panel）全面優於 A、Occ 甚至優於 GT。
+
+### §11.4 誠實定調（本線可寫/不可寫）
+
+**可寫**：
+1. **A 基線 blind overall 12 勝＋7 tie／100 vs 設計師 GT**＝本專案規模化後最強數字（協定揭露必附：合成層與文字 bitmap 均沿用設計師 GT 素材/字型/尺寸，候選與 GT 差異僅在文字 placement；與 SEGA 釋出協定及 PKU「元素以圖給定」慣例一致）。
+2. **迭代修復的價值集中在第 1 輪**（+0.45 分、Ali 0.035→0.011），第 3 輪起淨害——資料驅動設計規則：**best-of-3 選擇＋一輪深審修復＋停（rounds=2）**。
+3. 深審機制的 negative-with-mechanism 全鏈：感知有訊號（92% 可驗證觀察）→執行可通（compliance 87–89%）→判決可保純（78 解耦修 77d 污染：round-0 accept 7→1→回到 6-8）→帳本治振盪→override 破死鎖→回歸複檢——**每段都工作，淨效益仍為零**：害在「單元素迭代搬移破壞版面全域秩序（Ali）」＋「後期輪次 issue 通膨」。
+4. Occ 軸 B 勝 GT（0.2733 vs 0.2937）＝內容感知放置的直接證據。
+
+**不可寫**：深審棧優於基線（配對 n.s. 且方向相反）；12/100 為「勝過設計師」的總體宣稱（88% 仍輸）；typography 軸數字直接比較舊協定（該軸在字體相同下衡量編排）。
+
+**證據檔**：`output2/step89_n100/{_summary.json, metrics.json, <id>/{a,b}/{final.png, candidate.json, spec.json, rounds/}}`、`output2/step7?_trace/`（逐輪機制驗證）、`output2/step76_ab*/`、`output2/step80_smoke/`、`output2/step81_smoke/`、校準常數＝`compose_concept.TEXT_HIERARCHY_GT`／`generate_layout.TEXT_AREA_GT`／`layout_metrics.GT_METRICS`（各附重算方式於 IMPLEMENTATION_LOG Step 81/76c/83）。
+
+---
+
+## §12 Step 90 — 語意分組指標 SGC / TLC / PCA（2026-07-08，`output2/step90_semantic_metrics/`）
+
+**動機**：論文核心主張「Layout Tree 的語意分組會反映在最終版面上」，但 SEGA 六指標與 COLE 都不直接測這件事。新增三個純確定性指標（規格：`layout_agent/new_experiment.md`；實作：`tools/semantic_group_metrics.py`，21 tests、全套件 457 passed）。
+
+**定義**（共用距離＝外框 L1 間隙 `d=max(0,gap_x)+max(0,gap_y)`，重疊/相貼=0；bbox 除以 canvas 正規化；分組＝tree root 每個直接子節點連同整棵子樹）：
+- **SGC** = D_inter/(D_intra+D_inter+1e-6)，D_intra 為 group-level 平均、D_inter 為 pair-level 平均；值域 [0,1)、0.5=分組未反映。
+- **TLC** = 三元組 (i,j,l)（i,j 同組、l 異組）中 d(i,j)<d(i,l) 的比例，平手記 0.5；隨機期望 0.5（Monte Carlo 1000 次實測 0.45–0.55 通過）。
+- **PCA** = 非 root 父子邊 (p,c) 滿足 d(p,c) ≤ median_{j≠p} d(p,j) 的比例。
+
+**公平性協定**：同一樣本所有方法用**同一棵樹**（預設＝A 臂 spec 上的 Asset Planner 樹，快取於 `trees/`；`--tree-dir` 可換人工標註樹）。id 對齊用 `asset_ref` 內嵌的 GT idx 精確映射（A↔GT 直接、B 走 b_id→gt_idx→a_id）——**順序匹配會靜默錯配**（Analyst 按角色重排、spec 順序≠GT z-order；A/B 臂 id 指派各自獨立）。對不齊記錄後跳過，不硬湊。
+
+**N=100 第一版數字**（step89 樣本、97 棵樹零生成失敗）：
+
+| method | SGC ↑ | TLC ↑ | PCA ↑ |
+|---|---|---|---|
+| agent_a | **0.678 ± 0.211** (n=34) | **0.724 ± 0.236** (n=34) | 0.822 ± 0.264 (n=57) |
+| agent_b | 0.602 ± 0.194 (n=37) | 0.665 ± 0.250 (n=37) | **0.855 ± 0.228** (n=59) |
+| gt | 0.585 ± 0.227 (n=40) | 0.579 ± 0.273 (n=40) | 0.702 ± 0.317 (n=63) |
+
+**配對比較**（兩邊皆有效樣本內，agent_a vs GT）：SGC Δ+0.068（勝/平/負 21/0/13，sign p=0.23）、TLC Δ+0.122（21/2/11，p=0.11）、PCA Δ+0.101（14/37/6，p=0.12）——**三軸方向全數有利、均未達顯著**。
+
+**可寫**：
+1. 系統忠實實現自己的語意計畫：在自產 tree 下，agent 版面的分組緊湊度/一致性/父子鄰近全面高於把同一棵樹套在設計師 GT 上的讀數——支持「tree 分組確實傳導到座標」的機制主張。
+2. 指標本身作為論文貢獻（確定性、可復現、tree 來源可插拔、有 Monte Carlo sanity）。
+3. 質性對比素材：`qualitative_picks.json` 前 10（最大 `5e68da79` vs GT Δsgc +0.554）。
+
+**不可寫**：
+1. 「分組能力勝設計師」——tree 是 agent 自己的 Asset Planner 產物＝**自我一致性量測**（agent 的 Generator 看過這棵樹、設計師沒有），且配對全數 n.s.。
+2. 全樣本覆蓋——SGC/TLC 有效僅 34–40/100：SEGA 前處理後只剩文字元素（11 個單元素、22 個雙元素），樹常是平的（36 全 singleton、23 單 group）＝scope 限制須註明；另 agent_a 有 7 樣本 final candidate 掉元素、agent_b 有 4 樣本對齊失敗（記錄於 skip_reasons）。
+
+**證據檔**：`output2/step90_semantic_metrics/{per_sample.json, aggregate.md, qualitative_picks.json, trees/}`、runner=`output2/step90_semantic_metrics.py`、公式與邊界處理全文見 IMPLEMENTATION_LOG Step 90。

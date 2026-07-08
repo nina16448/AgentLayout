@@ -5390,3 +5390,444 @@ full_result/
 ---
 
 *本文件為論文研究說明，供系統開發時參考使用。最後更新：2026/06/17*
+
+---
+
+## Step 75（2026/06/25）：「先想再畫」雙 LLM 重構 — Compose/Coordinate 拆分（Pipeline 路徑完成）
+
+**動機**：demo 20 sample 證實舊單體 LayoutGenerator 的「5 個候選」只是同一置中模板在
+y 軸平移（每個 text 的 center_x ≈ canvas 中線）。根因是 400 行 prompt 塞 20+ 條 constraint，
+LLM 進「求生模式」只敢置中。依 `layout_agent/REFACTOR_PLAN.md` 把構思與座標拆成兩個 LLM 階段。
+
+**本次完成（Pipeline orchestrator 路徑，已離線驗證）**：
+
+| Step | 檔案 | 變動 |
+|---|---|---|
+| 1 | `schema.py` | 新增 `CompositionConcept`/`ConceptBatch`（純自然語言構圖概念，無座標）；`FeedbackTarget` 新增 `COMPOSITION_DIRECTOR` |
+| 2 | `actions/compose_concept.py`（新） | `ComposeConcept` action：~50 行 prompt、高 temperature、附背景圖、要求 3 個空間不同概念、retry+保底 fallback |
+| 3 | `actions/generate_layout.py` | → CoordinateMapper：`PROMPT_TEMPLATE` 24185→2239 字元；`run()` 改吃單一 `concept`、輸出 1 候選；`FORMAT_EXAMPLE` 換非對稱範例；允許 CoT；移除 Step 65 self-render channel；`_parse_response` 容忍 CoT 前綴 |
+| 4 | `tools/quality_checker.py` | `CheckResult` 新增 `warnings`；safe-zone 與 text-on-high-saliency 從 violation 降級為 warning（不影響 `passed`） |
+| 5 | `pipeline.py` | `__init__` 加 `compose`；`run()` 加構思階段 + per-concept 產生 + 三路回饋分流（design_layout/innovation→重構思；typography 等→CoordinateMapper；超門檻→Analyst）；`_generate_with_topup`→`_generate_from_concepts`；新增 `_worst_axis` |
+
+**保留未刪**：`_format_area_hints`/`_format_composition_directive`/`PHOTO_AREA_*`（calibration 不遺失、仍單元測試）；`compose_sketch.py`/`composition_templates.py`/`constraint_solver.py`（dead 但保留避免 import chain 斷裂）。
+
+**測試**：新增 `test_compose_concept.py`(10)、`test_pipeline_compose_routing.py`(3)；改寫
+`test_generator_prompt_template.py`、`test_generator_vision_channel.py`、`test_generator_area_prior.py`
+（釘 template 段）、`test_quality_checker_position_hints.py`、`test_composition_step62.py`
+的 safe-zone 斷言。**agentlayout 全套 368 passed / 12 skipped（requires_llm）**。
+
+**Step 6–8（Role/Team 路徑）已完成**：
+
+| Step | 檔案 | 變動 |
+|---|---|---|
+| 7 | `roles/iteration_state.py` | 新增 sentinel `RetryComposition`/`RetryCoordinates`（`RetryGeneration` 標 deprecated 保留）；`_act` reject 三路分流；新增 `_worst_axis` |
+| 8 | `roles/composition_director.py`（新） | `CompositionDirectorRole`：`_watch([PlanAssets, RetryComposition])`，跑 `ComposeConcept` 發 `ConceptBatch` |
+| 6 | `roles/layout_generator.py` | → CoordinateMapper：`_watch([ComposeConcept, RetryCoordinates])`，`_act` 改由 `ConceptBatch` 每概念產 1 候選；profile 改 "Coordinate Mapper"（class 名保留） |
+| — | `roles/__init__.py`、`team.py` | 匯出新 role/signals；`build_team` hire 6 個 role（插入 `CompositionDirectorRole`） |
+
+測試：`test_iteration_state.py` 路由斷言更新（`RetryGeneration`→`RetryCoordinates`、REJECT fixture worst axis 改 typography）＋新增 design_layout-worst→`RetryComposition` 測試。
+
+**Step 9（live smoke）已完成**：新 driver `layout_agent/output/step75_smoke_compose.py` 用新 `LayoutPipeline` 跑 3 個 demo sample（gpt-4o，real LLM），輸出 `layout_agent/demo_v2/<id>/`（concepts.json / final_v2.png / accepted.json / summary.json）。**結果 3/3 accepted**：
+
+| sample | rounds | text_center_offset | concepts |
+|---|---|---|---|
+| 590afa87… | 2 | 0.000（judge 最終選置中概念）| Diagonal Flow / Asymmetric Balance / Central Focus |
+| 5e15f017… | 2 | **0.370** | Diagonal Flow / Right-Aligned Elegance / Central Focus |
+| 5bd9d2fe… | 3 | **0.315** | Diagonal Flow / Asymmetric Balance / Central Focus |
+
+驗收：(1) 概念多樣性 ✓（每樣本 3 個空間不同概念，含非對稱/對角）；(2) ≥1 非對稱 ✓（2/3 最終版面 offset>0.30，對比 v1 47% 元素 <2% 偏移）；(3) 人眼 ✓（文字壓商品照、品牌靠邊、折扣群偏上角的設計師風版面）；(4) 不回歸 ✓（offline 372 passed/12 skipped）；(5) 成本 ✓（per-sample = 1 短 compose + 每輪 3 coordinate + judge，與 v1 五候選相當）。
+
+**注意**：`step74_n1897_full_trace.py`（舊 N=1897 driver）仍是舊單體架構、未接 compose；大規模重跑論文數據時需改用新 pipeline 或補 compose 階段（本次未動，避免影響既有 full_result/ 數據）。live 前已備份 `~/.metagpt/config2.yaml`（.real.bak）。
+
+*最後更新：2026/06/25（Step 75 完成：pipeline + role 雙路徑 + live smoke 3/3）*
+
+---
+
+## Step 76（2026-07-02）：SEGA-style 資料前處理 —— 非文字圖層合成進背景 + underlay 前饋
+
+**動機**：使用者判斷根因在資料集——Crello 素材列表混雜背景/裝飾/LOGO/底襯，連人都難分辨（Step 27 audit：underlay 大量藏在 type 0）；Step 66 證明幾何最優仍 55/55 全敗＝輸在素材語意不是座標。SEGA（ICCV 2025，GitHub `BruceW91/SEGA`）的解法是把 Crello 重整成「half-finished poster」：非文字圖層按設計師 GT 位置合成進背景，模型只排文字。SEGA 官方釋出的 PKU-style Crello 在百度網盤難以取得，改為在本地快取上復刻同協定。
+
+**新增/修改**：
+
+| 檔案 | 變動 |
+|---|---|
+| `tools/crello_preprocessor.py`（新） | `preprocess_sample()`：kind∈{background_candidate, image, underlay} 按 GT z-order 合成 `bg_composite.png`（沿用 Step 47 透明層貼圖，負座標安全）；kind=text 留 placeable；輸出 `sega_input.json` |
+| `schema.py` | 新增 `UnderlayRegion`（bbox/dominant_color/recommended_text_color）；`BackgroundAnalysis.underlay_regions`（default 空，向後相容） |
+| `actions/compose_concept.py` | `PROMPT_TEMPLATE` 加 `{underlay_block}`；Director 拿「人話」描述（3×3 方位詞＋畫布佔比＋顏色，無 bbox），措辭為 invitation 非硬規則（Step 62 雙束縛教訓） |
+| `actions/generate_layout.py` | `PROMPT_TEMPLATE` 加 `{underlay_panels}`；CoordinateMapper 拿精確 bbox＋fill＋建議對比色（Step 60：數學+constraint 才有效） |
+| `pipeline.py` | `LayoutPipeline.run(..., underlay_regions=None)`：merge 進 resolved BackgroundAnalysis，Director/Mapper 都看得到 |
+| `layout_agent/output/step76_preprocess_sega.py`（新） | N=20（demo_ids.json）批次 driver，輸出 `sega_pre/<id>/{bg_composite.png, sega_input.json, inspect.png}` |
+
+**underlay region 判定（兩層過濾）**：(1) 尺寸——寬≥max(60px, 10%cw) 且高≥max(24px, 6%ch)，濾掉分隔線；(2) **GT 文字覆蓋**——某文字元素面積 ≥50% 落在 shape bbox 內才算真底襯。第 2 層是 N=20 人眼抽查後補的：只有尺寸過濾時 27 個 region 大半是裝飾插畫（魚群花紋、滑雪者剪影）；加覆蓋過濾後收斂到 14 region / 8 樣本，抽查確認留下的都是 GT 真的放文字的形狀（冬奧太陽圓=「FEBRUARY 8-25」底、淺色山坡=「Winter Olympics」底）。
+
+**前饋 not 回饋**：底襯座標/顏色是合成時自己寫進去的 ground truth，直接進 prompt——不走 judge 偵測回饋（該路線 Step 20b/59/65 三次負結果）。主色用量化桶投票（32 級，最大桶內實均），避免多色板平均成泥色。
+
+**N=20 前處理結果**：19 ok / 1 missing（5c61a371 快取缺 meta.json）、111 段文字、14 underlay region、0 壞資產。合成品質人眼抽查=「GT 去掉文字」，z-order 正確。
+
+**測試**：新增 `test_crello_preprocessor.py`(13)；`test_compose_concept.py` +3（underlay block 有/無、方位詞格）；`test_generator_prompt_template.py` +2（slot 存在、formatter bbox/色）；兩個 format-keys 迴歸測試補 `underlay_panels` key。**agentlayout 全套 390 passed / 12 skipped**。
+
+**協定揭露（論文必寫）**：合成層沿用設計師 GT 位置（含 underlay），候選與 GT 只差文字 placement/styling——與 SEGA 釋出的 PKU-style Crello 同協定。underlay region 判定也用了 GT 文字位置。
+
+**下一步**：A/B live（同 19 樣本，舊輸入 vs SEGA-style 輸入），先讓使用者過目 `sega_pre/*/inspect.png`。
+
+**2026-07-02 補充**：使用者核可前處理品質；另要求**之後新結果一律放 `layout_agent/output2/` 並依 step 分子資料夾**（`output/` 太滿）。已加 `.gitignore` 規則 `layout_agent/output2/`（bare `output` 規則不匹配 output2）。A/B driver = `layout_agent/output2/step76_ab_live.py`：兩臂同跑「先想再畫」pipeline（A=雜亂素材輸入、B=bg_composite+text-only+underlay 前饋，max_total_rounds=3），成品對 GT 做 **blind pairwise**（md5 決定性隨機附圖順序、prompt 不標身分——Step 51 協定），結果進 `output2/step76_ab/`。
+
+**A/B live 結果（N=19，2026-07-02）**：`output2/step76_ab/_summary.json`
+
+| | internal accepted | blind overall（vs GT） | blind design_layout |
+|---|---|---|---|
+| A 臂（雜亂素材） | 13/19 | cand 0 / gt 13 / tie 0 | cand 1 / gt 12 |
+| B 臂（SEGA-style） | 9/19 | **cand 1** / gt 8 / tie 0 | cand 1 / gt 8 |
+
+- **史上第一個 blind overall 勝**：`589b457b`（霓虹漢堡招牌）B 臂候選 design_layout＋innovation＋overall 三軸勝 GT。質性對照：A 臂把霓虹漢堡縮成角落小圖、紅框亂放（素材語意失敗的活例）；B 臂骨架完整、只差文字排法。
+- **統計誠實**：1/9 vs 0/13 在此 N 不顯著（Fisher p≈0.41），只能說方向初步支持、不能 claim 改善。
+- **B 臂 internal acceptance 較低（9 vs 13）**，全部是 3 輪耗盡非 crash/拒答。**選擇效應警告**：blind 統計只涵蓋 internal accept 的樣本——下一輪 driver 應把「未 accept 的最後最佳候選」也 render 進 blind 比較，去掉這層 conditioning。
+- 兩臂 pipeline 全程零 crash、blind judge 22/22 次 parse 成功。
+
+---
+
+## Step 76b（2026-07-02）：選擇效應修正 + B 臂 internal judge 偏嚴根因調查
+
+**選擇效應修正（程式已改、未重跑）**：
+- `pipeline.py`：`PipelineError` 新增 `best_candidate`/`spec`/`judgement` 屬性；max-rounds 耗盡時掛上最後一輪 judge 最佳候選（raise 行為不變、既有 caller 相容）。
+- `step76_ab_live.py`：耗盡 run 改為 render＋blind 判決（狀態 `exhausted_judged`、`internal_accepted: false`）；`_summary.json` 同時輸出全體與 `*_accepted_only` 兩層統計。
+- 測試：`test_pipeline_compose_routing.py` +2（耗盡帶候選、underlay_regions merge）；全套 392 passed / 12 skipped。
+
+**B 臂 internal judge 偏嚴根因（log 考古 + 離線驗證，`output2/step76_ab/internal_judge_analysis.json`）**：
+- 輪級 reject 率：A 54%（28/52）vs B 68%（39/57）；B 的 reject 最差軸 69% 是 typography_class（composition_class 幾乎消失 2 vs 5——符合預期，構圖是 GT 的）。
+- **QC degradation 幾乎全滅**：B 96% 輪次（55/57）「0 候選過 QC、降級最少違規者」，A 81%。
+- **誤殺假設已測試並推翻**：把設計師 GT 純文字 bbox 丟進 Step 57 coverage/dead-band 數學 → **16/19 PASS**（coverage 平均 ≈0.20、range 0.099–0.398，門檻 0.10）。規則在 SEGA 模式下校準仍正確。
+- **結論**：B 臂偏嚴大體是誠實訊號——所有非文字內容都是 GT 給的之後，QC 與 internal judge 的火力全部集中在系統唯一要做的事（文字 placement/尺寸/樣式），而生成的文字版面比設計師的明顯膽怯（小、擠、覆蓋率低）。這是舊「尺寸膽怯」（Step 60 照片軸已修）在文字軸的再現。
+- **可行方向（未實作）**：(a) CoordinateMapper prompt 加文字面積 prior（設計師 GT 純文字 union coverage 12–40%，用 Step 60 證實有效的「數學+constraint」形式給）；(b) driver 存候選 bbox JSON 供 QC 法醫分析；(c) QC 降級時 log 違規類型分佈。
+
+*最後更新：2026/07/02（Step 76b：選擇效應已修（未重跑）＋B 臂偏嚴根因=文字尺寸膽怯、QC 校準無誤）*
+
+---
+
+## Step 76c（2026-07-02）：GT 校準文字面積 prior + A/B Run 2
+
+**校準（N=1,902 全快取，離線）**：設計師純文字 union coverage p25=0.103 / p50=0.152 / p75=0.213 / p90=0.289 / mean=0.170（同 Step 57 QC 的 `_union_coverage_ratio` 數學）。校準指令記錄：對每個 `crello_*/meta.json` 取 kind=text 元素 bbox 算 union coverage 取百分位。
+
+**實作（`generate_layout.py`）**：
+- 常數 `TEXT_AREA_GT`（四百分位）＋`TEXT_AREA_TARGET=(0.12, 0.25)`——GT p25–p75 略上移，因為要矯正的是向下偏差。
+- `PROMPT_TEMPLATE` 新 slot `{text_area_prior}`（Typography 區後、feedback 前——Step 60 驗證的尾端位置）；`_format_text_area_prior(spec)`：ATTENTION＋GT 百分位＋**本畫布換算 px² 區間**＋可執行指引（放大字級達標、標題佔最大份、勿拉框框住小字）＋反面警告（union<10% 會被 QC 與 design_layout 懲罰）。無文字元素回 "None"。
+- 對照：Step 60 的照片 prior（`_format_area_hints`）在「先想再畫」refactor 後是死碼（lean template 無 slot）；文字 prior 是新 slot 正式接線。
+- 測試：`test_generator_area_prior.py` +3（常數 pin、畫布數學、無文字 None）；兩個 format-keys 測試補 key。**全套 395 passed / 12 skipped**。
+
+**A/B Run 2 結果（N=19，selection-free：兩臂 19/19 全有 blind 判決）**：`output2/step76_ab_run2/_summary.json`
+
+| | internal accepted | blind overall（全體） | blind design_layout（全體） |
+|---|---|---|---|
+| A 臂（雜亂素材＋prior） | 10/19（9 exhausted 也判） | cand 0 / gt 19 | cand 0 / gt 19 |
+| B 臂（SEGA-style＋prior） | 11/19（8 exhausted 也判） | **cand 2** / gt 17 | **cand 4** / gt 15 |
+
+- **B 臂 blind design_layout 4–0 領先 A 臂**（one-sided Fisher p≈0.053，逼近顯著）；overall 2–0（p≈0.24 不顯著）。
+- **589b457b（霓虹漢堡）B 臂勝利跨 run 重現**（run1+run2 兩次獨立生成都 overall+design 勝 GT）；run2 新增 59142a2a（演唱會 banner）overall+design 勝——標題粗大、左欄資訊柱、大字 CTA，文字 prior 效果肉眼可見。
+- 文字 prior 對 internal acceptance 的影響：B 9→11 升、A 13→10 降（A 也吃 prior；降幅在 run-to-run 變異範圍內，不宣稱因果）。
+- 所有 B 勝都出自 internal accepted 的 run（exhausted 全輸）——internal 判準與 blind 判決同向，門檻本身沒有壓錯人。
+- **仍待辦**：driver 未存候選 bbox JSON（文字 coverage 只能從 render 目測）；N=19 統計力不足，擴 N=100 可讓 4–0 級別的差距變成可發表結論。
+
+*最後更新：2026/07/02（Step 76c 完成：文字 prior + Run 2 = B 臂 design_layout 4–0 領先、p≈0.053）*
+
+---
+
+## Step 77（2026-07-02）：可驗證視覺回饋 loop + Director 前饋指派
+
+**動機**：使用者質疑「loop 不可能一點用都沒有——只有 judge 看得到圖」。驗屍歷史負結果（20b/59/65）後同意重測：三次失敗都死在**執行段**（constraint 飽和的舊 Generator＋素材混亂），從未證明 judge 的**感知段**沒訊號；Run 2 還有反向證據（internal accept 與 blind 同向）。重測設計的核心＝**compliance rate**：每條 feedback 附機器可驗的幾何謂詞，失敗可定位到感知 vs 執行。
+
+**77a — schema + 驗證器**：
+- `VisualObservationKind` 封閉目錄（text_off_panel / text_illegible / text_too_small / text_too_large / text_overlap / text_tilted）；`VisualObservation`（target_id + 各 kind 的 REQUIRED 目標欄位）；`AestheticFeedback.visual_observations`（default 空）。
+- `CompositionConcept.text_assignments: Dict[str,str]`（前饋指派：text id → "panel N" 或 3×3 區域詞）。
+- `tools/feedback_verifier.py`：`check_observation`/`compliance_report`；不可驗項（缺元素/缺目標欄）計 UNVERIFIABLE、不進 rate 但回報（抓混水 judge）。門檻：inside≥0.5、overlap≤0.05（較小者面積比）、tilt≤2°。
+
+**77b — 前饋指派**：Director prompt 輸出 spec 加 `text_assignments` key＋「每個 text 都要指派」規則；panel 顯式編號（"panel 1: …Reference it as 'panel 1'"）。Mapper `_format_concept_block(concept, bg)`：assignment 的 "panel N" 解析成該 panel 精確 bbox＋fill＋建議色，標 BINDING。
+
+**77c — judge 觀察 + compliance（feature flag）**：
+- `feature_flags.visual_loop_enabled()`（env `AGENTLAYOUT_VISUAL_LOOP`，default OFF——歷史三負結果，重測需顯式開）。
+- judge `_visual_observations_block(bg)`：flag on 時 prompt 尾端附封閉目錄＋panel bbox 清單＋「寧缺勿濫、空列表合法」防幻覺規則；flag off 時 prompt byte-identical。
+- pipeline：上一輪餵入的 observations 對本輪 judge best candidate 跑 `compliance_report`，記進 `TraceEntry.compliance`；`PipelineError` 加 `trace` 屬性（耗盡 run 的 compliance 不丟）。
+
+**測試**：`test_feedback_verifier.py`(13)＋compose/generator/pipeline 各加 1–2；**全套 411 passed / 12 skipped**。
+
+**77d — ablation（進行中）**：`output2/step77_loop_ablation.py`——B 臂輸入、同 19 樣本每個跑 loop-off/on 各一次（blind 附圖順序 per-sample 固定、order-matched），彙總 blind 分佈＋compliance rate。
+
+**77d 結果（N=19，B 臂，loop-off vs loop-on，order-matched blind）**：`output2/step77_loop_ablation/_summary.json`
+
+| | internal accepted | blind overall | blind design_layout | compliance |
+|---|---|---|---|---|
+| loop-off | 13/19 | **cand 2** / gt 17 | cand 3 / gt 16 | — |
+| loop-on | **2/19** | cand 1 / gt 18 | cand 1 / gt 18 | **88.9%**（40/45） |
+
+**三段驗屍結論**：
+1. **執行段已復活**：31 個觀察輪、45 條可驗證觀察、40 條被 Mapper 照做（88.9%）；unverifiable 只 8%（4/49）。Step 59 的「零回應」死因在新架構下確定消失。
+2. **但 loop 整體 net negative**，且根因**精確定位在判決污染**：round-0（無任何 feedback、兩組候選同分佈）judge 判決 off=7 accept/12 reject vs **on=1 accept/18 reject**——光是 prompt 裡多了「找缺陷」指令塊，judge 就變過度嚴格（observer effect），17/19 耗盡→blind 也降（overall 2→1）。
+3. 觀察本身品質不差（92% 可驗證、多數被照做後下一輪仍 reject）——問題不是「judge 看不出」也不是「gen 不照做」，是**同一個 prompt 同時要求判決＋找缺陷會偏移判決**。
+- off 臂再現性：589b457b **第三次獨立勝 GT**（run1/run2/77d-off）；590afa8c 新勝。on 臂 5ce3cea2 勝（compliance 0.5 的樣本）。
+- **明確的下一步（Step 78 候選）**：把觀察與判決**解耦**——兩段式 judge：第一呼叫照舊判決（prompt 不動），reject 後用獨立小呼叫只發觀察。成本 +1 小呼叫/reject 輪，預期消除判決污染、保留 88.9% 的執行力。
+
+*最後更新：2026/07/02（Step 77 完成：loop 執行段復活（compliance 88.9%）但判決污染 net negative；解耦=下一步）*
+
+---
+
+## Step 78（2026-07-02）：解耦兩段式 judge —— 修判決污染
+
+**設計（`judge_aesthetic.py`）**：
+- 主判決 prompt **恢復 Step 77 前的純淨形狀**（拿掉附加目錄塊）——判決永遠不受「找缺陷」指令影響。
+- 新增 reject-only 第二呼叫：`_observe()`（判決解析成功且 REJECT 且 flag on 才觸發）→ `_build_observe_prompt(best_candidate, spec, bg)`：檢查員角色（明言「你的工作不是評分」）＋候選 layout JSON（精確 bbox 可引用）＋panel 清單＋同一封閉目錄；只附 best candidate 單張 render。
+- `_parse_observations`：容錯（fence 剝除、dict wrapper、逐項丟棄非法 entry、上限 4 條）；observer 任何失敗都降級為空列表（`_OBSERVE_MAX_RETRIES=2`），絕不影響主判決。
+- flag 語意不變（`AGENTLAYOUT_VISUAL_LOOP`，default OFF）；pipeline 的 compliance 量測不用動（observations 還是掛在 feedback 上）。
+- driver 加 `--out` 參數（`--out step78_decoupled`），77d 結果原地保留。
+
+**測試**：`test_feedback_verifier.py` 改寫 2＋新增 1（observe prompt 內容／主 prompt 純淨性（flag on 也無目錄字串）／parse 容錯）。**全套 412 passed / 12 skipped**。
+
+**Ablation（進行中）**：同 19 樣本 off/on，輸出 `output2/step78_decoupled/`。判讀基準：(a) on 的 round-0 accept 應回到 off 水準（≈7/19）＝污染已除；(b) compliance 維持高檔＝執行力保留；(c) blind on vs off＝loop 的真實價值。
+
+**Step 78 ablation 結果（N=19，off/on，`output2/step78_decoupled/`）**——對照事先寫死的三基準：
+
+| 基準 | 結果 |
+|---|---|
+| (a) 判決污染解除？ | **✓** round-0 accept on=6/19 vs off=8/19（77d 污染版是 1/19）；總 acceptance on 12 vs off 11，無崩盤 |
+| (b) 執行力保留？ | **部分**：compliance 50%（22/44），低於 77d 的 88.9%；本輪觀察組成偏 text_illegible/色彩類（mapper 對色彩指令服從度低於 bbox 移動類），per-kind 分解未存屬 open detail |
+| (c) blind 增益？ | **無**：on overall 0 勝/design 1 勝 vs off overall 1 勝/design 1 勝——loop 中性 |
+
+**Step 77–78 總結論（loop 探索線可結案）**：視覺回饋 loop 的三段全部逐一驗證過——感知有訊號（92% 可驗證觀察）、執行可通（77d 88.9%）、判決可保持乾淨（78 解耦）——但**三條件齊備下 blind 仍無可量測增益**。77d 的傷害是判決污染（已修）；修完後 loop 無害但也無益。歷史弧線完整：20b/59/65（執行段死）→77d（污染害）→78（中性）。**建議 flag 維持 default OFF**；系統增益來源確認為前饋（Step 76 前處理＋76c prior＋77b 指派），不是回饋。
+- off 臂：589b457b **第四次獨立勝 GT**（run1/run2/77d-off/78-off）——論文 case study 首選樣本。
+
+*最後更新：2026/07/02（Step 78 完成：解耦修污染 ✓、loop 中性、回饋線結案；下一步=贏家配置 N=100 放大）*
+
+---
+
+## Step 79（2026-07-02）：frame vs solid 板型判斷 —— 修「文字沒在底襯上」
+
+**根因（使用者從成品發現）**：`590afa87` 等樣本的文字幾何上有進 panel bbox（845 條指派全部成功解析、Mapper 有照做），但視覺上「沒在底襯上」——因為很多 Crello 底襯是**透明描邊框**不是實心板。舊 `_dominant_color` 只取樣不透明像素→拿到白色邊框→報「白板」→建議深字→深字壓深色森林（GT 用白字）。judge 全程看得沒錯（一直發 text_illegible+#F4F4F4），錯的是前饋資料。
+
+**修法**：
+- `UnderlayRegion.panel_type`（"solid"|"frame"，default solid 向後相容）。
+- 前處理：`_opaque_coverage` < 0.35 → frame；**顏色解析延後到全部合成完成**（frame 的 backdrop 取決於底下所有圖層），frame 取樣合成畫布 bbox 內像素、solid 用板自身主色。
+- 兩個 prompt 依板型措辭：「a #XXX panel」vs「a transparent outlined frame (backdrop ~#XXX)」。
+- 語意升級：全透明 shape 從「不發 region」改為「degenerate frame」（GT 文字確實在那、backdrop 提示仍有效），對應測試改寫。
+
+**驗證**：415 passed / 12 skipped；前處理重跑 19 ok、**15 region＝7 solid＋8 frame（過半是 frame！）**；`590afa87` 從（solid #FFFFFF→#111111 深字）翻成（**frame #28312A→#F4F4F4 白字**），與 GT 一致。`5da071b5` 也翻向（frame 白 backdrop→深字）。sega_input.json 已全部更新。
+
+**注意**：Run2／77d／78 的結果都是舊（錯誤）前饋色下跑的——frame 樣本的 text_illegible 問題可解釋其部分 blind 失利；下一輪 live（建議直接上 N=100）將是第一次用正確板型資料跑。
+
+**Step 79 smoke（2026-07-03，N=9 panel 樣本、B 臂 loop-off、`output2/step79_smoke/`）**：
+- 9/9 跑完（6 accepted / 3 exhausted-judged）；**首次存 candidate.json**（76b 法醫缺口補上）。
+- **文字上板量化：37/49 段（76%）≥50% 落在 panel bbox 內**；6/9 樣本全數上板；低的兩個是 panel 本身太小裝不下全部文字（合理）。
+- `590afa87` 人眼對照：文字全白、可讀、進框——Step 79 修正在 live 生效（前一輪是深字壓深森林）。殘餘差距：標題與框內文字輕微碰撞、字級仍小於 GT、上方留白未利用。
+- `589b457b` **第五次連勝 GT**（overall+design）。blind 合計 cand 1 / gt 8。
+
+*最後更新：2026/07/03（Step 79 smoke：修正 live 生效、文字上板 76%、589b457b 五連勝）*
+
+---
+
+## Step 80（2026-07-03）：text-as-image —— 文字用資料集的設計師渲染圖
+
+**動機（使用者提議）**：Crello 每個元素（含 type 1 文字）都有渲染 RGBA 圖；改用圖擺放一次解決字型 fidelity（Step 54：render channel 佔 blind gap 61–68%）、字太小（天然尺寸=設計師尺寸）、且更貼齊 PKU/AesthetiQ「元素以圖給定」協定。
+
+**實作**：
+- 快取補圖：`output2/step80_snapshot_text_assets.py` 串流 HF test split（掃 1,711 找齊 19），**111 張文字圖**縮至天然尺寸存 `asset_NN_text.png`、meta 補 asset_ref、0 錯配、classifier 欄位不動。
+- `AssetInput` 放寬為「至少一個」（文字圖同時帶 asset_ref+content）；Analyst prompt 加 `_text.png` 慣例（visual_type=image、semantic 依內容、**勿重排字**）；Mapper 元素清單註記天然尺寸＋0.8–1.2× 縮放鎖比例＋省略字型欄位；preprocessor 輸出 `text_assets`。測試 419 passed。
+
+**Smoke（N=9 panel 樣本，`output2/step80_smoke/`，與 step79 同配置僅輸入模式不同）**：
+| 軸 | step79（自渲染） | step80（文字圖） |
+|---|---|---|
+| graphics_images | gt 為主 | **9/9 tie（render parity 達成）** |
+| innovation | — | **cand 7/9（史上首個候選多數軸）** |
+| content_relevance | — | 9/9 tie |
+| typography_color | 0/9 | **仍 0/9** |
+| overall / design | cand 1 | cand 0 |
+
+**判讀**：機制全通（`590afa87` 對照圖字體與 GT 完全一致、大標 782×97 天然尺寸上版）。typography 軸在字體相同下仍全輸＝blind judge 的該軸實際評的是**文字編排**（層級順序、對齊、標題位置）而非字體本身——殘餘差距已純化為 placement 品質（例：標題被放進框底而 GT 放頂部、框內留兩行空、ANNUAL EVENT 孤立）。589b457b 本輪未勝（前五連勝在自渲染模式；小 N 波動）。
+
+**下一步選項**：(a) 編排層級 prior（標題在上、資訊在框、閱讀順序）；(b) 接受現狀直接 N=100 比較三模式。
+
+*最後更新：2026/07/03（Step 80 完成：text-as-image 機制全通、graphics 平手、innovation 首度翻盤、殘餘=編排）*
+
+---
+
+## Step 81（2026-07-03）：GT 校準文字層級 prior
+
+**校準（N=1,746 個 ≥2 文字的設計師版面，最大面積文字=標題代理）**：標題 center-y p25=0.349／p50=0.475／p75=0.570（**中上帶、非貼頂**——推翻直覺）；標題在其他文字上方 66.2%；資訊文字壓底襯 52.4%。常數 `TEXT_HIERARCHY_GT`（compose_concept.py）。
+
+**實作**：Director RULES 加軟性層級引導（中上帶／別埋標題／資訊行偏好上板／指派按閱讀順序——usually/prefer 措辭避 Step 62 雙束縛）；Mapper 規則 7 補精確數字。測試 421 passed（+2）。修 driver 漏掉的 `import argparse`（gate 重試遺漏——首跑靜默即崩，教訓：被 gate 擋下的批次編輯要逐筆確認重試）。
+
+**Smoke（N=9，`output2/step81_smoke/`，與 step80 唯一差異=本 prior）**：
+- **幾何確實被拉動**：最大文字 cy 平均 0.585→**0.393**、above-rate 4/9→**6/9**（正好=GT 的 66%）；step80 的「標題埋底」（cy 0.93/0.93/0.76）消失。
+- internal acceptance 6→8。
+- **blind 各軸不動**：typography 仍 0/9、overall 0/9；graphics tie 8/9、innovation cand 7/9 維持。
+- 殘餘問題：部分標題**過頂**（cy 0.06–0.25 高於 GT p25），落在 GT 帶內的只有 2–3 個；以及更細的對齊/群組凝聚問題。
+- **判讀**：prompt-prior 對幾何有效、對 blind 判決在 N=9 測不出增益——與 Step 49「prompt-only 上限」結論同向。堆疊至今的機制（前處理+板型+文字圖+雙 prior+指派）該進 N=100 拿統計結論了，繼續 N=9 微調 prompt 是在噪音裡讀訊號。
+
+*最後更新：2026/07/03（Step 81 完成：層級 prior 幾何有效（cy 0.585→0.393、above 6/9）、blind 持平、建議升 N=100）*
+
+---
+
+## Step 82（2026-07-03）：單樣本逐輪 render trace
+
+**機制**：`LayoutPipeline.run` 加 `round_callback(round_idx, kept, judgement, spec)`（每輪 judge 後回呼、異常吞掉不影響主流程，+1 測試）；driver `output2/step82_trace.py` 存每輪全部候選 render（標 BEST）＋判決 JSON＋`progress.png` 總表（各輪由左至右＋GT）。
+
+**590afa87 trace 診斷（text-as-image＋層級 prior 配置）**：
+1. **概念多樣性崩塌（主發現）**：兩輪 6 張候選幾乎同一版面（標題頂、ANNUAL EVENT 中段、資訊進框）——log 裡概念名還叫 Diagonal Flow（title 應在 top-right），成品卻趨同。prior 堆疊把「三個空間不同概念」均質化成單一安全模板＝新形態 survival mode；judge 的「三選一」實際是一選一。
+2. **與 GT 殘餘差距已縮小且具體**：(a) **lockup 斷裂**——GT 的 ANNUAL EVENT 緊貼大標成組、我們的飄到中段；(b) 手寫體行與框線輕微重疊；(c) 框內資訊擠頂部（GT 三行均分）；(d) 部分標題貼畫布頂邊。
+3. **Refinement 輪≈化妝**：round1 對 round0 僅間距微調，best 分數 39→38 無改善。
+4. **Internal judge 全 34–39 高檔、嫌棄語模糊**（"minor adjustments"）——看不出 lockup 級差異，故 internal accept 而 blind 輸。
+
+**候選修法（未實作，均屬 prompt 層、受 Step 49 上限風險）**：(a) 概念多樣性強制（各概念 title 位置不同象限／允許一個概念打破 prior）；(b) title+subtitle lockup 規則（GT 可校準 subtitle-title 間距分佈）。
+
+*最後更新：2026/07/03（Step 82 完成：逐輪 trace 揭露概念趨同＋lockup 斷裂＝殘餘主因）*
+
+---
+
+## Step 83（2026-07-03）：中性幾何量測 + 評分錨點 + 單候選深審
+
+**動機**：使用者指出 internal judge 敷衍（Step 82：六張全 34–39、「minor adjustments」空話）且「三選一是假選擇、不如一張一張好好挑錯」。根因＝LLM 無錨點絕對評分的中央趨勢＋一呼叫三圖注意力稀釋＋縮圖看不見 20–200px 幾何。
+
+**實作**：
+- `tools/layout_metrics.py`：中性量測（置中比例／對齊群數／lockup 間距／重疊對／panel 利用率）＋GT 校準（N=1,746：lockup p50=0.014、左緣群 p50=3、**全置中版面佔 22.3%**——使用者「置中也是合法風格」的顧慮直接寫進措辭：只陳述不評判）。
+- judge：`_SCORING_ANCHORS`（9-10 設計師級／7-8 平庸／5-6 業餘；同分禁令；weakness 必須引元素 id＋量測數字，空話無效）＋`_geometry_facts_block` 每候選附量測；78 檢查員 prompt 同樣附量測。
+- `PipelineConfig.n_concepts`（=1 即單候選深審模式）；trace driver 加 `--n-concepts/--rounds/--out`。測試 428 passed（+7）。
+
+**590afa87 trace（n=1、rounds=5，`output2/step83_trace/`）——三個判準全中**：
+1. **分數散開且變嚴**：31/32/31/31 連拒四輪→R4 39 accept（Step 82 同樣的圖 round 0 就 accept、全 34-39）。
+2. **嫌棄變具體**：點名 text_1/text_2 過近、「Annual Event 的框過度搶戲」、層級不清——元素級、可執行。
+3. **逐輪真的變好、閉環首次成立**：R0–R3 的 lockup 斷裂（ANNUAL EVENT 孤立中段）在 R4 修好——**title+ANNUAL EVENT 鎖組結構與 GT 一致**、資訊行進框、手寫行歸位。R4 是本專案至今結構上最接近 GT 的單樣本成品。
+
+**注意**：N=1；成本 5 輪×(compose+mapper+judge)≈舊 3 輪×3 mapper 持平。判決語仍偶有幻覺（R1 引用不存在的 hard constraint）。**下一步＝以此為新贏家配置跑 9 樣本 smoke，再上 N=100。**
+
+*最後更新：2026/07/03（Step 83 完成：judge 敷衍修正＋單候選深審閉環首次成立、R4 結構≈GT）*
+
+---
+
+## Step 84（2026-07-03）：設計拒絕迴路閉合（批評→Director＋被拒版面→Mapper）
+
+**使用者連抓兩洞**：(1)「gen 根本沒理」——證實：design-reject 路由到 Director 時批評被整個丟棄（`ComposeConcept.run` 無 feedback 參數＋`coord_feedback` 被清空），Step 83 的 R4 改善純屬 temperature 抽中；(2)「前一輪 layout 要傳給 gen 對照」——Mapper 冷啟動無基準。
+
+**實作**：`ComposeConcept.run(feedback, prev_concepts)`＋rejection block（前概念＋逐條批評＋「針對每條修訂、禁止同排法換名重交」）；Mapper `revision=True` 模式（「以下是被拒座標，批評指向處必須明顯不同」vs 原 micro-adjust「保留構圖」）；pipeline Director 路由保留 feedback/prev layout/標 revision。修一個埋伏 bug：re-compose 塊的無條件清空會抹掉剛存的對照（測試抓到）。429 passed（+1 修 import 疏漏）。
+
+**驗證 trace（`output2/step84_trace/`，同 590afa87）——誠實結論：管線通了、效果未兌現**：
+- 逐輪有小幅移動（R2→R3 框內文字重排）但整體仍趨同；step83 R4 的 lockup 修復**未重現**（該次是隨機、非系統性）。
+- **新根因浮現：judge 批評逐輪自相矛盾**——R0「text_1/text_2 相距太遠」→R1「太擠」→R2「沒置中、lockup 太遠」→R3「太擠」。目標振盪下 gen 完美服從也無法收斂。
+- R4 accept 39 vs R3 reject 31，但兩張近乎相同＝**判決噪音 ~8 分**；accept 更像預算耗盡漂移而非真收斂。
+- **瓶頸移動**：feedback 管線（已修）→ judge 逐輪一致性。候選修法（Step 85）＝**issue ledger**：判決產生的 issue 進持久清單，逐輪由 feedback_verifier 幾何驗證「修好才銷帳」，judge 只能新增不能矛盾翻案——用機器記憶穩定振盪的 LLM 批評。
+
+*最後更新：2026/07/03（Step 84 完成：迴路閉合但 judge 批評振盪＝新瓶頸；Step 85 候選=issue ledger）*
+
+---
+
+## Step 85（2026-07-03）：優先序問卷 + issue ledger ——「準則給順序、judge 看圖給目標、機器管記憶」
+
+**設計（使用者主導）**：使用者先提「judge 要有一套準則、先標題再上板、給具體範圍（估的也行）」，再修正「範圍要 judge 看圖決定，每張圖擺法不同」。落地三層分工：
+- **問卷**：檢查員 prompt 改優先序逐題審（1 標題位置→2 鎖組→3 上板→4 重疊→5 面積→6 可讀性），每題附 GT 參考帶但明講「這張圖可能需要不同答案、用眼睛判斷」，failing 給 target_bbox（panel 精確值／其他 judge 目測）。
+- **帳本**：`(kind, target_id)` 開帳後 target **原文持久**（judge 不准翻案）、`feedback_verifier` 幾何確認才銷帳、Mapper 每輪拿未銷帳前 2 條（`_LEDGER_PRIORITY`／`LEDGER_FEED_K=2`）。
+- schema 加 `TITLE_MISPLACED`／`LOCKUP_BROKEN`（inside-bbox 謂詞）；`TraceEntry.ledger_open`。測試 431 passed（帳本持久/去重/銷帳用「每輪估不同框」振盪場景釘死）。
+
+**trace 驗證（`output2/step85_trace/`，同 590afa87、loop ON）——指哪打哪首次實現**：
+- R0 reject：judge 看圖開帳 `title_misplaced text_6 → [20,276,802,373]`（cy≈0.41，霧區下、框上——**圖特定判斷**，非 GT 帶照抄）＋1 條次要 issue。
+- **R1：標題被 Mapper 移進指定框內**（compliance 1/2 銷帳），且 ANNUAL EVENT 隨標題鎖組——R0 的兩大殘病一步修掉；連續輪次的 target_bbox 一字不差＝**振盪確認消失**。
+- R1/R2 accept 39 收斂。殘餘：標題移動後與框內文字產生新重疊（帳本剩 1 條未銷、compliance 0/1），但連續 accept 提前終局。
+- **已知張力**：accept 門檻與未清帳本並存——收斂時還有 1 條 open issue。候選調整：高優先 issue 未銷帳時禁 accept（或 accept-refinement 輪必須先清帳）。
+
+*最後更新：2026/07/03（Step 85 完成：問卷+帳本上線、指哪打哪驗證成功；殘餘=accept 與未清帳張力）*
+
+---
+
+## Step 86（2026-07-03）：畫布資源進 judge——panel＋可放置區＋元素天然尺寸
+
+**盤點（使用者提問觸發）**：檢查員有 panel bbox 但**從未拿過 safe zones／低顯著區**；主判決呼叫連 panel 都看不到。修：共用 `_canvas_resources_block(bg)`（panel 含 frame/solid 語意＋建議色、CV calm areas 附信心值＋「估 target_bbox 的錨點」措辭、低顯著矩形前 5）進**兩個** judge 呼叫；檢查員 layout 行加 `natural size WxH`（估框知道字多大）。432 passed（+1）。
+
+**trace（`output2/step86_trace/`）**：R4 judge 選擇把標題鎖組**放進白框**（與 step85 的霧區帶不同——兩者都是合理的圖特定判斷，地形資料在用）、Mapper 照做（compliance 1/2）。**殘餘兩病更清晰**：(a) **accept 邊界判決噪音**——同家族版面 accept/reject/accept/reject/accept 交替，靠 consecutive-accept=2 才沒提前終局；(b) R4 被接受但有兩段資訊文字被擠到畫布頂緣（視覺瑕疵 judge 未攔）。
+
+**結論**：機制層（問卷/帳本/地形/服從）全部運作；剩餘問題是**判決層的邊界穩定性**——N=1 迭代已到報酬遞減，該進 9 樣本 smoke 看分佈行為（對照 step79/80/81），再 N=100。
+
+*最後更新：2026/07/03（Step 86 完成：地形情報進 judge；N=1 打磨收束、待 9 樣本 smoke）*
+
+---
+
+## Step 87（2026-07-03）：逐元素評語表（使用者設計）
+
+**實作**：檢查員輸出改「每元素一條 {element_id, verdict: ok|kind, target_bbox/color/area, comment}、一個不准跳」；「ok 合法且常見、勿硬找毛病」護欄；排除式目標（move away from X）引導改寫為「移入具體範圍」；解析器支援新舊雙格式＋覆蓋率警告（漏評誰進 log）。433 passed。
+
+**trace（`output2/step87_trace/`）**：
+- **格式面全數運作**：6/6 元素全覆蓋、0 漏評警告；出現「全 ok」輪次＝護欄有效擋住發明缺陷。
+- **暴露新衝突（本輪主發現）：概念 BINDING vs 帳本目標的優先權**——帳本連三輪要求 title 移入 [20,276,802,373]（compliance 0/1×3），但 Director 修訂概念持續把 title 指派在頂部、Mapper 遵從 BINDING 指派而非帳本觀察 → 五輪 title 全部釘在頂緣。同時後期檢查員對 title 給「ok」（它改變主意了）與未銷帳項矛盾——no-relitigation 雙面刃。
+- **候選修法（Step 88）**：優先權規則「開帳項覆蓋概念指派」——Mapper 的指派行遇帳本目標改註 LEDGER OVERRIDE；Director rejection block 要求指派與開帳目標一致。
+
+*最後更新：2026/07/03（Step 87 完成：逐元素覆蓋成功；新衝突=BINDING vs 帳本優先權）*
+
+---
+
+## Step 88 / 88b（2026-07-03）：帳本優先權 + 回歸複檢
+
+**88（優先權）**：Mapper 概念區塊——帳本有 bbox 目標的元素，指派行改寫為 `LEDGER OVERRIDE (kind): place INSIDE bbox [...] SUPERSEDES the concept's placement`（取代非並列）、header 標「OVERRIDE 行凌駕一切」；Director rejection block 加 `LEDGER CONSTRAINTS`（修訂概念的指派必須與鎖定目標一致）。**trace 驗證：死鎖破**——87 場景 0/1×3、88 場景 R1 即 compliance 1/1、title 進帶、accept 39。
+
+**88b（trace 暴露兩問題的修正）**：
+1. **銷帳≠終身免檢**：88 trace R2–R4 title 漂回頂部、已銷帳項拒絕重開＝回歸無人追究（幸而最終回傳 R1 的 accept 候選）。修：`ledger_retired` 改存原始觀察，每輪對已銷帳項幾何複檢，**回歸即以原目標重開**——機器雙向把關。
+2. **可見性順序**：`round_callback` 原在帳本處理前觸發→dump 的是檢查員原始輸出。移到處理後＝dump 真實餵入視圖（use 上一輪使用者質疑的 JSON 從此如實）。
+- 順帶把 best_now 解析提前共用、Analyst 預算路由與帳本的互動由測試釘住（trace ledger_open 計數 1→0→1）。**435 passed**。
+
+*最後更新：2026/07/03（Step 88/88b 完成：優先權鏈閉合＋回歸複檢；機制線收束、待 trace 末驗＋smoke）*
+
+---
+
+## Step 89（2026-07-03）：KEEP 約束 + N=100 雙臂正式實驗
+
+**89a KEEP 約束**：已銷帳目標以「不准拆」隨 feedback 進 Mapper（`AestheticFeedback.keep_constraints`），堵 88b 的拋光拆工循環。436 passed。
+
+**N=100 實驗設計**：eval100_ids（demo19+81 確定性補）、文字圖 snapshot 81 新樣本（309 張、0 錯配）、前處理 100/100（116 region/69 樣本）。兩臂同 text-as-image 輸入：**A=基線**（3 概念、rounds≤3、loop off）vs **B=深審棧**（單候選、rounds≤5、loop on、83–89 全家桶）。order-matched blind、選擇效應免疫、斷點續跑、每輪落盤（judge 分數＋best 候選 bbox）。100/100 完成（B 臂 1 error/1 crash＝judge 解析噪音）。
+
+**結果一：blind vs GT（`step89_n100/_summary.json`）**
+| | internal acc | blind overall | design | typography | 配對 overall |
+|---|---|---|---|---|---|
+| A 基線 | 24/100 | **cand 12／tie 7**／gt 81 | 12/7/81 | 17/23/60 | A較好 13 |
+| B 深審 | 19/100 | cand 9／tie 5／gt 84 | 11/2/85 | 10/14/74 | B較好 8（same 77，n.s.） |
+
+**結果二：逐輪進步（使用者要求）**——兩臂 R1 均 +0.45 judge 分；A 之後平台（R2 +0.14）；**B 之後轉負**（R2 −0.19、R3 −0.03、R4 −0.12），帳本未清數不降反升（1.51→1.75）＝後期輪次發現問題快於修復。
+
+**結果三：SEGA 幾何指標（`metrics.json`，同 step20/22 實作）**
+| | Ali↓ | Ove↓ | Rea↓ | Occ↓ | text_on_panel↑ |
+|---|---|---|---|---|---|
+| GT | 0.0042 | 0.0038 | 0.0229 | 0.2937 | 0.867 |
+| A | 0.0099 | 0.0153 | 0.0412 | 0.3155 | 0.761 |
+| B | 0.0435 | 0.0124 | 0.0343 | **0.2733（勝 GT）** | 0.817 |
+
+**結果四：Ali 逐輪曲線（因果閉合）**——B 臂 R0 0.035→**R1 0.011（修好、追平 A）**→R3 0.050／R4 0.048（**後期輪次毀掉對齊**：帳本單元素搬移拆散對齊群）。B 的內容感知較好（Rea/Occ/panel 全勝 A、Occ 勝 GT）但對齊被後期迭代破壞＝blind 失利主因。compliance 87.4%＝執行面無辜。
+
+**總結論（資料驅動的設計規則）**：迭代修復的價值集中在**第 1 輪**（+0.45 分、Ali 0.035→0.011）；第 3 輪起淨害。最優配置＝**混合**：best-of-3 選擇（R0 +1.6 分優勢）＋一輪深審修復＋停（rounds=2）。**Arm A 的 blind 12 勝＋7 tie／100 vs 設計師 GT＝本專案規模化後最強數字**。Und 軸依協定以 text_on_panel 替代（正文需註明）。
+
+*最後更新：2026/07/03（Step 89 完成：N=100 全指標交付；設計規則=選擇+單輪修復；A 臂 12 勝 7 tie vs GT）*
+
+---
+
+## Step 90（2026-07-08）：語意分組指標 SGC / TLC / PCA（new_experiment.md 規格）
+
+**動機**：論文核心主張「Layout Tree 的語意分組會反映在版面上」，六個幾何指標與 COLE 都測不到；新增三個純確定性指標直接量化「同組元素是否真的靠在一起」。
+
+**實作**（先寫測試再寫實作，全程零 LLM）：
+- `metagpt/ext/agentlayout/tools/semantic_group_metrics.py`：共用距離 = 外框 L1 間隙 `d = max(0,gap_x)+max(0,gap_y)`（重疊/相貼 = 0），bbox 先除以 canvas 正規化；分組 = root 每個直接子節點連同整棵子樹；n×n 距離矩陣算一次三指標共用。
+  - **SGC** = D_inter/(D_intra+D_inter+1e-6)，D_intra 取 group-level 平均（防大 group 主導）、D_inter 取 pair-level 平均。
+  - **TLC** = 三元組 (i,j,l)（i,j 同組、l 異組）中 d(i,j)<d(i,l) 的比例，平手記 0.5。
+  - **PCA** = 非 root 父子邊 (p,c) 滿足 d(p,c) ≤ median_{j≠p} d(p,j) 的比例。
+  - 邊界情況：全 singleton→`sgc:all_groups_singleton`、單 group→`sgc:single_group`、無三元組→`tlc:no_triplets`、無邊→`pca:no_edges`、版面缺 tree 元素→`missing_elements:...`；一律記 None + skip_reasons，不硬湊。
+  - id 對齊層 `align_by_type_order`（category+順序，數量不合回 None 跳過）供無 asset_ref 的 baseline 用。
+- `tests/.../test_semantic_group_metrics.py`：21 tests——距離五案例（重疊/相貼/水平/垂直/對角）、緊貼版面 SGC>0.8+TLC=1.0、打散版面 SGC<0.5+TLC<0.5、全疊 TLC=0.5+SGC=0（擠成一團不虛高）、單 group=None+skip、Monte Carlo 1000 次隨機 TLC 均值 0.45–0.55（seed 42 實測通過）。**457 passed**（+21，零回歸）。
+- `layout_agent/output2/step90_semantic_metrics.py`：tree 來源可插拔（`--tree-dir`，預設 PlanAssets 對 A 臂 spec 生成、快取 `trees/{sid}.json`）。**id 對齊關鍵發現**：A/B 臂 Analyst 各自指派 id（同 sid 的 text_5 在 A 是日期、B 是 CTA），且 spec 順序≠GT z-order（Analyst 按角色重排）——順序匹配會靜默錯配，改用 `asset_ref` 內嵌的 GT idx 做精確映射（A↔GT 直接、B 經 b_id→gt_idx→a_id）。
+
+**N=100 第一版數字**（`output2/step90_semantic_metrics/`；step89 樣本、97 棵樹零失敗）：
+
+| method | SGC ↑ | TLC ↑ | PCA ↑ |
+|---|---|---|---|
+| agent_a | 0.678 ± 0.211 (n=34) | 0.724 ± 0.236 (n=34) | 0.822 ± 0.264 (n=57) |
+| agent_b | 0.602 ± 0.194 (n=37) | 0.665 ± 0.250 (n=37) | 0.855 ± 0.228 (n=59) |
+| gt | 0.585 ± 0.227 (n=40) | 0.579 ± 0.273 (n=40) | 0.702 ± 0.317 (n=63) |
+
+配對（兩邊皆有效）agent_a vs GT：SGC Δ+0.068（21/0/13，sign p=0.23）、TLC Δ+0.122（21/2/11，p=0.11）、PCA Δ+0.101（14/37/6，p=0.12）——**方向全數有利但均未達顯著**。
+
+**誠實註記（引用前必讀）**：
+1. tree 來自 agent 自己的 Asset Planner＝自我一致性量測——agent 的 Generator 看過這棵樹、設計師沒有。正確解讀是「系統忠實實現自己的語意計畫」，**不可**宣稱「分組能力勝設計師」。人工標註 tree 介面已留（`--tree-dir`）。
+2. 結構性 skip 高（SGC/TLC 有效僅 34–40/100）：SEGA 前處理後樣本只剩文字元素（11 個單元素、22 個雙元素），樹常是平的（36 全 singleton、23 單 group）——scope 限制須註明。
+3. agent_a 另有 7 樣本 final candidate 掉元素（missing_elements）、agent_b 有 4 樣本 id 對齊失敗，均記錄後跳過。
+
+質性案例清單（agent_sgc−baseline_sgc 前 10）在 `aggregate.md`／`qualitative_picks.json`，最大差 `5e68da79`（vs GT Δ+0.554）可作論文對比圖。
+
+*最後更新：2026/07/08（Step 90 完成：SGC/TLC/PCA 上線＋N=100 第一版數字；方向有利未顯著、自我一致性解讀限制）*
