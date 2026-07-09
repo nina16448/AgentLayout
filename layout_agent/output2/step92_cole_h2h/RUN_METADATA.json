@@ -1,0 +1,93 @@
+{
+  "run_id": "step92_cole_h2h",
+  "title": "Step 92 -- matched COLE head-to-head under the text-as-image protocol",
+  "status": "frozen",
+  "why_it_matters": "Source of the paper's B axis (Smean4/Smean5 vs designer GT). Scored the Step 89 renders, so A/B/C axes finally share one protocol and one sample set.",
+
+  "capture": {
+    "method": "reconstructed",
+    "reason": "Scoring ran a few hours before provenance capture was wired into this driver (same day). aggregate.json therefore reports {\"captured\": false} rather than stamping itself with the re-aggregation environment. Fields below carry their own evidence.",
+    "reconstructed_on": "2026-07-09",
+    "future_runs": "provenance.json is now written at scoring time; aggregate.json reads it back instead of re-capturing."
+  },
+
+  "when": {
+    "scored_on": "2026-07-09",
+    "phases": [
+      "arms a+gt: 200 vision calls (100 samples x 2)",
+      "arm b added later via arm-level resume: 98 further calls (2 samples lack b/final.png)"
+    ]
+  },
+
+  "code_state": {
+    "driver_commit": "9884f3c4daffb618fee54a515140dbbe4fea45f9",
+    "driver_commit_subject": "feat(agentlayout): track output2 drivers + capture run provenance",
+    "judge_source": "layout_agent/output/step21_phaseb_eval.py",
+    "claim": "The COLE prompt, model, temperature and parser are imported verbatim from step21_phaseb_eval -- the same module Step 70 and Step 74 called. Nothing about the judge is reimplemented.",
+    "pipeline_involvement": "none -- this run reads PNGs and calls the judge. metagpt/ext/agentlayout is not on its execution path, so the Step 89 pipeline freeze does not constrain it.",
+    "note": "Scoring itself ran against an uncommitted tree; the driver was committed the same day with scoring logic unchanged. Only provenance wiring and arm-level resume were added afterwards (see resume_semantics)."
+  },
+
+  "models": {
+    "judge_llm": "gpt-4o",
+    "judge_llm_evidence": "Pinned in code by step21_phaseb_eval.MODEL. Machine-verifiable, and independent of ~/.metagpt/config2.yaml, which read o4-mini on this date. The driver's --dry-run prints 'judge=gpt-4o' next to 'model=o4-mini', which is the check.",
+    "temperature": 0.0,
+    "pipeline_llm": "not applicable -- no generation in this run"
+  },
+
+  "data": {
+    "sample_ids": "layout_agent/output2/eval100_ids.json (inherited from step89_n100)",
+    "n_samples": 100,
+    "ids_sha256_prefix": "2c045eb834b8d618",
+    "arms": {
+      "a": "layout_agent/output2/step89_n100/<id>/a/final.png (baseline)",
+      "b": "layout_agent/output2/step89_n100/<id>/b/final.png (deep-review; 2 missing)",
+      "gt": "layout_agent/output/crello_<id>/ground_truth_preview.jpg (designer)"
+    },
+    "known_failures": "5888d6f095a7a863ddcc2865 and 5888d7a795a7a863ddcc2981 have no b/final.png (the Step 89 arm-B error + crash). Recorded, excluded, never scored as zero => arm B is n=98."
+  },
+
+  "protocol": {
+    "input": "text-as-image (Step 89 renders)",
+    "renderer": "R3",
+    "judging": "COLE single-call, 5 axes scored 1-10, absolute (not pairwise)",
+    "jpeg_under_png_header": "Designer GT is .jpg but _score_image wraps every payload in a data:image/png header. Step 70/74 did the same and OpenAI sniffs the bytes. Deliberately NOT 'fixed' -- changing it would silently break comparability with the published numbers."
+  },
+
+  "statistics": {
+    "sign_test": "exact two-sided binomial on non-tied pairs (math.comb), no scipy",
+    "bootstrap": "percentile CI on the mean paired delta, 10000 resamples",
+    "bootstrap_seed": 20260709,
+    "determinism": "The seed is fixed, so --aggregate-only reproduces identical CIs from the same per_sample/ files."
+  },
+
+  "resume_semantics": {
+    "granularity": "arm-level",
+    "rule": "A sample is skipped only when every requested arm already has status=ok in per_sample/<id>.json. A previous parse_failed is retried.",
+    "why": "Adding arm b cost 98 calls instead of 300. Verified by re-running: arm A's numbers came out bit-identical (7.120 / 7.800 / 91.3%), proving a and gt were reused rather than re-scored."
+  },
+
+  "headline_results": {
+    "arm_a_vs_gt": {"n": 100, "smean4": 7.120, "gt_smean4": 7.800, "pct_of_gt": 91.28, "delta_ci95": [-0.853, -0.512], "wins_ties_losses": [11, 25, 64], "sign_p": "<0.001"},
+    "arm_b_vs_gt": {"n": 98, "smean4": 6.997, "gt_smean4": 7.796, "pct_of_gt": 89.76, "delta_ci95": [-0.997, -0.620], "wins_ties_losses": [6, 22, 70], "sign_p": "<0.001"},
+    "b_minus_a": {"n": 98, "delta_ci95": [-0.316, 0.026], "b_better_tie_a_better": [26, 27, 45], "sign_p": 0.032},
+    "sdl_zero_wins": "Both arms win 0 samples on design_layout. Not a bug: designer GT saturates at 8/10 on 79/100 samples."
+  },
+
+  "cost_usd": 3.725,
+  "cost_note": "298 vision calls at ~$0.0125 each. Recorded by the driver in aggregate.json.est_cost_usd.",
+
+  "artifacts": [
+    "layout_agent/output2/step92_cole_h2h/aggregate.json",
+    "layout_agent/output2/step92_cole_h2h/aggregate.md",
+    "layout_agent/output2/step92_cole_h2h/per_sample/<id>.json"
+  ],
+
+  "reproduce": [
+    "git checkout 9884f3c4  # or later; scoring logic unchanged since",
+    "conda run -n meta python layout_agent/output2/step92_cole_h2h.py --arms a,b,gt --dry-run   # zero API, prints plan + cost",
+    "conda run -n meta python layout_agent/output2/step92_cole_h2h.py --arms a,b,gt --skip-existing",
+    "conda run -n meta python layout_agent/output2/step92_cole_h2h.py --arms a,b,gt --aggregate-only   # rebuild tables from per_sample/, zero API",
+    "NOTE: temperature is 0.0 but the judge is still an LLM; per-sample scores may shift slightly across runs. The bootstrap seed is fixed, so aggregation over the same per_sample/ is exactly reproducible."
+  ]
+}

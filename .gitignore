@@ -185,6 +185,11 @@ output
 # negation works: git will not descend into an ignored directory.
 layout_agent/output2/*
 !layout_agent/output2/*.py
+# RUN_METADATA.json is the reproducibility freeze record for a run: which
+# commit, which model, which sample ids. Tiny, and worthless if not tracked.
+!layout_agent/output2/*/
+layout_agent/output2/*/*
+!layout_agent/output2/*/RUN_METADATA.json
 tmp.png
 .dependencies.json
 tests/metagpt/utils/file_repo_git
