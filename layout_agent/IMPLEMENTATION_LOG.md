@@ -5904,4 +5904,98 @@ B = 89.8% of designer，逐軸全面劣於 A（SDL −0.888、SQL −0.888、STV
 
 **證據檔**：`output2/step92_cole_h2h/{aggregate.json, aggregate.md, per_sample/<id>.json}`。總計 298 calls / $3.73。
 
-*最後更新：2026/07/09（Step 92 完成：A 91.3% / B 89.8% of designer Smean4、SDL 兩臂皆零勝、B−A sign p=0.032 跨協定確認深審棧 net negative）*
+---
+
+## Step 93（2026-07-09）：逐輪增益曲線正式化（E2，零新生成）
+
+**動機**：論文 5.8 引用的 +0.45/−0.19/−0.03/−0.12 出自 result.md §11.4 行文，從未以獨立表格＋樣本數＋顯著性落盤。Step 92 把 B 軸主表遷到 Step 89 同批樣本後，這條曲線已與 headline 同協定，唯一缺口是出處正式化。
+
+**實作**：`output2/step93_perround_curve.py`（純 stdlib）讀 `step89_n100/<id>/{a,b}/rounds/round*.json`（pipeline 內建 JudgeAesthetic 5 軸 total，run 當下落盤），零 API 呼叫：
+- `transition_stats`：Δ(k)＝同樣本 `total(k)−total(k−1)` 配對；輸出 n/mean/median/improved-tied-worsened/精確 sign p，並內建 `PUBLISHED` 對照欄——與 §11.4 已發布值差 >0.005 直接印 MISMATCH。
+- `round0_cross_arm`：A.R0−B.R0 配對（§11.4 口述的 best-of-3 +1.6 正式量測）。
+- `per_round_means`：每輪描述性平均（total 進 md；5 軸僅進 JSON，遵守 Finding 2 紀律）。
+
+**結果（100 樣本全數有 trace）**：
+| arm | 輪 | n | mean Δ | W/T/L | sign p |
+|---|---|---|---|---|---|
+| A | R0→R1 | 100 | **+0.440** | 30/54/16 | 0.054 |
+| A | R1→R2 | 94 | +0.138 | 21/50/23 | 0.88 |
+| B | R0→R1 | 99 | +0.455 | 29/47/23 | 0.49 |
+| B | R1→R2 | 95 | −0.189 | 16/57/22 | 0.42 |
+| B | R2→R3 | 93 | −0.032 | 16/55/22 | 0.42 |
+| B | R3→R4 | 91 | −0.121 | 19/54/18 | 1.00 |
+
+R0 跨臂：**A−B = +1.590（median +1.0；A 勝 84/平 9/B 勝 7；sign p=7.1e-18）**。
+
+**對帳**：B 臂四值與 §11.4 全中；唯一差異＝§11.4 把兩臂 R1 合寫「均 +0.45」，精確值 A +0.440 / B +0.455——論文 5.8 應引本表精確值。
+
+**新發現（5.8 措辭紀律）**：**沒有任何單一輪 transition 顯著**（最佳 A R1 p=0.054，其餘 ≥0.42）；唯一強顯著的是 R0 的 best-of-3 效果。可辯護的主張排序：(1) best-of-3 選擇承載絕大多數增益（顯著）；(2) 第一輪修復是小幅正向 drift（+0.44，邊緣）；(3) B 後期輪次負向趨勢為**描述性**陳述、單輪皆 n.s.。「R3 起淨害」不可寫成推論性結論。
+
+**證據檔**：`output2/step93_perround/perround.{json,md}`。
+
+---
+
+## Step 94（2026-07-09）：Step 71 Ali 65/100 精確 sign test 正式化（E3，零 API）
+
+**實作**：`output2/step94_signtest.py` 讀 `output/b1_root_cause_n100.json`（Step 71 per-sample 勝負計數，先 assert W+L+T=n_total），對三軸各算兩種精確二項雙尾 p（`math.comb`，與 Step 92/93 同慣例）：decisive-only（排除 ties）與保守版（ties 算進 n=100）。
+
+**結果**：
+| axis | W/L/T | decisive p | 保守 p |
+|---|---|---|---|
+| alignment | 65/3/32 | **3.56e-16** | **3.52e-03** |
+| readability | 21/41/38 | 1.51e-02（GT 方向顯著） | 1.00 |
+| occlusion | 45/55/0 | 0.368（n.s.） | 0.368 |
+
+**口試一行答案**：Ali 65 勝 3 敗——即使把全部 32 個 tie 都算成不利（保守版 p=3.5e-03）仍遠超隨機；排除 ties 的精確雙尾 p=3.6e-16。N=100 對這條 claim 綽綽有餘。論文引保守版、decisive 版放註腳（依使用者指示）。**Caveat 照舊**：sign test 只講勝場數、不涉 mean margin，Step 71 的 3 個 banner outlier 撐 aggregate 的問題不因此消失；readability 是真實系統性落後（decisive 顯著、GT 方向）。
+
+**證據檔**：`output2/step94_signtest/signtest.{json,md}`。
+
+---
+
+## Step 95（2026-07-09）：跨協定一致性聲明表（E4，純整理零實驗）
+
+**動機**：E1（Step 92）後論文同時存在舊協定（N=20/100/1,897＋N=178）與新協定（Step 89/92 text-as-image N=100）兩批數字，需要附錄級的「數字→run→協定→renderer」溯源表杜絕混用。
+
+**產出**：`output2/step95_protocol_map/PROTOCOL_MAP.md`——
+- 版本代號：renderer R1（初版）/R2（Step 55 升級）/R3（text-as-image）；協定 GEO/WJ4/H2H5/PAIR/PIPE 五類。
+- 主表 17 列：Step 20/21b/22/23/29/70/71/73-74/75/89/90/92/93/94 每個論文數字的 N、協定、renderer、證據檔、論文引用節（引用節欄需在 Overleaf 逐一核對，已標明）。
+- 禁止同表清單 6 條：91.3% vs 86.6%（雙變因）、WJ4 vs H2H5（軸數＋單邊/成對）、PIPE total vs Smean（量綱）、GEO 跨 renderer 可比但樣本集不同、12/100 不可宣稱總體勝、逐輪曲線單輪皆 n.s.（Step 93 新增紀律）。
+- 遺留事項：86.6%→91.3% 全域替換時「跨規模穩定性」敘事需改寫——91.3% 只有 N=100 R3 單一規模，建議行文拆成 WJ4 跨規模穩定（64.8%→65.8%）與 H2H5 R3 91.3%（N=100）兩句。
+
+*最後更新：2026/07/09（Step 93–95 完成：E2 逐輪曲線正式落盤——B 臂四值與 §11.4 全中、A R1 精確值 +0.440、單輪皆 n.s. 而 R0 best-of-3 +1.59 p=7e-18 才是顯著效果；E3 Ali sign test 保守 p=3.5e-03 / decisive p=3.6e-16；E4 跨協定溯源表 17 列＋禁止同表 6 條）*
+
+---
+
+## Step 96（E2'）— legacy 管線逐輪配對增益曲線（零 API）
+
+**動機**：Step 93 的曲線量在 step89／text-as-image／R3 renderer 上。論文 5.8 節描述的是 **legacy 管線**（raw-asset 輸入 ＋ refinement loop、R2 renderer），引 step89 數字＝引錯管線的證據。使用者指示 5.8 改引本表。
+
+**新增**：`layout_agent/output2/step96_legacy_perround_curve.py`（純 stdlib、零 API、無人 import）。編號跳 96 是因平行 session 已把 Step 95 用於 `step95_protocol_map/`；撞號當下改號，未觸碰對方任何檔案。
+
+**方法**：讀 `full_result/<id>/trace/per_round_judge.json`。每輪 total ＝該輪 `best_candidate_id` 對應候選的 5 軸 PIPE total（5–50，與 Step 93 同量綱、同軸）。抽查五輪確認 `best_candidate_id` 恆為 argmax，故此值等同「pipeline 實際帶往下一輪的分數」；id 缺席時退回 argmax 並計入 `fallback_to_argmax`（本次 **0 次**）。統計沿用 Step 92/93/94 慣例（`math.comb` 精確雙尾 sign test），另附 95% percentile bootstrap CI（10,000 次、seed=20260709）。
+
+**結果（n=161 個有 judge trace 的樣本）**：
+
+| transition | n pairs | mean Δ | 95% CI | W/T/L | sign p |
+|---|---|---|---|---|---|
+| R0→R1 | 160 | **−0.075** | [−0.475, +0.325] | 49/57/54 | 0.694 |
+| R1→R2 | 142 | +0.169 | [−0.275, +0.606] | 37/64/41 | 0.734 |
+| R2→R3 | 133 | +0.361 | [−0.098, +0.827] | 51/46/36 | 0.133 |
+| R3→R4 | 126 | +0.151 | [−0.333, +0.635] | 48/45/33 | 0.119 |
+
+mean total 五輪持平：33.553 / 33.487 / 33.127 / 33.383 / 33.317。
+
+**核心發現（影響論文論點，非例行補數字）**：
+1. **legacy 的 R0→R1 是 −0.075（p=0.694），不是 +0.45。**「價值集中在第一輪」是 **step89 專屬現象**，在 legacy 管線上不成立。§11.4「可寫」第 2 條（best-of-3＋一輪修復＋停）若隨 5.8 改引本表，**必須同步撤下或明確改綁 step89**。
+2. 四個 transition 全部 n.s.、四條 CI 全部跨 0 → **legacy refinement loop 逐輪零可測增益**，與 Step 20b／31／32／74 的 net-negative 結論同向且互相加強。
+3. 合併 Step 93 看：「逐輪修復無顯著增益」是**跨兩個管線、兩個協定**的一致發現（step89 最佳 p=0.054、legacy 最佳 p=0.119）。
+
+**不可寫**：R2→R3 的 +0.361 不可解讀為「第三輪最有價值」——p=0.133、CI 跨 0，且 n_pairs 已因存活者偏誤自 160 降至 133。
+
+**交叉驗證（讀取邏輯正確性）**：本步算出的 n_pairs `160/142/133/126` 與 `full_result/_aggregate/per_round_convergence.md` 的 `rounds_observed` **逐格吻合**——該檔由另一支程式於數月前獨立產生。
+
+**樣本數誠實註記**：179 個樣本目錄 → 1 個無 `per_round_judge.json`、**17 個 trace 為空 list**（pipeline 未產出任何 judge 判決＝crash／QC catastrophic）→ 可算增益者 **161**。論文若寫 N=178 須附此差額來源。n_pairs 隨輪次遞減是存活者偏誤（在 R(k−1) 已 accept 的樣本停在該輪），非缺資料。
+
+**證據檔**：`output2/step96_legacy_perround/{curve.json, curve.md}`（curve.json 內含 provenance 區塊）。
+
+*最後更新：2026/07/09（Step 96 完成：legacy 逐輪曲線 R0→R1 −0.075、四輪全 n.s.；「價值集中第一輪」證實為 step89 專屬；n_pairs 與既有 aggregate 逐格交叉驗證）*
