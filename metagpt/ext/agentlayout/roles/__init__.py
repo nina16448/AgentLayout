@@ -26,10 +26,13 @@ integrates with MetaGPT's Team / Environment framework (thesis chapter 6.x).
 from metagpt.ext.agentlayout.roles.aesthetic_judge import AestheticJudgeRole
 from metagpt.ext.agentlayout.roles.analyst import AnalystRole
 from metagpt.ext.agentlayout.roles.asset_planner import AssetPlannerRole
+from metagpt.ext.agentlayout.roles.composition_director import CompositionDirectorRole
 from metagpt.ext.agentlayout.roles.iteration_state import (
     IterationStateRole,
     IterationStop,
     RetryAnalyst,
+    RetryComposition,
+    RetryCoordinates,
     RetryGeneration,
     RetryPayload,
 )
@@ -38,11 +41,14 @@ from metagpt.ext.agentlayout.roles.layout_generator import LayoutGeneratorRole
 __all__ = [
     "AnalystRole",
     "AssetPlannerRole",
+    "CompositionDirectorRole",
     "LayoutGeneratorRole",
     "AestheticJudgeRole",
     "IterationStateRole",
     "IterationStop",
     "RetryAnalyst",
+    "RetryComposition",
+    "RetryCoordinates",
     "RetryGeneration",
     "RetryPayload",
 ]

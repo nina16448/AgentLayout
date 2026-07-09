@@ -335,20 +335,24 @@ def test_safe_zone_defers_when_directive_present():
     )
     cand = _compliant_candidate()  # photo + title both far outside the tiny zone
 
-    # Without a directive the old rule fires on both primaries.
+    # Without a directive the rule fires on both primaries -- now as a WARNING
+    # ("先想再畫" refactor downgraded safe-zone from violation to warning).
     spec.composition = None
     before = check_candidate(cand, spec, bg=bg)
     flagged = {
         t
-        for v in before.violations
-        if v.type == ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE
-        for t in v.targets
+        for w in before.warnings
+        if w.type == ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE
+        for t in w.targets
     }
     assert {"photo_1", "title_1"} <= flagged
 
-    # With the directive the safe-zone rule defers entirely.
+    # With the directive the safe-zone rule defers entirely: no warning either.
     spec.composition = _hero_directive()
     after = check_candidate(cand, spec, bg=bg)
+    assert not any(
+        w.type == ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE for w in after.warnings
+    )
     assert not any(
         v.type == ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE for v in after.violations
     )

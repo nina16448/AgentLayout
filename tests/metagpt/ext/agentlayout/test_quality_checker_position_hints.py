@@ -1316,11 +1316,11 @@ def test_step43_primary_inside_safe_zone_passes():
     assert out == [], f"in-zone title must pass; got {out}"
 
 
-def test_step43_primary_outside_safe_zone_flags():
-    """Step 43: a title centred in the saliency-high region (no safe-zone
-    overlap) MUST trigger PRIMARY_OUTSIDE_SAFE_ZONE. Replicates the 5928
-    'title centred at x=500-950 outside any safe_zone' failure observed
-    under Step 42 before this rule was wired in."""
+def test_step43_primary_outside_safe_zone_warns():
+    """"先想再畫" refactor (2026-06-25): a title outside every safe_zone now
+    raises PRIMARY_OUTSIDE_SAFE_ZONE as a WARNING (not a hard violation), so
+    ``passed`` stays True. The art director may deliberately place text off the
+    calm bands; QC records the advisory but does not reject the candidate."""
     from metagpt.ext.agentlayout.tools.quality_checker import (
         ViolationType,
         check_candidate,
@@ -1331,9 +1331,15 @@ def test_step43_primary_outside_safe_zone_flags():
         title_left=600, title_top=400, title_w=300, title_h=200
     )
     result = check_candidate(cand, spec, bg=bg)
-    out = [v for v in result.violations if v.type == ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE]
-    assert len(out) == 1, f"outside-zone title must flag; got {result.violations}"
+    out = [w for w in result.warnings if w.type == ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE]
+    assert len(out) == 1, f"outside-zone title must warn; got {result.warnings}"
     assert out[0].targets == ["title_1"]
+    # The key contract: safe-zone is no longer a HARD violation (other rules
+    # such as coverage may still fire for this tiny fixture, so we do not
+    # assert passed here -- only that this specific finding moved to warnings).
+    assert not any(
+        v.type == ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE for v in result.violations
+    ), "safe-zone must no longer be a hard violation"
 
 
 def test_step43_skipped_when_bg_is_none():
@@ -1368,7 +1374,7 @@ def test_step67_filter_valid_forwards_bg_to_safe_zone_rule():
     *when bg is passed*. ``spec.composition`` is left as None so the
     Step 63 deference short-circuit does not mask the regression.
     """
-    from metagpt.ext.agentlayout.tools.quality_checker import filter_valid
+    from metagpt.ext.agentlayout.tools.quality_checker import ViolationType, filter_valid
 
     # Title sized to satisfy other QC rules (Step 57 coverage >=10%,
     # Step 36 title size >=8% etc.) and positioned ENTIRELY outside the
@@ -1378,21 +1384,29 @@ def test_step67_filter_valid_forwards_bg_to_safe_zone_rule():
         title_left=500, title_top=350, title_w=500, title_h=300
     )
 
-    # Without bg: safe-zone rule is inert, candidate is kept.
+    # Without bg: safe-zone rule is inert, candidate kept, no warning.
     kept_no_bg, reports_no_bg = filter_valid([cand], spec)
     assert kept_no_bg == [cand], (
         f"bg=None must keep the candidate (rule inert); "
         f"got violations={reports_no_bg[0].violations}"
     )
     assert reports_no_bg[0].passed, "bg=None must report passed"
+    assert not reports_no_bg[0].warnings, "bg=None must emit no safe-zone warning"
 
-    # With bg: safe-zone rule fires, candidate is dropped.
+    # With bg: the safe-zone rule fires but ("先想再畫" refactor) it is now a
+    # WARNING, so filter_valid still KEEPS the candidate. The bg-forwarding
+    # contract is verified by the warning's presence, not by a drop.
     kept_with_bg, reports_with_bg = filter_valid([cand], spec, bg=bg)
-    assert kept_with_bg == [], (
-        "filter_valid must forward bg so the Step 43 safe-zone rule fires; "
-        f"unexpectedly kept {kept_with_bg}"
+    assert kept_with_bg == [cand], (
+        "safe-zone is a soft warning now; filter_valid must keep the candidate; "
+        f"unexpectedly dropped (violations={reports_with_bg[0].violations})"
     )
-    assert not reports_with_bg[0].passed, "candidate outside every safe_zone must fail QC"
+    assert reports_with_bg[0].passed
+    warn = [
+        w for w in reports_with_bg[0].warnings
+        if w.type == ViolationType.PRIMARY_OUTSIDE_SAFE_ZONE
+    ]
+    assert len(warn) == 1, "filter_valid must forward bg so the safe-zone WARNING fires"
 
 
 def test_step67_filter_valid_bg_defers_when_composition_present():

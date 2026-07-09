@@ -84,6 +84,14 @@ class FeedbackTarget(str, Enum):
 
     LAYOUT_GENERATOR = "layout_generator"
     ANALYST = "analyst"
+    # "先想再畫" 重構 (2026-06-25): the LayoutGenerator was split into a
+    # CompositionDirector (decides the spatial concept in natural language) and
+    # a CoordinateMapper (= the renamed LayoutGenerator, turns one concept into
+    # pixels). Judge feedback whose worst axis is design_layout/innovation is
+    # routed here so the Director re-imagines the composition from scratch,
+    # instead of asking the coordinate stage to nudge a fundamentally centred
+    # template by +/-10%.
+    COMPOSITION_DIRECTOR = "composition_director"
 
 
 class EncoderType(str, Enum):
@@ -159,6 +167,47 @@ class SafeZone(BaseModel):
     confidence: float = Field(..., ge=0.0, le=1.0)
 
 
+class UnderlayRegion(BaseModel):
+    """A text-underlay panel that is ALREADY part of the background image.
+
+    Step 76 (2026-07-02, SEGA-style preprocessing): non-text Crello layers are
+    composited into the background at designer GT positions BEFORE the pipeline
+    runs. Underlay panels therefore stop being placeable elements; instead the
+    preprocessor records where each panel sits and what colour it is, so the
+    Composition Director / Coordinate Mapper can place high-contrast text ON
+    the panel. This is feed-forward by construction — we composited the panel
+    ourselves, so no model ever needs to *detect* it (the judge-feedback route
+    was measured dead three times: Steps 20b, 59, 65).
+    """
+
+    bbox: List[int] = Field(
+        ...,
+        description="[left, top, right, bottom] in canvas pixel space (same convention as SafeZone).",
+        min_length=4,
+        max_length=4,
+    )
+    dominant_color: str = Field(
+        ...,
+        description="6-digit hex of the panel's dominant colour, sampled from opaque pixels at composite time.",
+    )
+    recommended_text_color: str = Field(
+        ...,
+        description="Luminance-contrasting hex for text placed on this panel (dark on light, light on dark).",
+    )
+    panel_type: str = Field(
+        default="solid",
+        description=(
+            "'solid' = an opaque plate; dominant_color is its fill. "
+            "'frame' = a mostly-transparent outlined box (Step 79): the visual "
+            "backdrop behind text is the BACKGROUND showing through, so "
+            "dominant_color samples the composited background inside the bbox "
+            "and recommended_text_color contrasts with THAT (the Step 78 "
+            "renders put dark text on a dark forest because a white outline "
+            "was mistaken for a white plate)."
+        ),
+    )
+
+
 class BackgroundAnalysis(BaseModel):
     """Background Analyzer output, consumed by Layout Generator and Aesthetic Judge.
 
@@ -168,6 +217,10 @@ class BackgroundAnalysis(BaseModel):
     available, but stay None / empty for the solid-color stub path
     (pipeline.py:_default_white_background) so backward compatibility is
     preserved.
+
+    Step 76 (2026-07-02) added ``underlay_regions``: filled only by the
+    SEGA-style Crello preprocessor (baked underlay panels), empty everywhere
+    else.
     """
 
     safe_zones: List[SafeZone] = Field(default_factory=list)
@@ -205,6 +258,17 @@ class BackgroundAnalysis(BaseModel):
             "(1 - mean_saliency). Distinct from safe_zones which are the "
             "binary subject-avoidance bands; these are pixel-precise calm "
             "areas the Generator should prefer for text."
+        ),
+    )
+
+    # Step 76 SEGA-style preprocessing: baked underlay panels. Empty unless the
+    # caller ran the Crello preprocessor and merged its output in.
+    underlay_regions: List[UnderlayRegion] = Field(
+        default_factory=list,
+        description=(
+            "Underlay panels already composited into the background at designer "
+            "GT positions. Text SHOULD land on these panels using the "
+            "recommended contrasting colour."
         ),
     )
 
@@ -429,6 +493,68 @@ class LayoutTree(BaseModel):
 
 
 LayoutTreeNode.model_rebuild()
+
+
+# ============================================================
+# 5.5 Composition concepts (CompositionDirector output, 2026-06-25)
+# ============================================================
+#
+# "先想再畫" 重構：構思階段與座標階段拆開。CompositionDirector 只用自然語言
+# 描述 "東西大致放哪、視覺如何流動"，完全不碰像素。每個概念之後交給
+# CoordinateMapper (= 改名後的 LayoutGenerator) 獨立翻成一組座標。
+# 這裡刻意只放 "意圖" 欄位，不放任何 bbox / 數字，避免又把構思塞回座標階段。
+
+
+class CompositionConcept(BaseModel):
+    """One spatial composition idea, described purely in natural language.
+
+    No pixels here on purpose: the whole point of the "先想再畫" split is that
+    the Director reasons about *where things feel right* without the 20+ hard
+    constraints that pushed the old monolithic Generator into a survival-mode
+    "centre everything" template. The CoordinateMapper turns each concept into
+    exact pixels in a separate, low-temperature call.
+    """
+
+    name: str = Field(..., description="2-4 word concept name, e.g. 'Left bleed'.")
+    focal_element: str = Field(
+        ..., description="Element id that anchors the design (usually the hero image)."
+    )
+    focal_placement: str = Field(
+        ..., description="Where the focal element goes, in natural language."
+    )
+    text_placement: str = Field(
+        ..., description="Where the text group goes, in natural language."
+    )
+    visual_flow: str = Field(
+        ..., description="How the eye moves across the design (e.g. Z-pattern)."
+    )
+    whitespace: str = Field(..., description="Whitespace / breathing-room strategy.")
+    typography_mood: str = Field(..., description="Font and colour direction.")
+    text_photo_relation: str = Field(
+        default="beside",
+        description="One of: beside | overlay | above | below | mixed.",
+    )
+    text_assignments: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Step 77 feed-forward assignment: text element id -> where it goes, "
+            "as 'panel N' (a numbered baked-underlay panel) or a 3x3 region "
+            "word like 'bottom-left'. The CoordinateMapper resolves 'panel N' "
+            "to that panel's exact bbox. Empty dict = legacy free-form concept."
+        ),
+    )
+
+
+class ConceptBatch(BaseModel):
+    """CompositionDirector output: 1-5 spatially diverse composition concepts.
+
+    Each concept becomes exactly one CoordinateMapper candidate. We keep the
+    list small (default target 3) because three *genuinely* different layouts
+    beat fifteen variations of the same centred template — the empirical
+    finding that motivated this refactor.
+    """
+
+    concepts: List[CompositionConcept] = Field(..., min_length=1, max_length=5)
 
 
 # ============================================================
@@ -670,6 +796,58 @@ class Suggestion(BaseModel):
         return self
 
 
+class VisualObservationKind(str, Enum):
+    """Closed catalogue of render-level defects the Judge may report (Step 77).
+
+    Every kind pairs with a machine-verifiable geometric predicate in
+    ``tools/feedback_verifier.py`` — after a retry we can compute exactly
+    which observations were acted on (compliance rate). This is the metric
+    Step 59 lacked: it localises a loop failure to perception vs execution.
+    """
+
+    TEXT_OFF_PANEL = "text_off_panel"      # text should sit ON a given panel bbox
+    TEXT_ILLEGIBLE = "text_illegible"      # low contrast / busy backdrop
+    TEXT_TOO_SMALL = "text_too_small"      # below the GT area prior
+    TEXT_TOO_LARGE = "text_too_large"
+    TEXT_OVERLAP = "text_overlap"          # two elements collide
+    TEXT_TILTED = "text_tilted"            # unintended rotation
+    # Step 85 rubric items (both verify as "move INTO target_bbox"): the judge
+    # LOOKS at the render and estimates where the element should go -- the
+    # per-image call a population prior cannot make.
+    TITLE_MISPLACED = "title_misplaced"    # dominant text in the wrong spot
+    LOCKUP_BROKEN = "lockup_broken"        # subtitle drifted from the title
+
+
+class VisualObservation(BaseModel):
+    """One discrete, verifiable defect observed on the RENDERED candidate.
+
+    The Judge is the only component that sees the finished render; Step 77
+    lets it report what it sees — but only in this closed, checkable
+    vocabulary (discrete choices, not free-form pixel prose, which Step 59
+    proved the generator ignores).
+    """
+
+    kind: VisualObservationKind
+    target_id: str = Field(..., description="Element id the observation is about.")
+    second_id: Optional[str] = Field(
+        default=None, description="Second element id (only for text_overlap)."
+    )
+    target_bbox: Optional[List[int]] = Field(
+        default=None,
+        description="[left, top, right, bottom] the target should move INTO "
+        "(panel bbox for text_off_panel, calm region for text_illegible).",
+        min_length=4,
+        max_length=4,
+    )
+    target_color: Optional[str] = Field(
+        default=None, description="Concrete hex the text should switch to (text_illegible)."
+    )
+    target_area_px: Optional[int] = Field(
+        default=None, description="Area target in px^2 (text_too_small / text_too_large)."
+    )
+    note: str = Field(default="", description="One-line human-readable rationale.")
+
+
 class AestheticFeedback(BaseModel):
     """Common-issue feedback emitted when no candidate hits the threshold.
 
@@ -688,6 +866,23 @@ class AestheticFeedback(BaseModel):
             "Suggestion (kind / target_id / metric / op / value). The Aesthetic "
             "Judge prompt requires at least one entry on reject; the schema "
             "itself accepts an empty list so legacy JSON still parses."
+        ),
+    )
+    visual_observations: List[VisualObservation] = Field(
+        default_factory=list,
+        description=(
+            "Step 77 closed-catalogue render-level defects. Populated only "
+            "when the visual-loop feature flag is on; default empty keeps "
+            "legacy JSON parsing."
+        ),
+    )
+    keep_constraints: List[VisualObservation] = Field(
+        default_factory=list,
+        description=(
+            "Step 89: RETIRED ledger issues -- targets already satisfied that "
+            "the next mapper call must NOT undo (the 88b trace showed accept-"
+            "round polish repeatedly un-fixing the title). Populated by the "
+            "pipeline from the retired ledger; default empty."
         ),
     )
 

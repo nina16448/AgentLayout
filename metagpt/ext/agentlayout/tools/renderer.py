@@ -417,11 +417,13 @@ def _paint_rotated_text(
     pil_align = align if align in ("center", "right") else "left"
     pad = 4
     bbox = _MEASURE_DRAW.multiline_textbbox((0, 0), text, font=font, align=pil_align)
-    layer = Image.new(
-        "RGBA",
-        (bbox[2] - bbox[0] + 2 * pad, bbox[3] - bbox[1] + 2 * pad),
-        (0, 0, 0, 0),
-    )
+    # Pillow's multiline_textbbox can return float coords (esp. for the default
+    # bitmap font fallback), and Image.new requires an int size tuple -- without
+    # the int() coercion this raises "TypeError: integer argument expected, got
+    # float" on some samples. max(1, ...) guards against a zero-size layer.
+    layer_w = max(1, int(round(bbox[2] - bbox[0] + 2 * pad)))
+    layer_h = max(1, int(round(bbox[3] - bbox[1] + 2 * pad)))
+    layer = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
     ImageDraw.Draw(layer).multiline_text(
         (pad - bbox[0], pad - bbox[1]), text, fill=color, font=font, align=pil_align
     )

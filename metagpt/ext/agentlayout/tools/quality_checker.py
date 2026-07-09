@@ -190,11 +190,19 @@ class Violation(BaseModel):
 
 
 class CheckResult(BaseModel):
-    """Aggregated outcome for one candidate."""
+    """Aggregated outcome for one candidate.
+
+    ``warnings`` ("先想再畫" refactor, 2026-06-25) carries soft placement
+    advisories that no longer block acceptance: safe-zone overlap and
+    text-on-high-saliency. They are recorded for analytics and feedback but do
+    NOT affect ``passed`` -- the art director may deliberately place text off
+    the calm bands, and rejecting that would defeat the whole refactor.
+    """
 
     candidate_id: str
     passed: bool
     violations: List[Violation] = Field(default_factory=list)
+    warnings: List[Violation] = Field(default_factory=list)
 
 
 # ============================================================
@@ -220,6 +228,7 @@ def check_candidate(
     default and silently skip the new check.
     """
     violations: List[Violation] = []
+    warnings: List[Violation] = []
     violations.extend(_check_completeness(candidate, spec))
     violations.extend(_check_boundary(candidate, spec))
     violations.extend(_check_hard_constraints(candidate, spec))
@@ -231,12 +240,14 @@ def check_candidate(
     violations.extend(_check_decorative_image_oversized(candidate, spec))
     violations.extend(_check_title_undersized(candidate, spec))
     violations.extend(_check_title_peripheral(candidate, spec))
-    # Step 43 (2026-06-10): primary content must overlap a safe_zone.
-    violations.extend(_check_primary_in_safe_zone(candidate, spec, bg))
-    # F2 (Step 72, 2026-06-16): text bbox mean saliency on background must
-    # stay below TEXT_ON_HIGH_SALIENCY_TAU. Graceful skip when bg has no
-    # saliency_map (stub path / pre-F2 caller).
-    violations.extend(_check_text_on_high_saliency(candidate, spec, bg))
+    # "先想再畫" refactor (2026-06-25): safe-zone overlap and text-on-high-
+    # saliency are now WARNINGS, not hard violations. The art director (Compose
+    # Concept) may deliberately place text off the calm bands or on a hero
+    # region, and the CoordinateMapper is told safe zones are a preference.
+    # Keeping these as hard rejections would kill exactly the bold, asymmetric,
+    # designer-style compositions this refactor aims to produce.
+    warnings.extend(_check_primary_in_safe_zone(candidate, spec, bg))
+    warnings.extend(_check_text_on_high_saliency(candidate, spec, bg))
     # Step 57 (2026-06-11): coverage / dead-space degenerate-layout guardrails.
     violations.extend(_check_canvas_coverage(candidate, spec))
     # Step 59 (2026-06-11): text on busy background texture (Rea deficit).
@@ -251,6 +262,7 @@ def check_candidate(
         candidate_id=candidate.candidate_id,
         passed=not violations,
         violations=violations,
+        warnings=warnings,
     )
 
 

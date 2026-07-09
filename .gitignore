@@ -178,6 +178,9 @@ metagpt/roles/idea_agent.py
 
 # output folder
 output
+# Step 76+ results live in output2 (user request: keep new runs separate from
+# the crowded output/); the bare `output` rule above does not match it.
+layout_agent/output2/
 tmp.png
 .dependencies.json
 tests/metagpt/utils/file_repo_git

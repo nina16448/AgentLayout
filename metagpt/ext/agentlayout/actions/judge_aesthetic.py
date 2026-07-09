@@ -43,7 +43,9 @@ from metagpt.ext.agentlayout.schema import (
     BackgroundAnalysis,
     Candidate,
     DesignSpec,
+    JudgeDecision,
     LayoutTree,
+    VisualObservation,
 )
 from metagpt.ext.agentlayout.tools.renderer import image_to_base64, render
 from metagpt.logs import logger
@@ -383,6 +385,29 @@ Output a single JSON object, nothing else.
 
 MAX_RETRIES: int = 3
 
+# Step 78 decoupled observer: parse retries for the reject-only inspector
+# call. Kept small -- a failed observer degrades to "no observations", it
+# must never burn the main judgement budget.
+_OBSERVE_MAX_RETRIES: int = 2
+
+# Step 83: anchored scoring + concreteness contract. Step 82's trace showed
+# unanchored absolute scores collapse into a 34-39 band with "minor
+# adjustments needed" boilerplate; anchors + a cite-your-evidence rule force
+# discrimination. Appended AFTER the template so pinned-string tests on
+# PROMPT_TEMPLATE stay valid.
+_SCORING_ANCHORS: str = """
+
+# Scoring anchors (calibrate every 1-10 axis score to these)
+  9-10 = professional designer quality; could ship as-is
+  7-8  = competent but generic; visible non-blocking flaws
+  5-6  = obvious amateur errors (broken grouping, orphaned elements, dead zones)
+  1-4  = structurally broken
+Spread your scores: candidates with visible differences must NOT all land on
+the same total. Every `weaknesses` entry MUST cite at least one element id AND
+one concrete measured fact (from the geometry block below or exact pixel
+evidence you can see in the render). Generic phrases like "minor adjustments
+needed" or "could be more prominent" are INVALID weaknesses."""
+
 
 # ============================================================
 # Action
@@ -435,6 +460,16 @@ class JudgeAesthetic(Action):
                 judgement = self._parse_response(rsp)
                 self._validate_against_input(judgement, candidates)
                 self._attach_best_candidate_layout(judgement, candidates)
+                # Step 78: reject-only decoupled observer. The verdict above
+                # was produced by the unmodified prompt (no contamination);
+                # only AFTER it exists do we ask a separate call what defects
+                # are visible on the best candidate's render.
+                from metagpt.ext.agentlayout.feature_flags import visual_loop_enabled
+
+                if visual_loop_enabled() and judgement.decision == JudgeDecision.REJECT:
+                    judgement.feedback.visual_observations = await self._observe(
+                        judgement, candidates, spec, bg
+                    )
                 return judgement
             except (ValueError, ValidationError) as err:
                 last_err = err
@@ -497,7 +532,258 @@ class JudgeAesthetic(Action):
             candidate_ids=cand_ids_str,
             format_example_accept=FORMAT_EXAMPLE_ACCEPT,
             format_example_reject=FORMAT_EXAMPLE_REJECT,
+        ) + _SCORING_ANCHORS + self._geometry_facts_block(candidates, spec, bg) + (
+            "\n\n# Canvas resources (panels + placeable background regions)\n"
+            + self._canvas_resources_block(bg)
         )
+
+    @staticmethod
+    def _canvas_resources_block(bg: BackgroundAnalysis) -> str:
+        """Step 86 (user): panels + CV-derived placeable regions for the judge.
+
+        The observer estimates target_bbox by eye; these are the terrain
+        facts that ground the estimate -- exact panel bboxes (with the Step 79
+        frame/solid distinction) and the background's calm regions. The main
+        judgement call gets the same block so an unused panel or an ignored
+        calm area is visible to the verdict, not just to the repair loop.
+        """
+        lines = []
+        if bg.underlay_regions:
+            lines.append("Baked panels (designer-placed text holders, exact bboxes):")
+            for i, region in enumerate(bg.underlay_regions, 1):
+                left, top, right, bottom = region.bbox
+                surface = (
+                    f"transparent frame, backdrop ~{region.dominant_color}"
+                    if region.panel_type == "frame"
+                    else f"solid fill {region.dominant_color}"
+                )
+                lines.append(
+                    f"  panel {i}: bbox [{left}, {top}, {right}, {bottom}], "
+                    f"{surface}, readable text colour {region.recommended_text_color}"
+                )
+        if bg.safe_zones:
+            lines.append(
+                "Background placeable regions (CV-derived calm areas -- good "
+                "anchors for target_bbox estimates):"
+            )
+            for zone in bg.safe_zones[:5]:
+                lines.append(
+                    f"  {zone.region}: bbox {zone.bbox} (confidence {zone.confidence:.2f})"
+                )
+        if bg.low_saliency_regions:
+            lines.append("Quietest background rectangles (lowest visual noise):")
+            for zone in bg.low_saliency_regions[:5]:
+                lines.append(f"  {zone.region}: bbox {zone.bbox}")
+        return "\n".join(lines) if lines else "(no panel / region data available)"
+
+    @staticmethod
+    def _geometry_facts_block(candidates: List[Candidate], spec: DesignSpec,
+                              bg: BackgroundAnalysis) -> str:
+        """Step 83: neutral machine measurements per candidate.
+
+        The judge cannot resolve 20-200px geometry on downscaled renders;
+        these descriptors give it the evidence. They are explicitly neutral
+        (e.g. full centering is a legitimate style in ~22% of designer
+        layouts) -- the verdict stays with the judge.
+        """
+        from metagpt.ext.agentlayout.tools.layout_metrics import (
+            format_metrics_block,
+            measure_layout,
+        )
+
+        parts = ["\n\n# Machine-measured geometry (neutral descriptors, per candidate)"]
+        for cand in candidates:
+            try:
+                block = format_metrics_block(
+                    measure_layout(cand, spec, bg.underlay_regions or None)
+                )
+            except Exception:  # noqa: BLE001 -- measurement must never kill judging
+                continue
+            parts.append(f"\nCandidate {cand.candidate_id}:\n{block}")
+        return "\n".join(parts) if len(parts) > 1 else ""
+
+    # ------------------------------------------------------------------
+    # Step 78: decoupled visual observer (second pass, reject-only)
+    # ------------------------------------------------------------------
+    # Step 77d post-mortem: putting the defect catalogue INSIDE the judgement
+    # prompt contaminated the verdict itself -- round-0 acceptance collapsed
+    # 7 -> 1 on identical candidate distributions (observer effect), while
+    # compliance proved execution works (88.9%). The fix: the judgement
+    # prompt stays byte-identical, and observations come from a SEPARATE
+    # small call made only after a reject verdict already exists.
+
+    @staticmethod
+    def _build_observe_prompt(candidate: Candidate, spec: DesignSpec,
+                              bg: BackgroundAnalysis) -> str:
+        """Prompt for the reject-only render-inspector call (Step 78).
+
+        Step 86: the panel list grew into the full canvas-resources block
+        (panels with frame/solid semantics + CV placeable regions), and each
+        text element line carries its natural bitmap size -- the terrain the
+        observer needs to estimate target_bbox with, instead of pure eyeball.
+        """
+        panel_lines = JudgeAesthetic._canvas_resources_block(bg)
+        spec_by_id = {el.id: el for el in spec.elements}
+        layout_rows = []
+        for el in candidate.elements:
+            row = (
+                f"  {el.id}: bbox [{el.left}, {el.top}, {el.left + el.width}, "
+                f"{el.top + el.height}], color {getattr(el, 'color', None)}, "
+                f"angle {el.angle}"
+            )
+            spec_el = spec_by_id.get(el.id)
+            if spec_el and (spec_el.asset_ref or "").endswith("_text.png"):
+                try:
+                    from PIL import Image as _PILImage
+
+                    with _PILImage.open(spec_el.asset_ref) as img:
+                        row += f" (pre-rendered text, natural size {img.size[0]}x{img.size[1]}px)"
+                except (OSError, IOError):
+                    pass
+            layout_rows.append(row)
+        layout_lines = "\n".join(layout_rows)
+        from metagpt.ext.agentlayout.tools.layout_metrics import (
+            format_metrics_block,
+            measure_layout,
+        )
+
+        try:
+            metrics_block = format_metrics_block(
+                measure_layout(candidate, spec, bg.underlay_regions or None)
+            )
+        except Exception:  # noqa: BLE001
+            metrics_block = "(measurement unavailable)"
+        return f"""Role: You are a render inspector. The attached image is a poster candidate
+that was ALREADY rejected by a separate quality review -- your job is NOT to
+judge it, only to report concrete visible defects so the next attempt can fix
+them.
+
+# Candidate layout (element id -> bbox [L, T, R, B] in canvas pixels)
+Canvas: {spec.canvas.width}x{spec.canvas.height}.
+{layout_lines}
+
+# Canvas resources (panels + placeable background regions)
+{panel_lines}
+
+# Machine-measured geometry (neutral descriptors)
+{metrics_block}
+
+# Per-element review (Step 87 -- one entry for EVERY element above)
+Review each element IN THE ORDER LISTED while LOOKING at the render. No
+element may be skipped. For each, give a verdict:
+  - "ok" when the element is well placed and legible. 'ok' is a valid and
+    COMMON verdict -- do NOT invent defects to fill space.
+  - otherwise the element's PRIMARY issue, classified by this priority rubric:
+    1. "title_misplaced": the DOMINANT text is in the wrong spot for THIS
+       background (designer prior: center-y in [0.35, 0.57] of canvas height
+       -- but judge by eye). REQUIRED: target_bbox = the range it SHOULD occupy.
+    2. "lockup_broken": secondary/subtitle text drifted from the dominant text
+       (designer gap p90 = 0.122 of canvas height). REQUIRED: target_bbox.
+    3. "text_off_panel": this info text should sit ON a baked panel but does
+       not. REQUIRED: target_bbox = that panel's bbox (exact values above).
+    4. "text_overlap": collides with another element. REQUIRED: second_id.
+    5. "text_too_small" / "text_too_large": REQUIRED: target_area_px (int px^2).
+    6. "text_illegible": unreadable. REQUIRED: target_color (concrete hex)
+       AND/OR target_bbox (a calmer region).
+    ("text_tilted": unintended rotation, any position.)
+Fixes must be CONCRETE: every positional fix is a bbox range the element
+should move INTO. If your instinct is "move it AWAY from X", express it as
+the concrete range it should occupy instead. target_bbox values are YOUR
+visual estimates for THIS image -- the references are priors, not rules.
+
+# Output (JSON array only, ONE object per element, no commentary, no fences)
+[{{"element_id": "...", "verdict": "ok" | "<issue kind>", "second_id": null,
+"target_bbox": [L, T, R, B] | null, "target_color": "#RRGGBB" | null,
+"target_area_px": 12345 | null, "comment": "one line"}}]"""
+
+    @staticmethod
+    def _parse_observations(
+        rsp: str, expected_ids: Optional[set] = None
+    ) -> List[VisualObservation]:
+        """Parse the inspector response; invalid entries are dropped, never fatal.
+
+        Step 87 per-element form: entries carry ``element_id`` + ``verdict``
+        (+ ``comment``); verdict "ok" entries are coverage confirmations and
+        produce no observation. The pre-87 form (``kind``/``target_id``/
+        ``note``) still parses. When ``expected_ids`` is given, elements the
+        inspector failed to review are logged -- vague coverage is visible.
+        """
+        text = (rsp or "").strip()
+        if "```" in text:
+            start = text.find("[")
+            end = text.rfind("]")
+            if start == -1 or end <= start:
+                return []
+            text = text[start:end + 1]
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(data, dict):
+            data = data.get("visual_observations", data.get("reviews", []))
+        if not isinstance(data, list):
+            return []
+        out: List[VisualObservation] = []
+        reviewed: set = set()
+        for item in data[:16]:
+            if not isinstance(item, dict):
+                continue
+            target_id = item.get("element_id") or item.get("target_id")
+            if target_id:
+                reviewed.add(target_id)
+            verdict = item.get("verdict", item.get("kind"))
+            if verdict is None or str(verdict).lower() == "ok":
+                continue
+            try:
+                out.append(VisualObservation(
+                    kind=verdict,
+                    target_id=target_id,
+                    second_id=item.get("second_id"),
+                    target_bbox=item.get("target_bbox"),
+                    target_color=item.get("target_color"),
+                    target_area_px=item.get("target_area_px"),
+                    note=item.get("comment") or item.get("note") or "",
+                ))
+            except (ValidationError, TypeError):
+                continue
+        if expected_ids:
+            missing = set(expected_ids) - reviewed
+            if missing:
+                logger.warning(
+                    f"JudgeAesthetic observer skipped {len(missing)} element(s): "
+                    f"{sorted(missing)}"
+                )
+        return out[:8]
+
+    async def _observe(self, judgement: AestheticJudgement,
+                       candidates: List[Candidate], spec: DesignSpec,
+                       bg: BackgroundAnalysis) -> List[VisualObservation]:
+        """Second-pass inspector call on the reject verdict's best candidate."""
+        best = next(
+            (c for c in candidates if c.candidate_id == judgement.best_candidate_id),
+            None,
+        )
+        if best is None:
+            return []
+        prompt = self._build_observe_prompt(best, spec, bg)
+        images = self._render_images([best], spec)
+        for attempt in range(1, _OBSERVE_MAX_RETRIES + 1):
+            try:
+                rsp = await self.llm.aask(prompt, images=images)
+            except Exception as err:  # noqa: BLE001 -- observer must never kill the run
+                logger.warning(f"JudgeAesthetic observer call failed: {err}")
+                return []
+            obs = self._parse_observations(
+                rsp, expected_ids={el.id for el in best.elements}
+            )
+            if obs or (rsp or "").strip().startswith("["):
+                # A parseable (possibly all-ok) array is a final answer.
+                return obs
+            logger.warning(
+                f"JudgeAesthetic observer parse failed (attempt {attempt}/"
+                f"{_OBSERVE_MAX_RETRIES})."
+            )
+        return []
 
     @staticmethod
     def _render_images(candidates: List[Candidate], spec: DesignSpec) -> List[str]:

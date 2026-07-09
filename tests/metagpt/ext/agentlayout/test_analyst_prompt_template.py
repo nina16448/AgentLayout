@@ -270,3 +270,30 @@ def test_renderer_keeps_white_default_for_legacy_spec():
     r, g, b, a = img.convert("RGBA").getpixel((0, 0))
     assert (r, g, b) == (255, 255, 255)
     assert a == 255
+
+
+# ---------------------------------------------------------------- Step 80 text-as-image
+
+
+def test_asset_input_allows_both_ref_and_content():
+    """Step 80: pre-rendered text assets carry the bitmap AND its string."""
+    import pytest as _pytest
+
+    from metagpt.ext.agentlayout.actions.analyze_brief import AssetInput
+
+    both = AssetInput(asset_ref="/x/asset_08_text.png", content="CLEAN UP")
+    assert both.asset_ref and both.content
+    ref_only = AssetInput(asset_ref="/x/a.png")
+    content_only = AssetInput(content="hello")
+    assert ref_only.asset_ref and content_only.content
+    with _pytest.raises(ValueError):
+        AssetInput()
+
+
+def test_analyst_prompt_has_text_png_rules():
+    from metagpt.ext.agentlayout.actions.analyze_brief import PROMPT_TEMPLATE
+
+    assert "_text.png" in PROMPT_TEMPLATE
+    assert "PRE-RENDERED TEXT" in PROMPT_TEMPLATE
+    assert "never re-typeset" in PROMPT_TEMPLATE
+    assert "Do NOT additionally emit a plain text element" in PROMPT_TEMPLATE

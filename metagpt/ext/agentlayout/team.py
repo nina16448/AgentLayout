@@ -42,6 +42,7 @@ from metagpt.ext.agentlayout.roles import (
     AestheticJudgeRole,
     AnalystRole,
     AssetPlannerRole,
+    CompositionDirectorRole,
     IterationStateRole,
     LayoutGeneratorRole,
 )
@@ -90,6 +91,9 @@ def build_team(
         [
             AnalystRole(),
             AssetPlannerRole(),
+            # "先想再畫" refactor: the CompositionDirector imagines concepts that
+            # the CoordinateMapper (LayoutGeneratorRole) turns into pixels.
+            CompositionDirectorRole(),
             LayoutGeneratorRole(),
             AestheticJudgeRole(),
             IterationStateRole(max_total_rounds=max_total_rounds),
