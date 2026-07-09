@@ -180,7 +180,11 @@ metagpt/roles/idea_agent.py
 output
 # Step 76+ results live in output2 (user request: keep new runs separate from
 # the crowded output/); the bare `output` rule above does not match it.
-layout_agent/output2/
+# Ignore the RESULTS but track the drivers -- otherwise the code that produced
+# a paper number is unreviewable. Use `output2/*` (not `output2/`) so the
+# negation works: git will not descend into an ignored directory.
+layout_agent/output2/*
+!layout_agent/output2/*.py
 tmp.png
 .dependencies.json
 tests/metagpt/utils/file_repo_git
