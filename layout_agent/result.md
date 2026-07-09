@@ -79,6 +79,43 @@
 
 ---
 
+## §1.5 實驗設定 — 系統常數與演算法細節（論文 Methods 對照，2026-07-08 逐行查證）
+
+> 以下四項皆對當前程式碼逐行確認（含 `len(Enum)` 實際執行驗證），供論文 Methods / Implementation Details 直接引用。
+
+### 1.5.1 QC 規則詞彙表：ViolationType = 21 個（`tools/quality_checker.py:122`）
+
+分期演進：基礎 9（missing_element / extra_element / out_of_bounds / position_preference / no_overlap / z_order / size_preference / unknown_hint / unknown_target）→ Step 35 +2（text_obscured_by_overlay、low_text_contrast）→ Step 36 +3（decorative_image_oversized、title_undersized、title_peripheral）→ Step 43 +1（primary_outside_safe_zone）→ Step 57 +2（canvas_coverage_low、dead_band_excessive）→ Step 59 +1（text_on_busy_texture）→ Step 62 +2（composition_mismatch、text_on_photo_no_underlay）→ Step 72 +1（text_on_high_saliency）。
+
+**引用注意**：
+- 「先想再畫」重構後（2026-06-25），`PRIMARY_OUTSIDE_SAFE_ZONE` 與 `TEXT_ON_HIGH_SALIENCY` 降級為**非阻擋 warning**（進 `CheckResult.warnings`、不影響 `passed`）——阻擋型規則實為 **19 個**，論文寫「21 types (2 advisory-only)」。
+- judge 的視覺觀察詞彙 `VisualObservationKind`（`schema.py:799`，**8 個**：text_off_panel / text_illegible / text_too_small / text_too_large / text_overlap / text_tilted / title_misplaced / lockup_broken）是**另一個 enum**，勿與 ViolationType 加總。
+
+### 1.5.2 Saliency ensemble：兩處、皆 per-pixel MAX、模型不同（論文須分開描述）
+
+| | 管線側（擺放引導） | 評測側（Occ 指標，對齊 PKU/SEGA） |
+|---|---|---|
+| 位置 | `tools/background_analyzer.py` `_energy_map` | `evaluation/saliency_basnet_isnet.py` |
+| 成分 | 局部亮度標準差（~canvas/20 boxFilter 視窗，normalize [0,1]）＋ **U2Net**（rembg，最長邊縮 512 再放回） | **BASNet**（HF `creative-graphic-design/BASNet`，input 256²）＋ **ISNet**（rembg `isnet-general-use`） |
+| 合併 | `np.maximum(std_norm, alpha)` | 兩圖 resize 至 canvas 解析度後 `np.maximum`，逐字對齊 PKU eval.py |
+| 防呆 | U2Net matte 覆蓋 >70% 判為反轉、整張丟棄（退回 variance-only） | 模型載入失敗直接 raise、caller 決定跳樣本 |
+
+揭露事項：(a) 評測側 2026-06-13 metric audit A3 之前誤用 **mean**，已改 max 才與 SEGA Table 3 可比（引 Occ 數字只能用 audit 後的 run）；(b) 與 PKU 原版殘餘差異＝**以 ISNet 替代 PFPN**（模型身分差異，詳 `layout_agent/METRIC_ALIGNMENT_AUDIT.md` A3）。
+
+### 1.5.3 Safe zone 抽取：同一 energy map 的兩層摘要（`tools/background_analyzer.py`）
+
+energy map 每樣本只算一次（Step 72 起），衍生：
+1. **二值 subject-avoidance bands（`safe_zones`）**：`mask = energy > 0.18`（`_ENERGY_TAU`）→ subject 像素 bounding box → 上/下/左/右四 margin band → 保留條件＝面積 ≥3% canvas（`_MIN_SAFE_AREA_FRAC`）且 band 內 subject 佔比 <10%（`_SUBJECT_OCCUPANCY_TAU`）；`confidence = 1 − occupancy`。邊界：無 subject → 單一 `full` zone（conf 1.0）；subject 滿版 → fallback 3×3 grid 取 occupancy 最低 3 格。
+2. **連續值 low-saliency rectangles（`low_saliency_regions`，Step 72/F2）**：6×6 grid 掃 1×1／2×1／1×2／2×2 視窗，score = 1 − mean saliency，面積 ≥4% canvas（`_LOW_SAL_MIN_AREA_FRAC`），IoU>0.5 NMS 去重，取 **top-5**（`_LOW_SAL_K`）。語意區分：(1) 是「subject 不在哪」、(2) 是「全畫布最平靜矩形」。
+
+另輸出同一 energy field 的 32×32 block-mean `saliency_map` 與 3×3 `saliency_histogram`。入口 `resolve_background`：僅當 `background_asset_ref` 可載入才分析，否則（含任何例外）退回純色 stub、永不 crash。
+
+### 1.5.4 色盤分群（`tools/background_analyzer.py` `_dominant_palette`）
+
+RGB 像素直接跑 **k-means，k=5**（sklearn `KMeans(n_clusters=5, n_init=4, random_state=0)`）；像素 >20,000 時以 `np.linspace` **等距抽樣 20,000 點**（確定性、非隨機）；輸出 5 個 centroid hex、**按 cluster 人口降冪排序**；sklearn 失敗 fallback 單一全圖平均色。注意 `recommended_text_color` 非取自色盤——由最大 safe zone 的平均亮度決定（Rec. 601 luma ≥128 → `#111111`，否則 `#F4F4F4`）。
+
+---
+
 ## §2 實驗結果（逐步：動機 → 方法 → 數值 → 誠實定調）
 
 > baseline = Crello 設計師 GT 經 pipeline 自家 Judge 量到的 ≈68（注意：此為單邊測量，**非配對**，僅供同 pipeline 內部 trend 比較，見 §3.1）。Live # 編號對應 `live_runs_table.md`。
@@ -2079,3 +2116,57 @@ conda run -n meta python layout_agent/output/step74_n1897_full_trace.py \
 2. 全樣本覆蓋——SGC/TLC 有效僅 34–40/100：SEGA 前處理後只剩文字元素（11 個單元素、22 個雙元素），樹常是平的（36 全 singleton、23 單 group）＝scope 限制須註明；另 agent_a 有 7 樣本 final candidate 掉元素、agent_b 有 4 樣本對齊失敗（記錄於 skip_reasons）。
 
 **證據檔**：`output2/step90_semantic_metrics/{per_sample.json, aggregate.md, qualitative_picks.json, trees/}`、runner=`output2/step90_semantic_metrics.py`、公式與邊界處理全文見 IMPLEMENTATION_LOG Step 90。
+
+---
+
+## §13 Step 92 — B 軸 matched COLE H2H 遷移到 text-as-image 協定（2026-07-09，`output2/step92_cole_h2h/`）
+
+**動機（論文結構性缺口，非改善實驗）**：B 軸 headline 原為 Step 70 的 86.6%，量在**舊 renderer ＋ raw-asset 輸入**；主結果已換成 Step 89 的 text-as-image（N=100）。兩者同表即違反表三跨版本禁令。本步把 B 軸重量在 Step 89 的**同一批 100 樣本**上，使 A 軸（`step89_n100/metrics.json`）／B 軸（本步）／C 軸（`_summary.json` blind pairwise）**三軸同協定同樣本集**。判官（COLE prompt / gpt-4o / temp 0.0 / parser）逐字 import `step21_phaseb_eval`，與 Step 70/74 同源，唯一變動是輸入 PNG。
+
+**結果（N=100 全數完成、200 vision calls、$2.50、零 parse 失敗）**：
+
+| | Smean4 | Smean5 | Δ Smean4 [95% bootstrap CI] | W/T/L | sign p |
+|---|---|---|---|---|---|
+| **A 基線** | **7.120** | 7.256 | **−0.680 [−0.853, −0.512]** | 11/25/64 | <0.001 |
+| designer GT | 7.800 | 7.866 | — | — | — |
+
+→ **A 基線達 designer Smean4 的 91.3%**（Smean5 92.2%）。CI 不跨 0 ＝ **落後是統計顯著的**，不可宣稱匹敵。
+
+| axis | agent | GT | Δ [95% CI] | W/T/L | p |
+|---|---|---|---|---|---|
+| SDL（design layout）| 7.25 | 8.03 | −0.780 [−0.970, −0.600] | **0/48/52** | <0.001 |
+| SQL（content relevance）| 7.93 | 8.64 | −0.710 [−0.940, −0.490] | 7/46/47 | <0.001 |
+| STV（typography）| 6.68 | 7.67 | **−0.990 [−1.220, −0.760]** | 4/37/59 | <0.001 |
+| SGI（graphics）| 7.80 | 8.13 | −0.330 [−0.500, −0.170] | 11/56/33 | 0.001 |
+| SIO（innovation）| 6.62 | 6.86 | −0.240 [−0.400, −0.070] | 14/53/33 | 0.008 |
+
+**可寫**：
+1. **統一協定主表成立**：A/B/C 三軸首次來自同一協定、同一批 100 樣本，消除 `EXPERIMENT_MATRIX` 表三列的 renderer/protocol 混用風險。
+2. **Convergent validity（方法學貢獻）**：兩個**獨立**評測管道給出幾乎相同的勝場——Step 89 blind pairwise `cand 12 / tie 7 / gt 81` vs 本步 COLE 絕對分 `11/25/64`。比較式與絕對打分收斂，**削弱「結論是 judge 協定產物」的質疑**。
+3. **SDL 零勝（已驗非 bug）**：agent 在 design_layout 軸 100 樣本零勝。原始分布：GT SDL 近乎飽和常數 8（79/100 給 8、12 個 9、9 個 7），agent 散佈 3–9（49 個 8、32 個 7）；agent 兩次得 9 時 GT 亦 9 → delta=0。**judge 給設計師 GT 的 SDL 打分天花板化，agent 只能追平不能超越**——Generator-bounded 在絕對分軸上的新形式證據，與 STV 最大 gap −0.99 一致。
+4. **統計嚴謹度**：全部數字附 95% percentile bootstrap CI（10,000 次、`seed=20260709` 可重現）與非平手配對的**精確**二項 sign test（`math.comb`，無 scipy 依賴）。
+
+**不可寫**：
+1. **91.3% 與 Step 70 的 86.6% 不可同表**——renderer 版本＋輸入協定雙變因。論文引本步、Step 70 僅作 pre-text-as-image 註記。方向雖支持 Step 54/55/56 的 render-channel 假說（字型/尺寸 fidelity 交還設計師素材後 gap 縮約 4.7 pts），但**不構成受控 ablation**。
+2. 「達 91.3% ≈ 匹敵設計師」——Δ CI `[−0.853, −0.512]` 不跨 0、64/100 敗、五軸全輸且全部顯著。
+
+### §13.1 B 深審臂補跑（同日，`--arms a,b,gt`，+98 calls / $1.23）
+
+臂級 resume（a/gt 分數自磁碟重用、零重評——A 臂數字 bit-identical 可驗）。2 個樣本無 `b/final.png`（＝Step 89 記錄的 B 臂 1 error＋1 crash），pre-flight 抓出、記錄後排除 → **B 臂 n=98**。
+
+| | Smean4 | Smean5 | Δ vs GT [95% CI] | W/T/L | sign p |
+|---|---|---|---|---|---|
+| A 基線 (n=100) | 7.120 | 7.256 | −0.680 [−0.853, −0.512] | 11/25/64 | <0.001 |
+| **B 深審 (n=98)** | **6.997** | 7.153 | **−0.798 [−0.997, −0.620]** | 6/22/70 | <0.001 |
+
+→ B 達 designer 的 **89.8%**（A 為 91.3%）。**B 逐軸全面劣於 A**：SDL −0.888 vs −0.780、SQL −0.888 vs −0.710、STV −1.051 vs −0.990、SIO −0.367 vs −0.240。B 臂 SDL 亦零勝（0/43/55）。
+
+**B − A 配對比較（n=98）**：Δ Smean4 = **−0.145 [−0.316, +0.026]**；逐樣本 **B 較好 26 / 平 27 / A 較好 45，sign p=0.032**。
+
+**判定與 Step 89 的關係（本步最重要的推論）**：Step 89 用 blind pairwise 判 B vs A 為「方向相反但 n.s.」（B 較好 8 / A 較好 13）。本步用**完全獨立的第二評測管道**（COLE 絕對打分）在同一批樣本上得到**同方向且達顯著**的結果（A 較好 45 / B 較好 26，p=0.032）。故：
+
+- **可寫**：深審棧（Step 83–89 全家桶）相對 best-of-3 基線是 **net negative**，此結論在兩個獨立評測協定下一致，其中 COLE 管道達統計顯著。這是 Generator-bounded 反證鏈的第 7 筆證據，也是全鏈中**唯一達顯著的負向效果**（先前皆為 n.s.）。
+- **誠實註記**：mean Δ 的 bootstrap CI `[−0.316, +0.026]` 仍跨 0，sign test 顯著而 CI 不顯著——兩者衡量不同量（前者「A 較常勝」、後者「平均差距大小」）。正確陳述是「**B 更常輸給 A（顯著），但平均劣勢幅度小（約 0.15 分，CI 含 0）**」，**不可**寫成「B 顯著拉低 Smean」。
+- 歸因與 Step 89 §11.3 結果四一致：後期輪次的帳本單元素搬移拆散對齊群（Ali R1 0.011 → R3 0.050），破壞版面全域秩序。
+
+**證據檔**：`output2/step92_cole_h2h/{aggregate.json, aggregate.md, per_sample/<id>.json}`、runner=`output2/step92_cole_h2h.py`；可比性合約與安全設計見 IMPLEMENTATION_LOG Step 92。

@@ -5831,3 +5831,77 @@ LLM 進「求生模式」只敢置中。依 `layout_agent/REFACTOR_PLAN.md` 把�
 質性案例清單（agent_sgc−baseline_sgc 前 10）在 `aggregate.md`／`qualitative_picks.json`，最大差 `5e68da79`（vs GT Δ+0.554）可作論文對比圖。
 
 *最後更新：2026/07/08（Step 90 完成：SGC/TLC/PCA 上線＋N=100 第一版數字；方向有利未顯著、自我一致性解讀限制）*
+
+---
+
+## Step 92 — text-as-image 協定下的 matched COLE H2H（driver 就位，**尚未執行**）
+
+**動機（論文結構性缺口，非新改善實驗）**：B 軸 headline 目前是 Step 70 的「86.6% of designer Smean」，量測條件是**舊 renderer ＋ raw-asset 輸入**；但主結果已換成 Step 89 的 text-as-image 協定（N=100）。兩者放進同一張 main table，正是 `EXPERIMENT_MATRIX.md` 表三「renderer 版本／協定不可跨版本比較」明文禁止的事。本步把 B 軸重新量在 Step 89 的同一批 100 樣本上，使 **A 軸（`step89_n100/metrics.json`）／B 軸（本步）／C 軸（`_summary.json` blind pairwise）三軸同協定、同樣本集**。
+
+**新增**：`layout_agent/output2/step92_cole_h2h.py`（獨立 CLI driver，無人 import）。
+
+**可比性合約（本步最重要的設計約束）**：COLE prompt、model（`gpt-4o`）、temperature 0.0、parser 全部 `import step21_phaseb_eval` 逐字沿用——Step 70 與 Step 74 呼叫的是同一個模組。判官零重寫，**唯一變動的是餵進去的 PNG**。兩項刻意保留的行為：
+1. designer GT 是 `.jpg`，但 `_score_image` 一律套 `data:image/png` header。Step 70/74 亦然、OpenAI 依實際 bytes 判斷格式——**不「修正」它**，改了會靜默破壞與已發表數字的可比性。
+2. 評測模型由 `step21_phaseb_eval.MODEL` 釘死 `gpt-4o`，不吃 `~/.metagpt/config2.yaml` 的 pipeline model（同 Step 91 的變數隔離決策）。`--dry-run` 已實測印出 `judge=gpt-4o`，當時 config 為 o4-mini。
+
+**輸入／輸出**：
+- 讀 `output2/step89_n100/<id>/{a,b}/final.png` ＋ `output/crello_<id>/ground_truth_preview.jpg`（三者皆已確認 100/100 存在）
+- 寫 `output2/step92_cole_h2h/per_sample/<id>.json`（可續跑的工作單元）＋ `aggregate.{json,md}`
+
+**統計（順帶補上 Tier-1 的 error bar 缺口，零 scipy 依賴）**：
+- `_sign_test_p`：非平手配對的**精確**二項檢定（`math.comb`，雙尾）
+- `_bootstrap_ci`：配對 delta 均值的 percentile bootstrap，10,000 次、`seed=20260709` 寫死 → 可重現
+- 逐軸（SDL/SQL/STV/SGI/SIO）與 Smean4/Smean5 各報 Δ mean [95% CI]、W/T/L、sign p
+- `--arms a,b,gt` 時另出 B−A 配對比較，回答「深審棧到底有沒有幫助」
+
+**安全設計（避免重蹈 Step 91 的 token 記帳踩雷）**：
+- `--dry-run`：印計畫＋成本，**零 API 呼叫**（實測 `samples=100 arms=['a','gt'] calls=200 cost=$2.50`）
+- pre-flight 檢查所有圖檔存在才開始花錢；缺圖記錄不評分
+- `--skip-existing` 續跑；`--aggregate-only` 純重算報表、零呼叫
+- judge parse 失敗 → 記 `parse_failed` 並排除該配對，**絕不以 0 分充數**
+
+**驗證（合成資料，零 API）**：`sign(5,5)=1.0`、`sign(10,0)=0.00195`、`sign(0,0)=None`；常數 delta 的 bootstrap CI 塌縮到該常數；同 seed 兩次結果 bit-identical；`_paired_block` 端到端算出 `pct_of_gt_smean4=87.1`、`STV Δ=−2.0`（合成 A/GT 分數手算相符）。
+
+**執行結果（2026-07-09，N=100 全數完成、200 calls、$2.50、零 parse 失敗）**：
+
+| | Smean4 | Smean5 | Δ Smean4 [95% CI] | W/T/L | sign p |
+|---|---|---|---|---|---|
+| A 基線 | 7.120 | 7.256 | **−0.680 [−0.853, −0.512]** | 11/25/64 | <0.001 |
+| designer GT | 7.800 | 7.866 | — | — | — |
+
+→ **A 基線 = 91.3% of designer Smean4**（Smean5 92.2%）。
+
+逐軸（agent / GT / Δ mean / W-T-L / sign p）：
+
+| axis | agent | GT | Δ [95% CI] | W/T/L | p |
+|---|---|---|---|---|---|
+| SDL | 7.25 | 8.03 | −0.780 [−0.970, −0.600] | **0/48/52** | <0.001 |
+| SQL | 7.93 | 8.64 | −0.710 [−0.940, −0.490] | 7/46/47 | <0.001 |
+| STV | 6.68 | 7.67 | **−0.990 [−1.220, −0.760]**（最大 gap） | 4/37/59 | <0.001 |
+| SGI | 7.80 | 8.13 | −0.330 [−0.500, −0.170] | 11/56/33 | 0.001 |
+| SIO | 6.62 | 6.86 | −0.240 [−0.400, −0.070] | 14/53/33 | 0.008 |
+
+**發現一（convergent validity，方法學價值）**：兩個獨立評測管道給出幾乎同一個勝場數——Step 89 blind pairwise overall `cand 12 / tie 7 / gt 81` vs 本步 COLE Smean4 `11/25/64`。比較式與絕對打分兩種協定收斂，**大幅削弱「結論是 judge 協定產物」的質疑**。
+
+**發現二（SDL 零勝，已驗非 bug）**：design_layout 軸 agent **100 樣本零勝**（48 平 52 負）。原始分數分布：GT SDL 幾乎是常數 8（79/100 給 8、12 個 9、9 個 7），agent 散佈 3–9（49 個 8、32 個 7、尾巴到 3）。agent 兩次拿到 9 時 GT 也是 9 → delta=0。**judge 對 designer GT 的 SDL 給分近乎飽和**，agent 只能追平不能超越。這是 Generator-bounded 在絕對分軸上的新形式證據，且與 STV（typography）最大 gap −0.99 一致。
+
+**發現三（協定切換的真實增益）**：text-as-image 下 91.3% vs Step 70 舊協定 86.6%。**兩者不可同表**（renderer 版本＋輸入協定雙變因），但方向支持 Step 54/55/56 的 render-channel 假說：把字型/尺寸 fidelity 交還設計師素材後，殘餘 gap 縮小約 4.7 pts，剩下的才是純 placement 品質差距。
+
+**B 臂補跑（同日）**：先把 resume 粒度從「樣本」降到「臂」（`_existing_arms()` 只重用 `status==ok` 的臂，`parse_failed` 會重試），使 `--arms a,b,gt --skip-existing` 只需 **98 calls / $1.23** 而非 300 calls / $3.75。驗證：重跑後 A 臂數字 bit-identical（7.120 / 7.800 / 91.3%）＝a、gt 確實零重評。pre-flight 抓到 2 樣本缺 `b/final.png`（＝Step 89 已記錄的 B 臂 1 error＋1 crash），記錄後排除 → B 臂 n=98。
+
+| | Smean4 | Δ vs GT [95% CI] | W/T/L | sign p |
+|---|---|---|---|---|
+| A 基線 (n=100) | 7.120 | −0.680 [−0.853, −0.512] | 11/25/64 | <0.001 |
+| B 深審 (n=98) | 6.997 | −0.798 [−0.997, −0.620] | 6/22/70 | <0.001 |
+
+B = 89.8% of designer，逐軸全面劣於 A（SDL −0.888、SQL −0.888、STV −1.051、SIO −0.367），SDL 亦零勝（0/43/55）。
+
+**B − A 配對（n=98）**：Δ Smean4 = **−0.145 [−0.316, +0.026]**；B 較好 26 / 平 27 / **A 較好 45，sign p=0.032**。
+
+**推論（本步最大收穫）**：Step 89 的 blind pairwise 判 B vs A 為「方向相反但 n.s.」（B 8 / A 13）。本步以**獨立第二管道**（COLE 絕對打分）在同批樣本得**同方向且顯著**（A 45 / B 26，p=0.032）。深審棧 net negative 的結論因此跨協定成立，是 Generator-bounded 反證鏈**唯一達顯著**的負向效果。
+
+**誠實註記（避免超譯）**：sign test 顯著但 mean Δ 的 bootstrap CI `[−0.316, +0.026]` 跨 0——兩者衡量不同量。正確陳述＝「**B 更常輸給 A（顯著），但平均劣勢幅度小（~0.15 分、CI 含 0）**」，**不可**寫成「B 顯著拉低 Smean」。歸因見 Step 89 §11.3 結果四（後期輪次單元素搬移拆散對齊群）。
+
+**證據檔**：`output2/step92_cole_h2h/{aggregate.json, aggregate.md, per_sample/<id>.json}`。總計 298 calls / $3.73。
+
+*最後更新：2026/07/09（Step 92 完成：A 91.3% / B 89.8% of designer Smean4、SDL 兩臂皆零勝、B−A sign p=0.032 跨協定確認深審棧 net negative）*
