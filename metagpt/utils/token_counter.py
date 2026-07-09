@@ -39,6 +39,7 @@ TOKEN_COSTS = {
     "gpt-4-vision-preview": {"prompt": 0.01, "completion": 0.03},  # TODO add extra image price calculator
     "gpt-4-1106-vision-preview": {"prompt": 0.01, "completion": 0.03},
     "gpt-4o": {"prompt": 0.005, "completion": 0.015},
+    "o4-mini": {"prompt": 0.0011, "completion": 0.0044},
     "gpt-4o-mini": {"prompt": 0.00015, "completion": 0.0006},
     "gpt-4o-mini-2024-07-18": {"prompt": 0.00015, "completion": 0.0006},
     "gpt-4o-2024-05-13": {"prompt": 0.005, "completion": 0.015},
@@ -249,6 +250,7 @@ TOKEN_MAX = {
     "o1-preview-2024-09-12": 128000,
     "o1-mini": 128000,
     "o1-mini-2024-09-12": 128000,
+    "o4-mini": 200000,
     "gpt-4o": 128000,
     "gpt-4o-2024-05-13": 128000,
     "gpt-4o-2024-08-06": 128000,
