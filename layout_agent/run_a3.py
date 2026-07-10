@@ -57,6 +57,172 @@ def _call_budget(loop: str, tree_arm: str, sample_count: int) -> dict:
     }
 
 
+def _command_run_l1_tail(args: argparse.Namespace) -> int:
+    """Gate C L1 arm: critic + at most one revision on a persisted L0 run."""
+    store = A3RunStore(args.run_dir)
+    manifest = store.manifest()
+    config = manifest.config
+    if config.loop != "L1-Gated":
+        print("run-l1-tail requires a run whose config.loop is 'L1-Gated'", file=sys.stderr)
+        return 1
+    sample_ids = json.loads(
+        (store.run_dir / manifest.sample_ids_snapshot.stored_path).read_text()
+    )
+    source_root = args.reuse_r0_from.resolve()
+    budget = {
+        "loop": "L1-Gated (tail only, R0 reused)",
+        "tree_arm": args.tree_arm,
+        "samples": len(sample_ids),
+        "model_calls_per_sample_max": 2,
+        "model_calls_total_max": 2 * len(sample_ids),
+        "reuse_r0_from": str(source_root),
+        "note": "judge_critic + at most one revision; excludes schema-retry "
+        "attempts (up to 3x per stage)",
+    }
+    if not args.allow_api_calls:
+        print(json.dumps({"authorized": False, "budget": budget}, indent=2))
+        print(
+            "refusing to make paid model calls without --allow-api-calls",
+            file=sys.stderr,
+        )
+        return 2
+
+    import asyncio
+
+    from metagpt.ext.agentlayout.a3_pipeline import R0Bundle, R0PhaseOutcome  # noqa: E402
+    from metagpt.ext.agentlayout.a3_pipeline_l1 import A3L1GatedPipeline  # noqa: E402
+    from metagpt.ext.agentlayout.a3_stage_binding import A3StageBinding  # noqa: E402
+    from metagpt.ext.agentlayout.actions.generate_layout_a3 import GenerateLayoutA3  # noqa: E402
+    from metagpt.ext.agentlayout.actions.judge_critic_a3 import JudgeCriticA3  # noqa: E402
+    from metagpt.ext.agentlayout.layout_tree_v3 import TreeCondition  # noqa: E402
+    from metagpt.ext.agentlayout.schema import CompositionConcept  # noqa: E402
+    from metagpt.ext.agentlayout.tools.analyst_vision import A3AnalystOutput  # noqa: E402
+    from metagpt.ext.agentlayout.tools.judge_select import JudgeSelectResult  # noqa: E402
+
+    async def _unused(*_args, **_kwargs):
+        raise RuntimeError("this stage is frozen from the reused L0 run")
+
+    rows = []
+    failed = 0
+    for sample_id in sample_ids:
+        sample_dir = store.run_dir / "samples" / sample_id
+        source_sample = source_root / "samples" / sample_id
+        source_pipeline = source_sample / "pipeline"
+        binding = None
+        try:
+            r3 = R3AssetManifest.model_validate_json(
+                (source_sample / "inputs" / "r3" / R3_MANIFEST_FILENAME).read_bytes()
+            )
+            analyst_output = A3AnalystOutput.model_validate_json(
+                (source_pipeline / "analyst_output.json").read_bytes()
+            )
+            concept_payload = json.loads(
+                (source_sample / "stages" / "director" / "concept_set.json").read_text()
+            )
+            concepts = [
+                CompositionConcept.model_validate(concept)
+                for concept in concept_payload["concepts"]
+            ]
+            l0_result = json.loads((source_pipeline / "l0_result.json").read_text())
+            outcome = R0PhaseOutcome(
+                analyst_output=analyst_output,
+                condition=TreeCondition.model_validate_json(
+                    (source_pipeline / "tree_condition.json").read_bytes()
+                ),
+                bundle=R0Bundle.model_validate_json(
+                    (source_pipeline / "r0_bundle.json").read_bytes()
+                ),
+                degradations=l0_result["degradations"],
+                selection=JudgeSelectResult.model_validate_json(
+                    (source_pipeline / "judge_select_result.json").read_bytes()
+                ),
+            )
+            binding = A3StageBinding(
+                r3_manifest=r3,
+                background_overview_path=source_sample
+                / "inputs"
+                / "analyst_vision"
+                / "background_overview.png",
+                renders_dir=sample_dir / "renders",
+                stages_dir=sample_dir / "stages",
+                analyst_action=None,
+                planner_action=None,
+                director_action=None,
+                mapper_action=GenerateLayoutA3(
+                    expected_model=config.models["coordinate_mapper"].model
+                ),
+                judge_select_action=None,
+                judge_critic_action=JudgeCriticA3(
+                    expected_model=config.models["judge_critic"].model
+                ),
+            )
+            binding.hydrate_from_r0(analyst_output=analyst_output, concepts=concepts)
+            pipeline = A3L1GatedPipeline(
+                config=config,
+                analyst=_unused,
+                planner=_unused,
+                director=_unused,
+                mapper=binding.mapper,
+                renderer=binding.renderer,
+                qc=binding.qc,
+                judge_select=_unused,
+                judge_critic=binding.judge_critic,
+                repair=binding.repair,
+                verifier=binding.verifier,
+                artifacts_dir=sample_dir / "pipeline",
+            )
+            result = asyncio.run(
+                pipeline.run_from_r0(outcome=outcome, tree_arm=args.tree_arm)
+            )
+            rows.append(
+                {
+                    "sample_id": sample_id,
+                    "status": "completed",
+                    "b0": result.b0_slot_id,
+                    "final": result.final_slot_id,
+                    "repair_attempted": result.repair_attempted,
+                    "winner": result.guard.winner if result.guard else None,
+                    "stage_calls": len(binding.call_records),
+                }
+            )
+        except Exception as error:  # noqa: BLE001 -- failure must be persisted
+            failed += 1
+            rows.append(
+                {
+                    "sample_id": sample_id,
+                    "status": "failed",
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                }
+            )
+            store.record_run_error(
+                ErrorRecord(
+                    stage="a3_l1_tail_run",
+                    error_type=type(error).__name__,
+                    message=str(error),
+                    details={"sample_id": sample_id, "reuse_r0_from": str(source_root)},
+                )
+            )
+        finally:
+            if binding is not None and binding.call_records:
+                try:
+                    binding.write_call_records(sample_dir / "stage_calls.json")
+                except FileExistsError:
+                    pass
+    write_json_once(
+        store.run_dir / "a3_run_summary.json",
+        {
+            "tree_arm": args.tree_arm,
+            "budget": budget,
+            "total": len(sample_ids),
+            "failed": failed,
+            "samples": rows,
+        },
+    )
+    print(json.dumps({"total": len(sample_ids), "failed": failed}, indent=2))
+    return 1 if failed else 0
+
+
 def _command_run(args: argparse.Namespace) -> int:
     store = A3RunStore(args.run_dir)
     manifest = store.manifest()
@@ -241,10 +407,21 @@ def main() -> int:
         help="Explicitly authorize paid model calls. Without it, only the call "
         "budget is printed and the command exits with status 2.",
     )
+    tail = sub.add_parser(
+        "run-l1-tail",
+        help="Run only the L1 gated-revision tail, reusing R0 candidates and "
+        "B0 selection from a completed L0 run (Gate C protocol).",
+    )
+    tail.add_argument("--run-dir", type=Path, required=True)
+    tail.add_argument("--reuse-r0-from", type=Path, required=True)
+    tail.add_argument("--tree-arm", choices=["T0", "T1", "T2", "T3"], default="T2")
+    tail.add_argument("--allow-api-calls", action="store_true")
     args = parser.parse_args()
 
     if args.command == "run":
         return _command_run(args)
+    if args.command == "run-l1-tail":
+        return _command_run_l1_tail(args)
 
     if args.command == "prepare-pfull":
         store = A3RunStore(args.run_dir)

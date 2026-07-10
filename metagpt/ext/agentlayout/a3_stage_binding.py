@@ -130,6 +130,22 @@ class A3StageBinding:
             raise RuntimeError("Analyst has not run yet; DesignSpec is unavailable")
         return self._design_spec
 
+    def hydrate_from_r0(
+        self,
+        *,
+        analyst_output: A3AnalystOutput,
+        concepts: List[CompositionConcept],
+    ) -> None:
+        """Restore the per-sample state a persisted L0 run already produced.
+
+        Gate C's L1 arm reuses the L0 arm's frozen Analyst output and R0
+        concepts instead of re-running those stages; only the revision tail
+        makes new model calls.
+        """
+        self._analyst_output = analyst_output
+        self._design_spec = analyst_output_to_design_spec(analyst_output, self.r3_manifest)
+        self._concepts = list(concepts)
+
     # ---- pipeline callables -------------------------------------------------
 
     async def analyst(self, user_brief: str) -> A3AnalystOutput:

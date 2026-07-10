@@ -420,6 +420,39 @@ def test_l1_artifacts_are_written_once(tmp_path):
         _pipeline(L1Stages(tmp_path), artifacts_dir=artifacts)
 
 
+def test_run_from_r0_reuses_a_persisted_r0_phase_without_upstream_calls(tmp_path):
+    # Gate C contract: the L1 arm consumes the L0 arm's exact R0 outcome, so
+    # the two arms differ by the revision tail alone.
+    producer = L1Stages(tmp_path)
+    full = asyncio.run(_pipeline(producer).run(user_brief="brief"))
+
+    consumer = L1Stages(tmp_path)
+    pipeline = _pipeline(consumer)
+    from metagpt.ext.agentlayout.a3_pipeline import R0PhaseOutcome
+
+    outcome = R0PhaseOutcome(
+        analyst_output=_analyst_output(),
+        condition=producer.mapper_conditions[0],
+        bundle=full.bundle,
+        degradations=list(full.degradations),
+        selection=full.judge_select,
+    )
+    tail = asyncio.run(pipeline.run_from_r0(outcome=outcome))
+
+    # No upstream stage ran on the consumer side; only the tail did.
+    assert consumer.analyst_calls == 0
+    assert consumer.planner_calls == 0
+    assert consumer.director_calls == 0
+    assert consumer.judge_calls == 0
+    assert consumer.critic_calls == 1
+    assert consumer.repair_calls == 1
+    # The tail worked on the same B0 and reached the same kind of result.
+    assert tail.b0_slot_id == full.b0_slot_id
+    assert tail.bundle == full.bundle
+    assert tail.judge_select == full.judge_select
+    assert tail.stop_reason == "l1_unconditional_stop"
+
+
 def test_l1_pipeline_rejects_a_mismatched_loop_config(tmp_path):
     stages = L1Stages(tmp_path)
     with pytest.raises(ValueError, match="implements loop='L1-Gated'"):

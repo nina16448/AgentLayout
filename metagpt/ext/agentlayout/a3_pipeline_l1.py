@@ -28,6 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from metagpt.ext.agentlayout.a3_pipeline import (
     A3L0Pipeline,
     R0Bundle,
+    R0PhaseOutcome,
     R0SlotRecord,
     TreeArm,
 )
@@ -125,6 +126,21 @@ class A3L1GatedPipeline(A3L0Pipeline):
         outcome = await self._run_r0_phase(
             user_brief=user_brief, tree_arm=tree_arm, oracle_tree=oracle_tree
         )
+        return await self.run_from_r0(outcome=outcome, tree_arm=tree_arm)
+
+    async def run_from_r0(
+        self,
+        *,
+        outcome: "R0PhaseOutcome",
+        tree_arm: TreeArm = "T2",
+    ) -> A3L1Result:
+        """Execute only the gated single-revision tail on a finished R0 phase.
+
+        This is the Gate C contract (new_plam.md section 8): the L1 arm must
+        reuse the L0 arm's exact R0 candidates and B0 selection, so the two
+        arms differ by the revision stage alone. ``outcome`` may come from a
+        live ``_run_r0_phase`` call or be rehydrated from a persisted L0 run.
+        """
         b0 = next(
             slot
             for slot in outcome.bundle.slots

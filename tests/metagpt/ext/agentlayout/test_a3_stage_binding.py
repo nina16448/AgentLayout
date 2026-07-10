@@ -402,6 +402,43 @@ def test_renderer_and_qc_refuse_to_run_before_the_analyst(tmp_path):
         binding.qc({"candidate_id": "candidate", "elements": []})
 
 
+def test_hydrate_from_r0_restores_state_for_the_tail_only(tmp_path):
+    fakes = FakeActions(
+        critic_issues=[
+            ActionableIssue(
+                target_asset_ids=["asset_0001"],
+                issue_type="overlap",
+                observation="headline overlaps product",
+                desired_change="move headline clear of the product",
+            )
+        ]
+    )
+    binding = _binding(tmp_path, fakes, with_critic=True)
+    concepts = [_concept("Left bleed"), _concept("Top banner"), _concept("Centered")]
+    binding.hydrate_from_r0(analyst_output=_analyst_output(), concepts=concepts)
+
+    # QC/renderer are usable immediately — no analyst call happened.
+    verdict = binding.qc(_candidate().model_dump(mode="json"))
+    assert verdict.completeness == 1.0
+    assert "analyst" not in fakes.kwargs
+
+    # Repair resolves B0's concept from the hydrated concept order.
+    from metagpt.ext.agentlayout.a3_pipeline import R0SlotRecord as Slot
+    from metagpt.ext.agentlayout.tools.repair_gate import evaluate_repair_gate
+
+    b0 = Slot(
+        slot_id="r0_candidate_02",
+        status="completed",
+        candidate=_candidate().model_dump(mode="json"),
+    )
+    decision = evaluate_repair_gate(
+        JudgeCriticResult(issues=fakes.critic_issues), ["asset_0001", "asset_0002"]
+    )
+    condition = None  # fakes ignore the condition payload
+    asyncio.run(binding.repair(b0, decision, condition))
+    assert fakes.kwargs["mapper"][0]["concept"].name == "Top banner"
+
+
 def test_run_command_refuses_paid_calls_without_explicit_authorization(tmp_path):
     from metagpt.ext.agentlayout.run_manifest import A3RunStore
 
