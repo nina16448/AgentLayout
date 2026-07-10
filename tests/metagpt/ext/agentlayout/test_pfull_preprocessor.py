@@ -243,3 +243,22 @@ def test_cli_prepares_initialized_run_without_api_calls(tmp_path: Path):
     assert json.loads(normalize.stdout) == {"total": 1, "failed": 0}
     assert (store.run_dir / "samples" / "sample-001" / "inputs" / "r3" /
             "r3_asset_manifest.json").exists()
+
+    vision = subprocess.run(
+        [
+            sys.executable,
+            "layout_agent/run_a3.py",
+            "prepare-analyst-vision",
+            "--run-dir",
+            str(store.run_dir),
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(vision.stdout) == {"total": 1, "failed": 0}
+    vision_dir = store.run_dir / "samples" / "sample-001" / "inputs" / "analyst_vision"
+    assert (vision_dir / "background_overview.png").exists()
+    assert (vision_dir / "asset_contact_sheet_01.png").exists()
+    assert (vision_dir / "analyst_request.json").exists()

@@ -47,7 +47,7 @@ layout_agent/runs/a3/
 | A3-01 | Manifest、資料協定與 run directory 基礎設施 | complete |
 | A3-02 | P-Full input protocol | complete |
 | A3-03 | R3 text bitmap normalization 與 leakage tests | complete |
-| A3-04 | Analyst MLLM 與 contact sheet | pending |
+| A3-04 | Analyst MLLM 與 contact sheet | complete |
 | A3-05 | Layout Tree contract 更新 | pending |
 | A3-06 | L0、Judge-Select 與 Judge-Critic | pending |
 | A3-07 | L1-Gated、repair verifier 與 B0/B1 guard | pending |
@@ -711,3 +711,144 @@ asset_0003：512x245，aspect=2.0898
 - 沒有修改 legacy R2 artifacts 或重新評估舊結果。
 
 **A3-03 status: complete。下一階段：A3-04 Analyst MLLM、background overview 與 asset contact sheet。**
+
+---
+
+## 8. A3-04：Analyst MLLM、background overview 與 asset contact sheet
+
+**日期：** 2026-07-10  
+**起始 commit：** `59f9dcbeca90fdcdc9a8599a3589d08cff6d55f2`  
+**性質：** MLLM contract + deterministic visual input infrastructure；本階段 0 API calls、0 paid tokens。
+
+### 8.1 Vision packet
+
+新增 `metagpt/ext/agentlayout/tools/analyst_vision.py`：
+
+- vision packet：`a3.analyst-vision-packet.v1`；
+- Analyst output：`a3.analyst-output.v1`；
+- 第一張 attachment 永遠是 background overview；
+- 後續 attachment 是 foreground contact-sheet pages；
+- 每頁最多 20 個 assets、4 columns；超量自動分頁；
+- 每個 cell 使用相同 240x220 frame 與 208x158 thumbnail box；
+- bitmap 只做 aspect-preserving contain，原始相對 scale 不進 contact sheet；
+- checkerboard 顯示 alpha，stable `asset_id` 與 `IMAGE` / `TEXT BITMAP` 標籤固定放在 cell 下方；
+- foreground 順序完全沿用 R3 manifest stable-ID order；
+- background overview 只讀唯一 base background，不 composite foreground；沒有 base 時輸出明確 `NO BASE BACKGROUND — blank canvas` overview；
+- prompt 與所有 images 可離線落盤，prompt 保存 SHA-256。
+
+Prompt只提供：asset ID、media type、text content、normalized bitmap aspect ratio。它不提供 asset path、original/native dimensions、GT x/y/bbox/font size。Contact sheet uniform cells 也不提供 designer placement/relative scale。
+
+### 8.2 Analyst semantic output contract
+
+`A3AnalystOutput` 包含：
+
+- background summary；
+- design intent；
+- style keywords / language；
+- 每個 foreground 的 stable asset ID、semantic type、description、semantic role、key message 與 semantic constraints。
+
+驗證規則：
+
+- `extra=forbid`，不能偷偷輸出 geometry/path；
+- 每個 P-Full foreground ID 必須 exactly once；
+- 不得 invent/rename/drop ID；
+- placeable foreground 不得被 Analyst 重新分類成 background；
+- `analyst_output_to_design_spec` 只從 immutable R3 manifest 注入 asset refs/canvas，LLM 無權回寫路徑；
+- 所有 R3 text bitmap 仍以 `visual_type=image` 進 renderer，同時保留 `content` 供語意理解。
+
+### 8.3 Vision-required MLLM Action
+
+新增 `metagpt/ext/agentlayout/actions/analyze_a3.py`：
+
+- `AnalyzeA3Brief` 必須 `support_image_input()`；不支援即失敗，禁止 text-only fallback；
+- runtime model 必須等於 manifest/config 傳入的 exact expected snapshot；alias 或不同 model 直接失敗；
+- 每次呼叫同時附 background overview 與所有 contact pages；
+- schema/coverage parse 最多 3 次；
+- retry 會把前次 validation error 加入原 prompt，屬 reliability retry，不是 aesthetic refinement；
+- 可將真正送出的 prompt/images 先落盤，便於 prompt hash 與 artifact audit；
+- fenced JSON 或周圍 prose 可防禦性解析，最後仍由 Pydantic schema與 coverage驗證。
+
+本階段沒有實際呼叫模型；Action 已就緒，正式 MLLM call 要等 A3-08 N=5 smoke。
+
+### 8.4 CLI integration
+
+`layout_agent/run_a3.py` 新增：
+
+```bash
+python layout_agent/run_a3.py prepare-analyst-vision \
+  --run-dir layout_agent/runs/a3/<run_id>
+```
+
+逐 sample 讀 immutable P-Full + R3 manifests，輸出：
+
+```text
+samples/<sample_id>/inputs/analyst_vision/
+  background_overview.png
+  asset_contact_sheet_01.png
+  asset_contact_sheet_NN.png
+  analyst_request.json
+```
+
+run level 寫 `analyst_vision_preparation.json`；錯誤使用 versioned `ErrorRecord`，任何 sample failure 非零退出。
+
+### 8.5 Tests
+
+新增 `tests/metagpt/ext/agentlayout/test_analyst_vision.py`，並擴充 A3 CLI integration test。執行 A3-01～04 suite：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run \
+  --with pytest --with 'pydantic>=2' --with pillow \
+  pytest -q -o addopts='' \
+  --confcutdir=tests/metagpt/ext/agentlayout \
+  tests/metagpt/ext/agentlayout/test_a3_run_manifest.py \
+  tests/metagpt/ext/agentlayout/test_pfull_preprocessor.py \
+  tests/metagpt/ext/agentlayout/test_text_bitmap_normalizer.py \
+  tests/metagpt/ext/agentlayout/test_analyst_vision.py
+```
+
+結果：`35 passed in 2.70s`。
+
+涵蓋：
+
+- overview 只有 background、沒有 foreground pixels；
+- no-background 明確 blank overview；
+- 23 foreground 分成兩頁且 stable order 不變；
+- prompt 含 content/aspect 但無 path/GT geometry/native size；
+- packet prompt hash、artifacts 與 non-overwrite；
+- exact stable-ID coverage、duplicate/omission/invention防護；
+- foreground 禁止重分類為 background；
+- Analyst result -> DesignSpec 的 ID/ref 注入；
+- fenced JSON parsing；
+- Action source強制 vision、exact model、images與error-aware retry；
+- initialized run 依序完成 `prepare-pfull -> normalize-r3 -> prepare-analyst-vision`。
+
+Ruff：`All checks passed`。`py_compile` 與 scoped `git diff --check` 通過。
+
+### 8.6 Real cached-sample visual smoke（zero API）
+
+使用 `5888cbf695a7a863ddcc214f` 的 R3 manifest，輸出只寫 `/tmp/a3_analyst_vision_smoke_5888cbf6`：
+
+```text
+foreground assets：4
+attachments：2
+  1. background_overview.png
+  2. asset_contact_sheet_01.png
+prompt_sha256：a54493fc56a1a18f7c2ad9659f51b01d06d755956ddc60899150601ec98273ef
+```
+
+人工檢視結果：
+
+- overview 正確顯示 blank canvas，未混入 Eiffel/image/text foreground；
+- contact sheet 有 `asset_0000`～`asset_0003` 四個 cell；
+- Eiffel raster、透明線框圖與兩個 R3 text bitmap 均完整可見；
+- ID/media labels 清楚，text bitmap aspect preserved；
+- 未呈現 designer GT layout 或元素相對位置。
+
+### 8.7 邊界與下一步
+
+- A3 Analyst 已能看 background 與所有 foreground，但本階段沒有付費執行，不能宣稱 vision 改善 semantic accuracy；該因果問題留給 N=20 Gate A；
+- output semantic roles/descriptions 已準備給 Planner，A3-05 必須建立 versioned Layout Tree role/relation/confidence contract；
+- `DesignSpec` 是 legacy-compatible rendering boundary，A3 Planner 應以 `A3AnalystOutput` 為主要 semantic input，而不是退回固定 `semantic_relevance=0.5`；
+- image detail／reasoning effort／actual model settings必須由 A3 run caller按 A3 config記錄，若 provider不支援要 fail或明記，不得默默替代。
+
+**A3-04 status: complete。下一階段：A3-05 Layout Tree versioned contract。**

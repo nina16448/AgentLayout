@@ -20,11 +20,19 @@ from metagpt.ext.agentlayout.run_manifest import (  # noqa: E402
 )
 from metagpt.ext.agentlayout.tools.pfull_preprocessor import (  # noqa: E402
     ASSET_MANIFEST_FILENAME,
+    PFullAssetManifest,
+    build_prepared_input,
     prepare_pfull_sample,
 )
 from metagpt.ext.agentlayout.tools.text_bitmap_normalizer import (  # noqa: E402
+    R3_MANIFEST_FILENAME,
+    R3AssetManifest,
     R3NormalizationConfig,
     prepare_r3_sample,
+)
+from metagpt.ext.agentlayout.tools.analyst_vision import (  # noqa: E402
+    build_vision_packet,
+    save_vision_packet,
 )
 
 
@@ -60,6 +68,11 @@ def main() -> int:
         "normalize-r3", help="Normalize every P-Full text bitmap for an initialized run."
     )
     normalize.add_argument("--run-dir", type=Path, required=True)
+    vision = sub.add_parser(
+        "prepare-analyst-vision",
+        help="Build background overview and foreground contact sheets without API calls.",
+    )
+    vision.add_argument("--run-dir", type=Path, required=True)
     args = parser.parse_args()
 
     if args.command == "prepare-pfull":
@@ -160,6 +173,59 @@ def main() -> int:
                 )
         write_json_once(
             store.run_dir / "r3_normalization.json",
+            {"total": len(sample_ids), "failed": failed, "samples": rows},
+        )
+        print(json.dumps({"total": len(sample_ids), "failed": failed}, indent=2))
+        return 1 if failed else 0
+
+    if args.command == "prepare-analyst-vision":
+        store = A3RunStore(args.run_dir)
+        manifest = store.manifest()
+        sample_ids = json.loads(
+            (store.run_dir / manifest.sample_ids_snapshot.stored_path).read_text()
+        )
+        rows = []
+        failed = 0
+        for sample_id in sample_ids:
+            inputs = store.run_dir / "samples" / sample_id / "inputs"
+            pfull_path = inputs / "pfull" / ASSET_MANIFEST_FILENAME
+            r3_path = inputs / "r3" / R3_MANIFEST_FILENAME
+            destination = inputs / "analyst_vision"
+            try:
+                pfull = PFullAssetManifest.model_validate_json(pfull_path.read_bytes())
+                r3 = R3AssetManifest.model_validate_json(r3_path.read_bytes())
+                brief = build_prepared_input(pfull).user_brief
+                packet = build_vision_packet(r3, brief)
+                save_vision_packet(packet, destination)
+                rows.append(
+                    {
+                        "sample_id": sample_id,
+                        "status": "prepared",
+                        "prompt_sha256": packet.prompt_sha256,
+                        "image_count": len(packet.images),
+                        "image_labels": packet.image_labels,
+                    }
+                )
+            except Exception as error:  # noqa: BLE001 -- failure must be persisted
+                failed += 1
+                rows.append(
+                    {
+                        "sample_id": sample_id,
+                        "status": "failed",
+                        "error_type": type(error).__name__,
+                        "message": str(error),
+                    }
+                )
+                store.record_run_error(
+                    ErrorRecord(
+                        stage="analyst_vision_preparation",
+                        error_type=type(error).__name__,
+                        message=str(error),
+                        details={"sample_id": sample_id},
+                    )
+                )
+        write_json_once(
+            store.run_dir / "analyst_vision_preparation.json",
             {"total": len(sample_ids), "failed": failed, "samples": rows},
         )
         print(json.dumps({"total": len(sample_ids), "failed": failed}, indent=2))
