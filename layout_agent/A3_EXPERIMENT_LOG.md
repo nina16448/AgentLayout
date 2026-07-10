@@ -51,7 +51,7 @@ layout_agent/runs/a3/
 | A3-05 | Layout Tree contract 更新 | complete |
 | A3-06 | L0、Judge-Select 與 Judge-Critic | complete |
 | A3-07 | L1-Gated、repair verifier 與 B0/B1 guard | complete |
-| A3-08 | N=5 smoke | pending |
+| A3-08 | N=5 smoke（08a stage contracts complete；08b binding/CLI 與付費 run pending） | in progress |
 | A3-09 | N=20 Analyst／Tree／Loop gates | pending |
 | A3-10 | N=100 正式實驗 | blocked by gates |
 
@@ -1208,3 +1208,80 @@ Ruff：`All checks passed`。`py_compile` 與 `git diff --check` 通過。
 - L1 對品質的因果效果完全未測——那是 A3-09C Gate C 的問題；若 Gate C 未過，最終配置退回 L0。
 
 **A3-07 status: complete。下一階段：A3-08 N=5 smoke——入口是把真實 Actions（AnalyzeA3Brief/PlanAssetsA3/Director/Mapper A3 版/JudgeSelectA3/JudgeCriticA3）綁定到 A3L0Pipeline/A3L1GatedPipeline 的 stage boundary，接上 run_a3.py `run` 子命令與 per-call usage/cost capture，凍結 N=5 sample IDs 與 config 後才允許第一次付費呼叫。**
+
+---
+
+## 12. A3-08a：Director/Mapper A3 Actions 與 deterministic issue verifier
+
+**日期：** 2026-07-10  
+**起始 commit：** `24ffb8bea2fa7c7c37c1a3272940082ea8174779`  
+**性質：** N=5 smoke 前置的 stage contracts；0 API calls、0 paid tokens。
+
+### 12.1 缺口盤點
+
+A3-07 結束時 pipeline 的 Director/Mapper/verifier 仍是注入 callables；repo 中只有 legacy `ComposeConcept`/`GenerateLayout`（吃 DesignSpec/舊 LayoutTree，audit §4.2 判 partial/conflicting），沒有消費 `A3AnalystOutput`＋`TreeCondition` 的 A3 版。本階段補齊三個 contract。
+
+### 12.2 Tree condition prompt boundary
+
+`layout_tree_v3.py` 新增 `condition_prompt_payload(condition)`：T0 只輸出 asset IDs、T1 加 flat roles、T2/T3 加完整 tree JSON——Director/Mapper 共用同一 serializer，四個 ablation arms 在 prompt 層面**只差 tree 資訊**（test 鎖定 payload key set）。
+
+### 12.3 A3 Composition Director
+
+- `tools/director_contract.py`：`a3.concept-set.v1`（恰 3 個 `CompositionConcept`、名稱必須 distinct）＋`a3.director-request.v1`（prompt hash＋tree arm）；`validate_concepts_against_assets` 強制 focal_element 是已知 asset ID；prompt 要求三個概念空間上明顯不同、禁止輸出座標/bbox/字級/路徑；
+- `actions/compose_concept_a3.py`（`ComposeConceptA3`）：vision-required（附 background overview）、exact model match、error-aware retry ×3、request/attempt/concept_set artifacts write-once。
+
+### 12.4 A3 Coordinate Mapper
+
+- `tools/mapper_contract.py`：`a3.mapper-request.v1`（mode=`r0`/`revision`）；輸出沿用 pixel `Candidate` schema；`validate_candidate_coverage` 強制每個 foreground asset 恰一次；
+- **R3 leakage 邊界**：prompt 對 bitmap 只給 `bitmap_aspect_ratio`，不給 normalized/original pixel sizes、無 legacy natural-size 指令（test 鎖定）；唯一 pixel 數字是 canvas；
+- **revision mode**：同一 contract 承載 L1 單次修復——附 B0 elements 作 editing base＋gate 的 revision instruction，明示「apply ONLY the requested change」；`revision_instruction` 與 `base_elements` 必須成對提供；
+- `actions/generate_layout_a3.py`（`GenerateLayoutA3`）：vision-required、exact model、retry ×3、write-once artifacts。
+
+兩個 action 依 repo 慣例拆薄殼：純 contract（schema/prompt/parse/validate）在 tools、`metagpt.actions.Action` 依賴只出現在 action 檔，isolated uv suite 不需拉 tenacity/aiohttp 等重依賴。
+
+### 12.5 Deterministic issue verifier
+
+`tools/issue_verifier.py`（policy `a3.issue-verifier.v1`）把 12 個 closed critic issue types 分兩類（test 鎖定 partition 完整互斥）：
+
+- **STRICT（幾何可嚴格量測）**：overlap（target 交疊面積必須縮小）、clipping/out_of_bounds（出界面積縮小）、text_too_small/illegible_text（最小 target 面積增大）、misalignment（到最近 guide 的距離縮小）；
+- **PROXY（需像素/語意，誠實標注 acted-upon proxy）**：spacing/lockup/poor_contrast/text_on_busy_region/hierarchy_error/tree_inconsistency——只驗證所有 target 確實移動/改尺寸；evidence 字串明示 proxy 性質，感知品質由 Gate C 判定，不由 verifier 宣稱；
+- target 缺失 fail-closed（improved=False）；輸出 `IssueVerification` 直接餵 A3-07 `check_b1_against_b0`（integration test 驗證）。
+
+### 12.6 Tests
+
+新增 `test_a3_director_mapper.py`（10 tests）與 `test_a3_issue_verifier.py`（10 tests）。全套：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run \
+  --with pytest --with 'pydantic>=2' --with pillow \
+  pytest -q -o addopts='' \
+  --confcutdir=tests/metagpt/ext/agentlayout \
+  tests/metagpt/ext/agentlayout/test_a3_run_manifest.py \
+  tests/metagpt/ext/agentlayout/test_pfull_preprocessor.py \
+  tests/metagpt/ext/agentlayout/test_text_bitmap_normalizer.py \
+  tests/metagpt/ext/agentlayout/test_analyst_vision.py \
+  tests/metagpt/ext/agentlayout/test_layout_tree_v3.py \
+  tests/metagpt/ext/agentlayout/test_judge_select_a3.py \
+  tests/metagpt/ext/agentlayout/test_judge_critic_a3.py \
+  tests/metagpt/ext/agentlayout/test_a3_l0_pipeline.py \
+  tests/metagpt/ext/agentlayout/test_a3_repair_gate.py \
+  tests/metagpt/ext/agentlayout/test_a3_l1_pipeline.py \
+  tests/metagpt/ext/agentlayout/test_a3_director_mapper.py \
+  tests/metagpt/ext/agentlayout/test_a3_issue_verifier.py
+```
+
+結果：`122 passed in 3.48s`（A3-07 基準 102 + 新增 20）。
+
+Ruff：`All checks passed`。`py_compile` 與 `git diff --check` 通過。
+
+### 12.7 成本
+
+- API calls：0；paid tokens：0。
+
+### 12.8 邊界與下一步（A3-08b）
+
+- Director 的 spatial diversity 仍靠 prompt 要求＋名稱 distinct 驗證，沒有幾何 diversity verifier（audit 既知 partial，非本階段範圍）；
+- verifier 的 PROXY 類型只證明「修復有被執行」，不證明感知改善——這個限制已寫進 evidence 字串與本節，論文引用時不得拔高；
+- **A3-08b 剩餘工作**：stage binding factory（把 6 個真實 Actions＋renderer/QC 接到 pipeline callables、per-call usage/cost capture）、`run_a3.py run` 子命令、凍結 N=5 sample IDs 與 smoke config；之後的第一次付費呼叫需使用者確認成本後才執行。
+
+**A3-08a status: complete。**

@@ -261,6 +261,21 @@ def parse_layout_tree(response: str) -> A3LayoutTree:
     return A3LayoutTree.model_validate(json.loads(text))
 
 
+def condition_prompt_payload(condition: TreeCondition) -> Dict:
+    """Serialize a T0/T1/T2/T3 condition for Director/Mapper prompts.
+
+    Exactly the arm's allowed information is emitted: T0 exposes IDs only,
+    T1 adds flat roles, T2/T3 add the full tree. Nothing else may leak in,
+    so the ablation arms differ by tree information alone.
+    """
+    payload: Dict = {"tree_condition": condition.arm, "asset_ids": list(condition.asset_ids)}
+    if condition.flat_roles is not None:
+        payload["flat_roles"] = [entry.model_dump(mode="json") for entry in condition.flat_roles]
+    if condition.tree is not None:
+        payload["layout_tree"] = condition.tree.model_dump(mode="json")
+    return payload
+
+
 def make_tree_condition(
     arm: Literal["T0", "T1", "T2", "T3"],
     analyst: A3AnalystOutput,
