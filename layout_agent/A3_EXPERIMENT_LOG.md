@@ -1520,3 +1520,52 @@ Gate C 核心要求（new_plam §8）：兩臂共用**同一批 R0 candidates �
 - annotation 是人工工作（每 sample ≥2 標註者＋adjudication，new_plam §5.3），無法由本 session 代做；可先做的零成本前置＝annotation 工具/格式（human oracle tree 已有 `source="human_oracle"` contract）與 Crello-Relation×bitmap-cache 交集盤點。
 
 **A3-09C status: complete（L0 定案）。**
+
+---
+
+## 16. A3-09 前置：text bitmap sidecar 補齊與 human annotation contract
+
+**日期：** 2026-07-11  
+**起始 commit：** `5f00a46b`（sidecar infra commit `fbe41f42`）  
+**性質：** Gate A/B 資料與標註前置；0 LLM calls（HF dataset 串流下載，非付費 API）。
+
+### 16.1 阻塞盤點
+
+- step97 Crello-Relation N=100 中僅 **6/100** 通過 A3 離線 prep——其餘 94 個樣本的全部 text elements 都沒有 cached bitmap（step80 snapshot 只覆蓋 demo ids）；
+- legacy step80 script 有兩個問題不能直接沿用：(a) 會**改寫 cache 的 meta.json**（違反不動舊 cache 的原則）；(b) 把 bitmap **resize 到 GT canvas size**（GT geometry 進入資產本體）。
+
+### 16.2 Text bitmap sidecar（fbe41f42）
+
+- 新 contract：`a3_text_bitmaps.json`（`a3.text-bitmap-sidecar.v1`）＋`a3_text_NNNN.png` 放在 cache 目錄內的 A3 命名空間，**meta.json 一個 byte 都不動**（測試以 read_bytes 比對鎖定）；
+- bitmap 存 HF dataset 的 **raw render size**，不做 GT resize；R3 normalizer 的 tight-crop＋512 長邊本來就會消除尺寸訊號；
+- `pfull_preprocessor` 解析順序：text element 先查 sidecar、後退 legacy `asset_ref`（sidecar 優先，因 legacy 可能帶 step80 的 GT-size resize）；不支援的 sidecar version fail-closed；
+- CLI：`run_a3.py snapshot-text-bitmaps --ids <json> --crello-root <dir>`（lazy import `datasets`、串流 `cyberagent/crello` test split、sidecar per-sample write-once、incremental skip）。
+
+### 16.3 Snapshot 執行結果
+
+```text
+targets: 100（relation100_ids.json 全量）
+done: 100/100、bitmaps_saved: 542、mismatches: 0（scanned≈1954）
+```
+
+重跑審計：**relation-100 現在 100/100 通過 P-Full＋R3 離線 prep**——Gate B 樣本池與（該池內的）N=100 資料阻塞解除。Gate C 曾量到的「cache 可用池 ~4%」對一般池仍成立；一般 N=100 凍結前需對該池再跑一次 snapshot。
+
+### 16.4 Human annotation contract（tools/annotation.py）
+
+依 new_plam §5.3 建立標註工具鏈（Gate A/B 評估的共同依賴）：
+
+- `AnnotationPacket`（`a3.annotation-packet.v1`）：標註者**只看** brief、asset IDs、media type、text content＋contact sheet 檔名——無 GT geometry、無檔案路徑、**連 base background 都不給**（分組判斷純憑素材語意）；packet hash 落盤、write-once，附空白 `annotation_form.json`；
+- `HumanAnnotation`（`a3.human-annotation.v1`）：per-asset semantic_type/role、group、parent/relation、uncertain flag；coverage/duplicate 驗證；
+- `compute_agreement`：same-group pair Jaccard、edge Jaccard、type agreement、分歧資產清單——驅動 adjudication 佇列；
+- `AdjudicationRecord`（`a3.annotation-adjudication.v1`）：**強制 ≥2 標註者**＋adjudicator＋agreement 快照，分歧不可靜默解決；
+- `annotation_to_oracle_tree`：合議後標註 → `A3LayoutTree(source="human_oracle")`，直接餵 T3 arm（測試驗證 `make_tree_condition("T3", ...)` 可用）；uncertain 資產 confidence=0.5。
+
+### 16.5 Tests
+
+新增 `test_a3_annotation.py`（7 tests）＋pfull sidecar 3 tests。全套：**143 passed in 4.00s**。Ruff／py_compile／`git diff --check` 通過。
+
+### 16.6 成本與剩餘
+
+- LLM calls：0；HF 串流下載一次 test split（~1954 樣本掃描）；
+- **A3-09 剩餘阻塞只剩人工**：Gate A/B 需要真人對 Crello-Relation pilot（N=20）做雙標註＋adjudication。工具鏈（packet/form/agreement/adjudication/oracle-tree 轉換）已就緒，产生 annotation packets 只差一個對已 prep run 的批次命令（可在標註開始前補）；
+- Gate A 另需 text-only Analyst ablation 臂（Action 未建，工作量小、zero-cost 可先建）。
