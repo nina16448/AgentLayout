@@ -48,7 +48,7 @@ layout_agent/runs/a3/
 | A3-02 | P-Full input protocol | complete |
 | A3-03 | R3 text bitmap normalization 與 leakage tests | complete |
 | A3-04 | Analyst MLLM 與 contact sheet | complete |
-| A3-05 | Layout Tree contract 更新 | pending |
+| A3-05 | Layout Tree contract 更新 | complete |
 | A3-06 | L0、Judge-Select 與 Judge-Critic | pending |
 | A3-07 | L1-Gated、repair verifier 與 B0/B1 guard | pending |
 | A3-08 | N=5 smoke | pending |
@@ -852,3 +852,122 @@ prompt_sha256：a54493fc56a1a18f7c2ad9659f51b01d06d755956ddc60899150601ec98273ef
 - image detail／reasoning effort／actual model settings必須由 A3 run caller按 A3 config記錄，若 provider不支援要 fail或明記，不得默默替代。
 
 **A3-04 status: complete。下一階段：A3-05 Layout Tree versioned contract。**
+
+---
+
+## 9. A3-05：Layout Tree versioned contract
+
+**日期：** 2026-07-10  
+**起始 commit：** `d6f2f84bb66eeaf30a63dc9fd7e5c06a6d104dba`  
+**性質：** structured semantic contract + Planner Action；0 API calls、0 paid tokens。
+
+### 9.1 Versioned Layout Tree
+
+新增 `metagpt/ext/agentlayout/layout_tree_v3.py`：
+
+- schema：`a3.layout-tree.v1`；
+- request：`a3.layout-tree-request.v1`；
+- tree source：`predicted` 或 `human_oracle`；
+- 每個 foreground asset 對應一個 normalized node；
+- 每個 node 必須包含：
+  - stable `asset_id`；
+  - `semantic_type`；
+  - `semantic_role`；
+  - `group_id` / `group_label`；
+  - `parent_id`；
+  - `relation_to_parent`；
+  - `ordering_priority`；
+  - `confidence`（0..1）。
+- relation vocabulary：root、contains、supports、qualifies、identifies、calls-to-action、decorates、sequence-after、peer；
+- groups 另有 versioned records：group ID/label、完整 member IDs、ordering priority、confidence。
+
+這個 normalized node/edge contract 同時供 predicted tree、human reference tree、tree metrics 與 Mapper ablation 使用，避免各 arm 自訂不相容 schema。
+
+### 9.2 Structural validation
+
+Pydantic + cross-object validation涵蓋：
+
+- asset IDs unique；
+- parent 必須是 root 或現存 asset；
+- self-parent 禁止；
+- root/non-root relation一致；
+- DFS parent-chain cycle detection；
+- group IDs unique；
+- group members 必須存在且不得重複；
+- 每個 asset 必須 exactly one group；
+- node `group_id/group_label` 必須和 group record一致；
+- group/node confidence 範圍；
+- tree 必須 exactly cover Analyst foreground IDs。
+
+Predicted T2 tree 額外必須忠實保留 Analyst 的 semantic type 與 semantic role；Planner只能建立 grouping/edges/order/confidence，不能靜默改寫 Analyst semantics。
+
+Human T3 oracle 只要求相同 stable-ID coverage，不被迫沿用 Analyst predicted type/role。這是必要的因果邊界：oracle 必須能糾正 Analyst，否則 T3 無法定位 tree-inference bottleneck。
+
+### 9.3 Planner Action
+
+新增 `metagpt/ext/agentlayout/actions/plan_assets_a3.py`：
+
+- `PlanAssetsA3` 只讀 `A3AnalystOutput`，不看 coordinates/layout；
+- exact runtime model 必須符合 expected snapshot；
+- structured schema / semantic coverage 最多 retry 3 次；
+- retry 帶前次 validation error，屬 reliability retry；
+- Planner 是 text/structured call，不附 images，避免和 Analyst vision變因混合；
+- prompt禁止 geometry、bbox、size、font size、z-index與asset paths；
+- request prompt + SHA-256、逐 attempt raw response、final tree都可 write-once落盤；
+- artifacts directory不可覆寫。
+
+### 9.4 T0/T1/T2/T3 adapters
+
+新增 typed `TreeCondition`：
+
+- `T0`：只有 asset IDs，禁止 roles/tree；
+- `T1`：asset IDs + flat semantic type/role，禁止 groups/edges；
+- `T2`：必須是 `source=predicted` 的完整 tree，並驗證 Analyst semantic fidelity；
+- `T3`：必須是 `source=human_oracle` 的完整 tree，只共享 stable IDs，可糾正 Analyst semantics。
+
+四個 arms 均保持相同 asset ID/order；後續 Mapper adapter只能改 tree information，不得改 dataset、renderer、loop或candidate budget。
+
+### 9.5 Tests
+
+新增 `tests/metagpt/ext/agentlayout/test_layout_tree_v3.py`，執行 A3-01～05 suite：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run \
+  --with pytest --with 'pydantic>=2' --with pillow \
+  pytest -q -o addopts='' \
+  --confcutdir=tests/metagpt/ext/agentlayout \
+  tests/metagpt/ext/agentlayout/test_a3_run_manifest.py \
+  tests/metagpt/ext/agentlayout/test_pfull_preprocessor.py \
+  tests/metagpt/ext/agentlayout/test_text_bitmap_normalizer.py \
+  tests/metagpt/ext/agentlayout/test_analyst_vision.py \
+  tests/metagpt/ext/agentlayout/test_layout_tree_v3.py
+```
+
+結果：`49 passed in 2.50s`。
+
+涵蓋：
+
+- 完整 role/group/edge/order/confidence contract；
+- missing parent、cycle、self/root relation；
+- exact/non-overlapping group partition；
+- group label consistency；
+- confidence bounds；
+- Analyst ID/type/role fidelity；
+- versioned prompt/hash 與無 geometry/path input；
+- fenced JSON parsing；
+- request artifact non-overwrite；
+- T0/T1/T2/T3 payload isolation；
+- wrong predicted/oracle source拒絕；
+- T3 可糾正 Analyst semantics但不可改 asset coverage；
+- Planner exact-model、error-aware retry與no-image wiring。
+
+Ruff：`All checks passed`。`py_compile` 與 scoped `git diff --check` 通過。
+
+### 9.6 邊界與下一步
+
+- 本階段沒有實際呼叫 Planner，不能宣稱 predicted tree accuracy；human reference annotation與Gate B仍是必要證據；
+- normalized contract 已能計算 same-group pairs與parent-child edges，但正式 SGC/TLC/PCA 必須使用同一份 human reference tree評估所有 arms；
+- A3-06 應將 Coordinate Mapper 的 T0/T1/T2/T3 input adapter與 Judge-Select/Critic分離接到 canonical A3 pipeline；
+- legacy `LayoutTreeNode(id/children)` 不升級為 A3證據，也不應由 adapter悄悄轉回舊 self-consistency protocol。
+
+**A3-05 status: complete。下一階段：A3-06 L0、Judge-Select 與 Judge-Critic 分離。**
