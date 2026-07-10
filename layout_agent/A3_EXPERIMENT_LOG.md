@@ -52,7 +52,7 @@ layout_agent/runs/a3/
 | A3-06 | L0、Judge-Select 與 Judge-Critic | complete |
 | A3-07 | L1-Gated、repair verifier 與 B0/B1 guard | complete |
 | A3-08 | N=5 smoke（L0 5/5、L1-Gated 5/5） | complete |
-| A3-09 | N=20 Analyst／Tree／Loop gates | pending |
+| A3-09 | N=20 gates（Gate C complete＝L0 勝出；Gate A/B blocked on human annotation） | in progress |
 | A3-10 | N=100 正式實驗 | blocked by gates |
 
 ---
@@ -1450,3 +1450,73 @@ Prep（init/prepare-pfull/normalize-r3/prepare-analyst-vision）5/5 全過；bud
 **A3-08 status: complete。** Pipeline 資料與管線驗證通過；smoke 期間修正的 5 個缺陷全部 versioned＋測試鎖定。已知觀察（非阻塞）：Judge-Select 疑似末位偏好、白字白底 contrast、concept 幾何 diversity 未驗證、provider token usage=0。
 
 下一階段 **A3-09 N=20 gates**（Phase 2）：Gate A（Analyst vision ablation）、Gate B（Crello-Relation T0/T2/T3，需 human reference tree annotation）、Gate C（L0 vs L1-Gated，同一批 R0）。三個 gate 都是付費實驗，執行前需凍結各自 sample IDs／config／評估協定並取得授權；Gate B 另有 human annotation 前置依賴（new_plam §5.3）。
+
+---
+
+## 15. A3-09C：Gate C（L0 vs L1-Gated，N=20，同一批 R0）
+
+**日期：** 2026-07-11  
+**起始 commit：** `fe4cef54`（infra commit `f6f99805`）  
+**授權：** 使用者「繼續下一階段」；Gate A/B 因 human reference tree annotation 前置依賴而未跑，Gate C 是唯一無人工依賴的 gate。
+
+### 15.1 協定與基礎設施
+
+Gate C 核心要求（new_plam §8）：兩臂共用**同一批 R0 candidates 與同一個 B0**，只差 revision tail。實作：
+
+- `A3L1GatedPipeline.run_from_r0(outcome)`：把 L1 拆成 R0 phase＋tail，tail 可吃 persisted L0 run 的 `analyst_output/tree_condition/r0_bundle/judge_select_result`；
+- `A3StageBinding.hydrate_from_r0`：從 L0 artifacts 還原 per-sample 狀態（DesignSpec、concept order），Analyst/Planner/Director/Select 四個 stage 零重呼叫；
+- CLI `run-l1-tail --reuse-r0-from <l0-run>`：同樣 fail-closed 授權，budget 2 calls/sample；
+- 測試 133 全綠（`run_from_r0` 上游零呼叫＋binding hydration 各有測試鎖定）。
+
+### 15.2 Sample 凍結
+
+`layout_agent/sample_ids/a3_gatec_n20.json`：規則＝cache IDs 排序後以 `random.Random(42)` 洗牌、排除 5 個 smoke IDs、依序取前 20 個離線通過 P-Full＋R3 prep 的樣本（tried=473、failed=453）。**資料覆蓋發現**：失敗主因是 step80 text bitmap snapshot 只覆蓋部分 cache（`asset_NNNN has no bitmap; R3 forbids text-only fallback`），可用池約 4%——**N=100 正式實驗前必須擴大 text bitmap snapshot 覆蓋**。選樣只讀 input metadata/assets。
+
+### 15.3 執行
+
+- **L0 臂** `a3-gatec-n20-l0-01`：**20/20 completed**，恰 140 calls（7×20）、wall 10.2 min；B0 分佈 `01:5 / 02:7 / 03:8`——smoke 觀察到的末位偏好在 N=20 未重現，分佈健康；
+- **L1 tail 臂** `a3-gatec-n20-l1-tail-01`：**20/20 completed**，39 calls（19×2＋1 sample critic-only）、wall 1.6 min。
+
+### 15.4 結果
+
+| 指標 | 數值 |
+| --- | --- |
+| Critic 觸發 repair | 19/20（1 sample 無 actionable issue → 直接 B0） |
+| Critic issue types（38 issues 全在 closed enum，零模糊意見） | spacing 13、out_of_bounds 5、clipping 4、overlap 3、hierarchy_error 3、text_on_busy_region 3、misalignment 3、illegible_text 2、poor_contrast 2 |
+| **B1 存活（guard 判 B1 勝）** | **3/20（15%）** |
+| B0 保留 | 16/19（guard reject 原因：issues_not_improved 16、new_hard_violations 3） |
+| **Verifier compliance（issue 判定改善比例）** | **mean 34.2%**（per-sample 0–1.0） |
+| Completion | 兩臂皆 20/20，L1 零 sample 損失（guard fallback 有效） |
+| 幾何退化 | 無：guard by construction 擋掉新 hard violation 與 completeness 下降 |
+| 成本 | L1 增量 ~2 calls/sample（+28% vs L0 的 7） |
+
+3 個 B1 存活樣本細節：僅 1 筆是 STRICT 幾何改善（alignment error 26→13），其餘驗證都是 PROXY（targets moved/resized）——嚴格可證的改善其實只有 1/20。
+
+### 15.5 Gate C 判定
+
+升級條件逐項（new_plam §8 Gate C）：
+
+| 條件 | 結果 |
+| --- | --- |
+| L1 win > loss | 形式上成立（guard 使 loss=0），但實質只有 3/20 樣本輸出改變、其中僅 1 筆 strict 改善 |
+| completion 不下降 | ✓（20/20 vs 20/20） |
+| alignment/overlap/completeness 無系統性退化 | ✓（guard by construction） |
+| **修復問題 compliance 高** | **✗（34.2%）** |
+| 每 sample 成本可接受 | ✓（+2 calls） |
+
+**Gate C verdict：未通過（compliance 條件不成立）。依 new_plam §8「若未通過，最終配置改成 L0，不保留 loop 只為符合原始構想」——A3 最終 loop 配置定為 L0。** 此結果與整條歷史 refinement-negative 證據鏈（Step 20b、Step 89 §11.3、A2 negative）方向一致，且這次是在乾淨的 gated 單輪協定下取得：即使把修復限制在 closed-type、element-level、單次、有 deterministic guard 的最有利條件，Mapper 的修復執行力（34%）仍不足以讓 loop 產生淨效益。
+
+**正面資產**：guard 機制證明能以零 completion 損失、零幾何退化的方式安全地嘗試修復——L1-Gated 作為「無害但低效」的機制記錄，論文可誠實引用為 controlled negative。
+
+### 15.6 成本
+
+- 付費呼叫：L0 140＋L1 tail 39＝**179 calls**（gpt-5.4-mini-2026-03-17）；wall 合計 ~11.8 min；provider token usage 仍回報 0，wall time 全記錄；
+- artifacts：`layout_agent/runs/a3/a3-gatec-n20-{l0-01,l1-tail-01}/`（write-once、未 commit）。
+
+### 15.7 A3-09 剩餘
+
+- **Gate A**（Analyst vision ablation）：主要指標是 human-tree same-group F1／edge F1／role accuracy——**blocked on human reference tree annotation**；
+- **Gate B**（Crello-Relation T0/T2/T3）：同樣 blocked on annotation（T3 oracle＋所有 arms 的 SGC/TLC/PCA 都要用 human reference tree）；Crello-Relation 候選池可從 step97 N=100 subset 出發，但該 subset 是舊 SEGA 協定時代選的，需檢查與 A3 P-Full/R3 離線 prep 的交集；
+- annotation 是人工工作（每 sample ≥2 標註者＋adjudication，new_plam §5.3），無法由本 session 代做；可先做的零成本前置＝annotation 工具/格式（human oracle tree 已有 `source="human_oracle"` contract）與 Crello-Relation×bitmap-cache 交集盤點。
+
+**A3-09C status: complete（L0 定案）。**
