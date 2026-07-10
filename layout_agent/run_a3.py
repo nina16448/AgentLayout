@@ -13,8 +13,13 @@ if str(REPO_ROOT) not in sys.path:
 from metagpt.ext.agentlayout.a3_config import A3RunConfig  # noqa: E402
 from metagpt.ext.agentlayout.run_manifest import (  # noqa: E402
     A3RunStore,
+    ErrorRecord,
     load_sample_ids,
     validate_run_id,
+    write_json_once,
+)
+from metagpt.ext.agentlayout.tools.pfull_preprocessor import (  # noqa: E402
+    prepare_pfull_sample,
 )
 
 
@@ -41,7 +46,59 @@ def main() -> int:
     _common(plan)
     init = sub.add_parser("init", help="Create an immutable A3 run skeleton.")
     _common(init)
+    prepare = sub.add_parser(
+        "prepare-pfull", help="Snapshot P-Full inputs into an initialized A3 run."
+    )
+    prepare.add_argument("--run-dir", type=Path, required=True)
+    prepare.add_argument("--crello-root", type=Path, required=True)
     args = parser.parse_args()
+
+    if args.command == "prepare-pfull":
+        store = A3RunStore(args.run_dir)
+        manifest = store.manifest()
+        sample_ids = json.loads(
+            (store.run_dir / manifest.sample_ids_snapshot.stored_path).read_text()
+        )
+        rows = []
+        failed = 0
+        for sample_id in sample_ids:
+            source = args.crello_root / f"crello_{sample_id}"
+            destination = store.run_dir / "samples" / sample_id / "inputs" / "pfull"
+            try:
+                prepared = prepare_pfull_sample(source, destination)
+                rows.append(
+                    {
+                        "sample_id": sample_id,
+                        "status": "prepared",
+                        "asset_count": len(prepared.assets),
+                        "foreground_count": len(prepared.foreground_assets()),
+                        "background_asset_id": prepared.background_asset_id,
+                    }
+                )
+            except Exception as error:  # noqa: BLE001 -- failure must be persisted
+                failed += 1
+                rows.append(
+                    {
+                        "sample_id": sample_id,
+                        "status": "failed",
+                        "error_type": type(error).__name__,
+                        "message": str(error),
+                    }
+                )
+                store.record_run_error(
+                    ErrorRecord(
+                        stage="pfull_preprocessing",
+                        error_type=type(error).__name__,
+                        message=str(error),
+                        details={"sample_id": sample_id, "source": str(source)},
+                    )
+                )
+        write_json_once(
+            store.run_dir / "pfull_preparation.json",
+            {"total": len(sample_ids), "failed": failed, "samples": rows},
+        )
+        print(json.dumps({"total": len(sample_ids), "failed": failed}, indent=2))
+        return 1 if failed else 0
 
     config, ids = _load(args)
     validate_run_id(args.run_id)

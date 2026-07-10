@@ -45,7 +45,7 @@ layout_agent/runs/a3/
 | --- | --- | --- |
 | A3-00 | 現行程式 audit 與新舊邊界建立 | in progress |
 | A3-01 | Manifest、資料協定與 run directory 基礎設施 | complete |
-| A3-02 | P-Full input protocol | pending |
+| A3-02 | P-Full input protocol | complete |
 | A3-03 | R3 text bitmap normalization 與 leakage tests | pending |
 | A3-04 | Analyst MLLM 與 contact sheet | pending |
 | A3-05 | Layout Tree contract 更新 | pending |
@@ -474,3 +474,118 @@ UV_CACHE_DIR=/tmp/uv-cache uv run --with ruff ruff check \
 - 沒有建立 `layout_agent/runs/a3/` 正式 run，避免在 P-Full/R3 尚未完成前產生可被誤認為 A3 的 artifacts。
 
 **A3-01 status: complete。下一階段：A3-02 P-Full input protocol。**
+
+---
+
+## 6. A3-02：P-Full input protocol
+
+**日期：** 2026-07-10  
+**起始 commit：** `1ec0d05ad8f57017f12c4db90e15ebca4472073e`  
+**性質：** deterministic input infrastructure；0 API calls、0 paid tokens。
+
+### 6.1 實作
+
+新增 `metagpt/ext/agentlayout/tools/pfull_preprocessor.py`：
+
+- `a3.pfull-asset-manifest.v1` 與 `pfull.crello.pixel-only-background.v1`；
+- 每個 source element 以 `asset_<source_index:04d>` 建立穩定 ID；
+- raster 原始 bytes 逐一 snapshot 到新 run 的 sample asset directory，保存 SHA-256、MIME 與原始 raster dimensions；
+- text 同時保留 `content` 與可用 bitmap snapshot；
+- 所有非 background asset 都標為 `placeable`，不得因 decorative/underlay 或分類困難消失；
+- `PFullPreparedInput` 提供未來 A3 Analyst/pipeline 的 stable-ID boundary；
+- 缺少／損壞 non-text asset 直接失敗，不做 silent skip；
+- output directory 與 manifest 不可覆寫；partial failure 保留 forensic evidence。
+
+`layout_agent/run_a3.py` 新增：
+
+```bash
+python layout_agent/run_a3.py prepare-pfull \
+  --run-dir layout_agent/runs/a3/<run_id> \
+  --crello-root layout_agent/output
+```
+
+此命令只處理 initialized run 的 frozen sample IDs。每個 sample 輸出至：
+
+```text
+samples/<sample_id>/inputs/pfull/
+  asset_manifest.json
+  assets/asset_NNNN.<ext>
+```
+
+並寫入 run-level `pfull_preparation.json`；任何 sample failure 都另寫 versioned `ErrorRecord` 並使 CLI 非零退出。
+
+### 6.2 GT leakage boundary
+
+Extractor 明確不讀取或輸出：
+
+- `left` / `top` / `width` / `height`；
+- x/y/bbox/font size；
+- legacy `classifier_signals.area_ratio`；
+- legacy `kind=background_candidate`；
+- GT-derived underlay regions；
+- designer z-order compositing。
+
+舊 `kind` 只用來和 `type_code==1` 共同識別 text（向後相容）；對所有 raster 的 background/image/underlay 分類完全不信任舊 kind/classifier。
+
+### 6.3 Conservative base-background rule
+
+Crello cache 沒有可靠的 explicit background semantic label；舊 `full_canvas` 是用 GT bbox area 判斷，不能沿用。凍結規則如下：
+
+1. 只看原始 raster pixels 與公開 canvas dimensions；
+2. raster native size 必須 **恰等於 canvas size**；
+3. alpha 必須至少 98% 幾乎全不透明；
+4. 多個符合者取最小 source index 作唯一 base background；其他仍是 placeable foreground；
+5. 沒有符合者使用 blank/solid base，所有 raster 保持 placeable。
+
+這是刻意偏低 recall 的規則：寧可沒有 background，也不能用 designer placement 把 product/logo/decoration 誤當背景。背景規則若要放寬，必須在 gate 前另立 policy version，不能根據生成結果調整。
+
+### 6.4 Tests
+
+新增 `tests/metagpt/ext/agentlayout/test_pfull_preprocessor.py`，連同 A3-01 tests 執行：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run \
+  --with pytest --with 'pydantic>=2' --with pillow \
+  pytest -q -o addopts='' \
+  --confcutdir=tests/metagpt/ext/agentlayout \
+  tests/metagpt/ext/agentlayout/test_a3_run_manifest.py \
+  tests/metagpt/ext/agentlayout/test_pfull_preprocessor.py
+```
+
+結果：`17 passed in 1.16s`。
+
+涵蓋：
+
+- 全 foreground coverage 與 stable IDs；
+- 不預合成；
+- manifest 不含 GT geometry/area；
+- 任意改變 GT geometry/kind 不影響 raster classification；
+- 多 background candidate 固定 tie-break；
+- 無 background fallback；
+- missing asset fail-closed；
+- output non-overwrite；
+- initialized run 的 `prepare-pfull` CLI integration。
+
+Ruff：`All checks passed`。`py_compile` 與 `git diff --check` 通過。
+
+### 6.5 Real cached-sample smoke（zero API）
+
+使用 cached sample `5d9720b1abc8ea6d1c37b8d8`，輸出只寫 `/tmp/a3_pfull_real_smoke_5d9720`：
+
+```text
+sample_id=5d9720b1abc8ea6d1c37b8d8
+source elements=11
+manifest assets=11
+placeable foreground=11
+background_asset_id=None
+```
+
+該 sample 的舊 `asset_00_background.png` 是以 GT bbox `area_ratio=4.7395` 分成 background，但 native raster 為 1024x508、canvas 為 1590x400，不符合新 pixel-only rule，因此正確地保持 placeable，沒有依舊 label 預合成。
+
+### 6.6 邊界與下一步
+
+- P-Full manifest 必須記錄 original raster dimensions 供 provenance，但 text bitmap original size 在 R3 runtime input 中仍是 leakage risk；A3-03 必須正規化後才能交給 Analyst/Mapper，且不得把 manifest 的 text native dimensions帶進 prompt；
+- 本階段未改 legacy Crello/SEGA preprocessor；A3 runner 只允許新 `prepare-pfull` path，舊 cache/output 不得成為正式 run artifact；
+- 尚未把 P-Full assets 交給現行 text-only Analyst，依正式順序等待 A3-03/A3-04。
+
+**A3-02 status: complete。下一階段：A3-03 R3 normalization、renderer 與 leakage tests。**
