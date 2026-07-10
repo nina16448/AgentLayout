@@ -5,11 +5,14 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+import json
+
 from metagpt.ext.agentlayout.layout_tree_v3 import (
     A3LayoutTree,
     A3TreeGroup,
     A3TreeNode,
     TreeRelation,
+    apply_analyst_semantics,
     build_tree_request,
     make_tree_condition,
     parse_layout_tree,
@@ -208,6 +211,39 @@ def test_parser_accepts_fenced_tree_json():
     tree = _tree()
     parsed = parse_layout_tree("```json\n" + tree.model_dump_json() + "\n```")
     assert parsed == tree
+
+
+def test_parser_normalizes_root_child_relation():
+    # A3-08 smoke fix: a root child has exactly one legal relation value, so
+    # the parser coerces it instead of burning a schema retry.
+    payload = _tree().model_dump(mode="json")
+    payload["nodes"][0]["relation_to_parent"] = "peer"
+    parsed = parse_layout_tree(json.dumps(payload))
+    assert parsed.nodes[0].relation_to_parent == TreeRelation.ROOT
+    # The inverse mistake stays a hard error.
+    bad = _tree().model_dump(mode="json")
+    bad["nodes"][1]["relation_to_parent"] = "root"
+    with pytest.raises(ValidationError, match="non-root edges"):
+        parse_layout_tree(json.dumps(bad))
+
+
+def test_apply_analyst_semantics_enforces_fidelity_by_construction():
+    # A3-08 smoke fix: Planner paraphrases of free-text roles must not fail
+    # T2 fidelity; both semantic fields are overwritten deterministically.
+    analyst = _analyst()
+    payload = _tree().model_dump(mode="json")
+    payload["nodes"][0]["semantic_role"] = "planner paraphrased role"
+    payload["nodes"][1]["semantic_type"] = "caption"
+    drifted = A3LayoutTree.model_validate(payload)
+    with pytest.raises(ValueError, match="mismatch"):
+        validate_tree_against_analyst(drifted, analyst)
+    repaired = apply_analyst_semantics(drifted, analyst)
+    validate_tree_against_analyst(repaired, analyst)
+    assert repaired.nodes[0].semantic_role == "primary message"
+    assert repaired.nodes[1].semantic_type == "pricetag"
+    # Grouping/edges — the Planner's actual judgement — are untouched.
+    assert repaired.nodes[1].parent_id == "asset_0001"
+    assert repaired.groups == drifted.groups
 
 
 def test_tree_request_artifact_is_non_overwritable(tmp_path: Path):

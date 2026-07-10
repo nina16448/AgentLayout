@@ -44,6 +44,20 @@ class A3AssetUnderstanding(BaseModel):
     key_message: Optional[str] = None
     constraints: List[str] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def _foreground_only(self) -> "A3AssetUnderstanding":
+        # A3-08 smoke finding: full-canvas textures demoted to placeable by
+        # the P-Full pixel rule tempted the Analyst into 'background_image',
+        # which the P-Full contract forbids. Rejecting at the schema level
+        # gives the retry loop an actionable per-asset error.
+        if self.semantic_type == SemanticType.BACKGROUND_IMAGE:
+            raise ValueError(
+                f"{self.asset_id}: P-Full foreground assets cannot use "
+                "semantic_type='background_image'; use the closest placeable "
+                "type such as 'decorative_image'"
+            )
+        return self
+
 
 class A3AnalystOutput(BaseModel):
     """Semantic-only Analyst output; geometry and file paths are forbidden."""
@@ -197,6 +211,9 @@ asset IDs. Uniform cells deliberately remove original placement and scale.
 # Responsibilities
 - Describe the background's visual content, saliency/quiet regions and palette.
 - Assign every foreground asset a semantic type and semantic role.
+- semantic_type must NEVER be "background_image": every listed asset is
+  placeable foreground by contract, even full-canvas textures or panels.
+  Use "decorative_image" for texture/panel-like assets.
 - Use text `content` for meaning and inspect its bitmap for visual style.
 - State semantic constraints only. Do NOT output coordinates, bbox, x/y, width,
   height, font size, original scale, z-index or file paths.

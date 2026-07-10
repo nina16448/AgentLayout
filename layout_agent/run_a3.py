@@ -94,6 +94,7 @@ def _command_run(args: argparse.Namespace) -> int:
     for sample_id in sample_ids:
         sample_dir = store.run_dir / "samples" / sample_id
         inputs = sample_dir / "inputs"
+        binding = None
         try:
             r3 = R3AssetManifest.model_validate_json(
                 (inputs / "r3" / R3_MANIFEST_FILENAME).read_bytes()
@@ -145,7 +146,6 @@ def _command_run(args: argparse.Namespace) -> int:
                     tree_arm=args.tree_arm,
                 )
             )
-            binding.write_call_records(sample_dir / "stage_calls.json")
             rows.append(
                 {
                     "sample_id": sample_id,
@@ -172,6 +172,14 @@ def _command_run(args: argparse.Namespace) -> int:
                     details={"sample_id": sample_id, "tree_arm": args.tree_arm},
                 )
             )
+        finally:
+            # Paid calls happened even when the sample failed; the cost trail
+            # must survive either way (A3-08 smoke finding).
+            if binding is not None and binding.call_records:
+                try:
+                    binding.write_call_records(sample_dir / "stage_calls.json")
+                except FileExistsError:
+                    pass
     write_json_once(
         store.run_dir / "a3_run_summary.json",
         {

@@ -10,6 +10,7 @@ from metagpt.ext.agentlayout.tools.analyst_vision import (
     A3AnalystOutput,
     A3AssetUnderstanding,
     analyst_output_to_design_spec,
+    build_analyst_prompt,
     build_background_overview,
     build_contact_sheets,
     build_vision_packet,
@@ -169,6 +170,18 @@ def test_analyst_output_requires_exact_asset_coverage(tmp_path: Path):
     )
     with pytest.raises(ValueError, match="cannot be reclassified"):
         validate_asset_coverage(reclassified, manifest)
+
+
+def test_asset_understanding_rejects_background_image_at_schema_level(tmp_path: Path):
+    # A3-08 smoke fix: the parse/retry loop must see a per-asset error, not
+    # only the post-hoc coverage failure.
+    manifest = _r3_manifest(tmp_path)
+    payload = _valid_output(manifest).model_dump(mode="json")
+    payload["assets"][0]["semantic_type"] = "background_image"
+    with pytest.raises(ValueError, match="cannot use"):
+        A3AnalystOutput.model_validate(payload)
+    prompt = build_analyst_prompt(manifest, "brief")
+    assert 'must NEVER be "background_image"' in prompt
 
 
 def test_analyst_output_parser_accepts_fenced_json(tmp_path: Path):

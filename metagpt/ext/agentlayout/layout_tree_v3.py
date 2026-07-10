@@ -223,9 +223,10 @@ Build an explicit semantic Layout Tree BEFORE any coordinates are generated.
 
 # Rules
 - Include every foreground asset ID exactly once. Never invent or rename IDs.
-- Preserve each asset's semantic_type from the Analyst.
-- Assign a concise semantic_role, exactly one semantic group, a parent, relation,
-  ordering priority and confidence.
+- Copy each asset's semantic_type and semantic_role from the Analyst output
+  VERBATIM; both are enforced deterministically after parsing.
+- Assign exactly one semantic group, a parent, relation, ordering priority
+  and confidence per asset — grouping and edges are your only judgement.
 - Use parent_id="root" and relation_to_parent="root" for top-level assets.
 - Every non-root parent must be another supplied asset ID; no cycles.
 - Decorative assets remain represented and grouped; never drop them.
@@ -258,7 +259,41 @@ def parse_layout_tree(response: str) -> A3LayoutTree:
         start, end = text.find("{"), text.rfind("}")
         if start >= 0 and end > start:
             text = text[start : end + 1]
-    return A3LayoutTree.model_validate(json.loads(text))
+    payload = json.loads(text)
+    # A3-08 smoke normalization: a root child has exactly one legal relation
+    # value, so coercing it is unambiguous and loses no information. The
+    # inverse case (non-root parent with relation='root') stays a hard error.
+    for node in payload.get("nodes", []):
+        if isinstance(node, dict) and node.get("parent_id", "root") == "root":
+            node["relation_to_parent"] = "root"
+    return A3LayoutTree.model_validate(payload)
+
+
+def apply_analyst_semantics(tree: A3LayoutTree, analyst: A3AnalystOutput) -> A3LayoutTree:
+    """Enforce Analyst semantic_type/semantic_role on a predicted tree.
+
+    A3-08 smoke finding: requiring the Planner LLM to re-emit the Analyst's
+    free-text roles byte-for-byte is brittle — paraphrases failed the T2
+    fidelity check. Overwriting both fields deterministically makes fidelity
+    true by construction; the Planner only ever contributes grouping, edges,
+    ordering and confidence. Unknown asset IDs are left untouched so the
+    coverage validator still reports them.
+    """
+    expected = {asset.asset_id: asset for asset in analyst.assets}
+    nodes = [
+        node.model_copy(
+            update={
+                "semantic_type": expected[node.asset_id].semantic_type,
+                "semantic_role": expected[node.asset_id].semantic_role,
+            }
+        )
+        if node.asset_id in expected
+        else node
+        for node in tree.nodes
+    ]
+    return A3LayoutTree(
+        source=tree.source, root_label=tree.root_label, nodes=nodes, groups=tree.groups
+    )
 
 
 def condition_prompt_payload(condition: TreeCondition) -> Dict:

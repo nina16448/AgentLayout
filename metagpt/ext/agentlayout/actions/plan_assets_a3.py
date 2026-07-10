@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from metagpt.actions import Action
 from metagpt.ext.agentlayout.layout_tree_v3 import (
     A3LayoutTree,
+    apply_analyst_semantics,
     build_tree_request,
     parse_layout_tree,
     save_tree_request,
@@ -54,6 +55,7 @@ class PlanAssetsA3(Action):
                     handle.write(response)
             try:
                 tree = parse_layout_tree(response)
+                tree = apply_analyst_semantics(tree, analyst)
                 validate_tree_against_analyst(tree, analyst)
                 if artifacts_dir is not None:
                     from metagpt.ext.agentlayout.run_manifest import write_json_once

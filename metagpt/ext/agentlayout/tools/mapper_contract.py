@@ -36,7 +36,11 @@ def validate_candidate_coverage(candidate: Candidate, asset_ids: List[str]) -> N
     expected = set(asset_ids)
     actual = [element.id for element in candidate.elements]
     if len(actual) != len(set(actual)):
-        raise ValueError("candidate places at least one asset more than once")
+        duplicates = sorted({asset_id for asset_id in actual if actual.count(asset_id) > 1})
+        raise ValueError(
+            f"candidate places at least one asset more than once: {duplicates}; "
+            "visually identical assets are still distinct asset IDs"
+        )
     if set(actual) != expected:
         raise ValueError(
             f"candidate coverage mismatch: missing={sorted(expected - set(actual))}, "
@@ -97,6 +101,8 @@ concept into exact pixel coordinates for every foreground asset.
 {revision_block}
 # Rules
 - Output one bbox per asset ID, each asset exactly once; never invent IDs.
+- Visually similar or identical assets are still DISTINCT asset IDs: place
+  every listed asset_id exactly once and never repeat an ID.
 - Choose each element's size from the design context and the canvas; keep
   each bitmap's aspect ratio (width/height must match bitmap_aspect_ratio).
 - Keep every bbox fully inside the canvas.

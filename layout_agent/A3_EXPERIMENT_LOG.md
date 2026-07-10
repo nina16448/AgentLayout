@@ -51,7 +51,7 @@ layout_agent/runs/a3/
 | A3-05 | Layout Tree contract 更新 | complete |
 | A3-06 | L0、Judge-Select 與 Judge-Critic | complete |
 | A3-07 | L1-Gated、repair verifier 與 B0/B1 guard | complete |
-| A3-08 | N=5 smoke（08a stage contracts complete；08b binding/CLI 與付費 run pending） | in progress |
+| A3-08 | N=5 smoke（L0 5/5、L1-Gated 5/5） | complete |
 | A3-09 | N=20 Analyst／Tree／Loop gates | pending |
 | A3-10 | N=100 正式實驗 | blocked by gates |
 
@@ -1374,3 +1374,79 @@ Budget：L0 N=5 最多 35 model calls（無 retry 時）；L1-Gated 另一 run �
 - 第一次付費呼叫依規範停在授權門口，等使用者確認。
 
 **A3-08b status: complete（zero-API 部分）。A3-08 剩餘＝實際 N=5 付費 smoke，需使用者授權 `--allow-api-calls` 與 model snapshot 確認。**
+
+---
+
+## 14. A3-08c：N=5 付費 smoke 執行（L0 三輪＋L1-Gated 一輪）
+
+**日期：** 2026-07-11  
+**起始 commit：** `ff41bf34ce055639587688887220ce456f440b0e`（dirty worktree）  
+**授權：** 使用者 2026-07-11 口頭授權（L0 ≤35 calls＋L1 ≤45 calls）  
+**Model snapshot：** `gpt-5.4-mini-2026-03-17`（runtime config 已相符，exact-model guard 全程通過；`MULTI_MODAL_MODELS` 已含 `gpt-5.4-mini` substring，vision 正常）
+
+### 14.1 Run 1（a3-smoke-n5-l0-01）：0/5，三個 contract 缺陷現形
+
+Prep（init/prepare-pfull/normalize-r3/prepare-analyst-vision）5/5 全過；budget gate 驗證正常（未授權 exit 2）。付費執行 **0/5 completed**，機制全部正確（fail-closed、versioned ErrorRecord、單 sample 失敗不中斷）：
+
+| 缺陷 | 樣本數 | 根因 |
+| --- | --- | --- |
+| Analyst 把 placeable 全畫布材質標成 `background_image`，retry 3 次仍堅持 | 2/5 | P-Full pixel-only 規則把舊背景降級為 placeable，schema 卻仍允許該值，coverage 驗證只在事後拒絕 |
+| Planner root child 用非 `root` relation，retry 3 次不收斂 | 1/5 | root child 只有一個合法 relation 值，卻交給 LLM 重試 |
+| Planner semantic_role 與 Analyst 逐字不符 | 2/5 | A3-05 prompt 寫「Assign a concise semantic_role」但 T2 fidelity 驗證要求逐字相同——prompt 與 contract 直接矛盾 |
+
+另發現 run CLI 缺陷：stage_calls 只在成功時落盤，失敗 sample 的付費呼叫（本輪 ~18 次）沒有 cost trail。
+
+### 14.2 修正（全部 versioned、131 tests 全綠）
+
+1. `A3AssetUnderstanding` schema 層禁止 `background_image`（指名 asset 的 actionable error 進 retry loop）＋Analyst prompt 明文規則；coverage 驗證保留為第二層防護；
+2. `parse_layout_tree` 正規化：root child 的 relation 一律 coerce 為 `root`（唯一合法值、零資訊損失）；反向錯誤（非 root parent 用 `root`）維持硬錯誤；
+3. `apply_analyst_semantics`：Planner 輸出的 semantic_type/role 由 Analyst 輸出**確定性覆寫**（T2 fidelity by construction），Planner 只貢獻 grouping/edges/ordering/confidence；tree prompt 同步改為 VERBATIM 指令；
+4. run CLI `finally` 落盤 stage_calls（成功失敗都留 cost trail）；
+5. （Run 2 後追加）`validate_candidate_coverage` 重複 ID 錯誤指名重複的 IDs＋Mapper prompt 明文「視覺相同的資產仍是不同 asset ID」。
+
+新增 3 個測試鎖定修正 1–3；修正 5 由既有測試覆蓋（錯誤訊息 phrase 不變）。
+
+### 14.3 Run 2（a3-smoke-n5-l0-02）：4/5
+
+- 4 samples completed，各恰 7 stage calls、B0 選定、unconditional stop；
+- render 視覺抽查：R3 text bitmap 保留設計師字型/顏色、aspect 正確、無 GT 位置洩漏；
+- 1 sample `CandidateShortfall`（fail-closed 正確）：Mapper 對兩個視覺相同的 coupon strip 重複同一 asset ID、retry 3 次不收斂 → 修正 5；
+- 失敗 sample 的 stage_calls 正確落盤（修正 4 生效）。
+
+### 14.4 Run 3（a3-smoke-n5-l0-03）：**5/5，L0 smoke 通過**
+
+- 5/5 completed，每 sample 恰 7 calls（總 35，零 retry 燒穿）；
+- per-sample wall time 20.0–56.6s，run 總計 176.9s；
+- B0 分佈：4× `r0_candidate_03`、1× `r0_candidate_01`——**觀察：Judge-Select 可能有 attachment 順序偏好（末位偏好）**，樣本太小不能下結論，記為 Gate C／正式 run 前值得做 position-shuffle 的候補檢查；
+- 視覺抽查（先前失敗樣本）：西裝照、雙 coupon 疊成 -40%/SALE lockup、材質塊全部就位；**白色文字 bitmap 放白底上會隱形（poor_contrast）**——品質問題非 smoke 阻塞，正是 Judge-Critic issue types 的靶子。
+
+### 14.5 Run 4（a3-smoke-n5-l1-01）：**5/5，L1-Gated smoke 通過**
+
+- 5/5 completed，每 sample 恰 9 calls（總 45）；
+- 整條 L1 鏈全部開火：Critic 每 sample 輸出 1–2 個 closed-type issues（spacing/misalignment/clipping/lockup/text_on_busy_region/illegible_text——全在 closed enum 內，零模糊意見）→ gate 觸發 → 單次 revision → deterministic verifier → **guard 5/5 守回 B0**（unimproved 或 revision 引入新 hard violation，如 out_of_bounds、text_obscured_by_overlay）→ unconditional stop；
+- guard 防退化行為與歷史 refinement-negative 結果（step 20b/step89）方向一致；「L1 是否有淨效益」是 A3-09C Gate C 的問題，smoke 只驗證機制。
+
+### 14.6 Phase 1 smoke checklist（new_plam §8）
+
+| 檢查項 | 結果 |
+| --- | --- |
+| Analyst 確實看到 background 與所有 foreground | ✓（vision packet＋exact model） |
+| Asset IDs 全 pipeline 一致 | ✓（coverage 驗證層層把關） |
+| Layout Tree 在座標前產生 | ✓（planner 一次、freeze） |
+| 3 concepts spatially distinct | ✓（名稱 distinct 驗證；幾何 diversity 仍靠 prompt） |
+| 3 candidates 完整 render | ✓（run-03/L1 全數） |
+| R3 字型可讀、alpha crop、無 GT bbox leakage | ✓（視覺抽查＋contract tests） |
+| L0 與 L1-Gated 都能停止 | ✓（全部 unconditional stop） |
+| trace/cost/model ID/prompt hash 落盤 | ✓（stage_calls、per-stage request＋sha256、exact-model guard；token usage 為 provider 回報 0——已知 repo 級缺口，wall time 有記錄） |
+
+### 14.7 成本
+
+- 付費呼叫：run1 ~18（失敗前）＋run2 ~33＋run3 35＋run4 45 ≈ **131 calls**（gpt-5.4-mini-2026-03-17，含 vision）；
+- provider usage 回報全 0（與 step91 歷史觀察一致），實際 dollar 成本無法從 runtime 取得；wall time 全程記錄；
+- artifacts 落於 `layout_agent/runs/a3/a3-smoke-n5-{l0-01,l0-02,l0-03,l1-01}/`（write-once，未 commit——依 repo output 慣例留在 worktree，四個 run 目錄互不覆蓋、失敗 run 保留 forensic 證據）。
+
+### 14.8 結論與下一步
+
+**A3-08 status: complete。** Pipeline 資料與管線驗證通過；smoke 期間修正的 5 個缺陷全部 versioned＋測試鎖定。已知觀察（非阻塞）：Judge-Select 疑似末位偏好、白字白底 contrast、concept 幾何 diversity 未驗證、provider token usage=0。
+
+下一階段 **A3-09 N=20 gates**（Phase 2）：Gate A（Analyst vision ablation）、Gate B（Crello-Relation T0/T2/T3，需 human reference tree annotation）、Gate C（L0 vs L1-Gated，同一批 R0）。三個 gate 都是付費實驗，執行前需凍結各自 sample IDs／config／評估協定並取得授權；Gate B 另有 human annotation 前置依賴（new_plam §5.3）。
