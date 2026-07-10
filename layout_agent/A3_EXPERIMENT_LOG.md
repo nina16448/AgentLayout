@@ -49,7 +49,7 @@ layout_agent/runs/a3/
 | A3-03 | R3 text bitmap normalization 與 leakage tests | complete |
 | A3-04 | Analyst MLLM 與 contact sheet | complete |
 | A3-05 | Layout Tree contract 更新 | complete |
-| A3-06 | L0、Judge-Select 與 Judge-Critic | pending |
+| A3-06 | L0、Judge-Select 與 Judge-Critic | complete |
 | A3-07 | L1-Gated、repair verifier 與 B0/B1 guard | pending |
 | A3-08 | N=5 smoke | pending |
 | A3-09 | N=20 Analyst／Tree／Loop gates | pending |
@@ -971,3 +971,139 @@ Ruff：`All checks passed`。`py_compile` 與 scoped `git diff --check` 通過�
 - legacy `LayoutTreeNode(id/children)` 不升級為 A3證據，也不應由 adapter悄悄轉回舊 self-consistency protocol。
 
 **A3-05 status: complete。下一階段：A3-06 L0、Judge-Select 與 Judge-Critic 分離。**
+
+---
+
+## 10. A3-06：L0、Judge-Select 與 Judge-Critic 分離
+
+**日期：** 2026-07-10  
+**起始 commit：** `25ed3716e1aecdada791e3767980f3f821c2028b`  
+**性質：** canonical orchestration + Judge 分離 contract；0 API calls、0 paid tokens、未執行任何 N=5/N=20/N=100。
+
+### 10.1 Judge-Select（獨立 schema/prompt/Action/artifact）
+
+新增 `metagpt/ext/agentlayout/tools/judge_select.py`：
+
+- result schema：`a3.judge-select-result.v1`；request schema：`a3.judge-select-request.v1`；
+- `JudgeSelectResult` 只有 `ranking`（恰 3 個、不重複）與 `selected_candidate_id`（必須等於 ranking[0]）；
+- `extra=forbid`：score、total、verdict、feedback、suggestions 等欄位一律 ValidationError，critique 在結構上不可表示，而不是只靠 prompt 禁止；
+- 沒有 ACCEPT/REJECT、沒有任何 acceptance threshold；每次呼叫必定選出一個 B0；
+- prompt 同時看 3 個 R0 renders（附件順序＝候選清單順序）並附 per-candidate deterministic QC 摘要作 structured context；明文禁止輸出 critique/建議/分數；
+- `validate_selection` 強制 ranking 是提交候選的 exact permutation；
+- request 保存 prompt、prompt SHA-256、candidate IDs、3 個 render refs 與各自 SHA-256；`save_judge_select_request` write-once。
+
+新增 `metagpt/ext/agentlayout/actions/judge_select_a3.py`（`JudgeSelectA3`）：
+
+- 必須 `support_image_input()`，禁止 text-only fallback；
+- runtime model 必須 exact match expected snapshot，alias/替代模型直接失敗；
+- 強制恰好 3 個 rendered candidates，並以 base64 附上 3 張 render；
+- schema/permutation parse 最多 retry 3 次，retry 把前次 validation error 附回原 prompt（reliability retry，不是 aesthetic refinement）；
+- artifacts：`judge_select_request.json`、逐 attempt `attempt_NN_response.txt`（`open("x")`）、`judge_select_result.json`，全部 write-once。
+
+### 10.2 Judge-Critic（獨立 schema/prompt/Action/artifact）
+
+新增 `metagpt/ext/agentlayout/tools/judge_critic.py`：
+
+- result schema：`a3.judge-critic-result.v1`；request schema：`a3.judge-critic-request.v1`；
+- `JudgeCriticResult` 只有 `issues`（0–2 個）；沒有 overall score、ranking、verdict 欄位；空 issues list 是合法結果；
+- 每個 `ActionableIssue` 必須有：`target_asset_ids`（≥1、不可重複）、closed `issue_type`、`observation`、`desired_change`；
+- closed issue-type enum 直接取自 new_plam.md §4.5 repair gate 允許清單：overlap / clipping / out_of_bounds / misalignment / spacing / lockup / text_too_small / illegible_text / poor_contrast / text_on_busy_region / hierarchy_error / tree_inconsistency；
+- 「不夠漂亮」「缺少創意」不在 enum 內，parse 階段即 ValidationError——模糊意見在結構上不可成為 actionable issue；
+- `validate_critic_targets` 強制 target 必須是版面中實際存在的 asset ID；
+- request 保存 prompt、prompt SHA-256、B0 candidate ID、B0 render ref 與 SHA-256、known asset IDs；write-once。
+
+新增 `metagpt/ext/agentlayout/actions/judge_critic_a3.py`（`JudgeCriticA3`）：
+
+- 只附一張圖：B0 render；prompt 明示「selection 已結束，禁止 re-rank/re-select」；
+- vision-required、exact model match、error-aware retry 3 次，artifacts write-once，同 Select 模式；
+- 本階段只建立 gate-ready contract；真正消費 issues 的一次 targeted repair 在 A3-07。
+
+### 10.3 Canonical L0 orchestrator
+
+新增 `metagpt/ext/agentlayout/a3_pipeline.py`（`A3L0Pipeline`）：
+
+```text
+Analyst (once, frozen)
+  -> Asset Planner (once, frozen; 只有 T2 呼叫)
+  -> Composition Director (恰 3 concepts)
+  -> Coordinate Mapper (每 concept 一個 candidate)
+  -> deterministic QC (逐 candidate 記錄，不過濾、不丟棄)
+  -> Judge-Select 選 B0
+  -> unconditional stop
+```
+
+- pipeline version：`a3.l0-pipeline.v1`；R0 bundle：`a3.r0-bundle.v1`；candidate policy：`a3.l0-candidate-policy.v1`；
+- 不走 legacy `LayoutPipeline`：新 orchestrator 原始碼中不存在 ACCEPT/REJECT、threshold、consecutive accepts、max_total_rounds、issue ledger、polish、Analyst reroute 或任何 while loop（有 source-level test 鎖定）；
+- stage 全部以注入 callables 提供，離線 fake Actions 即可驗證 orchestration contract，0 API；
+- L1-Gated config 直接 `NotImplementedError`（明確標注 A3-07），不會靜默把 L1 當 L0 跑；
+- **exactly-three contract**：Director 不是 3 個 concepts → versioned `ConceptCountMismatch` ErrorRecord 落盤並 fail-closed；任一 slot 的 Mapper/render 失敗記入該 slot，完成數 <3 → versioned `CandidateShortfall` ErrorRecord（含逐 slot 失敗原因）落盤、不呼叫 Judge、不降級；
+- **all-QC-fail 不降級**：3 個候選帶著明確 `qc_passed=false` 標記進 Judge-Select，結果標 `degradations=["all_qc_failed"]`，永遠不會變成未標記的正式候選；
+- **tree ablation boundary**：T2 呼叫 Planner 一次後 freeze；T0/T1/T3 完全不呼叫 Planner；T0/T1 的 `TreeCondition` 不含 tree（T1 只有 flat roles），三個 slot 共用同一個 condition 物件、budget/protocol 一致；T3 必須外部提供 human oracle tree；
+- artifacts（write-once）：`analyst_output.json`、`tree_condition.json`、`r0_bundle.json`（含每 slot render SHA-256 與 QC 結果）、`judge_select_result.json`、`l0_result.json`、`errors/error_NNNN.json`；artifacts 目錄 `mkdir(exist_ok=False)`，同一目錄不可重用。
+
+### 10.4 Selection 與 critique 是兩次獨立呼叫
+
+- 兩個 result schema 除 `schema_version` 外欄位完全 disjoint（select 無 `issues`；critic 無 `ranking`/`selected_candidate_id`）；
+- 兩個 prompt 各自獨立建構、SHA-256 不同、角色名稱不同（Judge-Select / Judge-Critic）；
+- 兩個 Action 各自獨立 artifacts 目錄與 request/response 檔案；
+- L0 pipeline 只呼叫 Judge-Select 一次，orchestrator 沒有任何 critic hook（test 以 call counter + `hasattr` 驗證）；critique 只能是對 B0 的第二次獨立呼叫。
+
+### 10.5 Tests
+
+新增：
+
+- `tests/metagpt/ext/agentlayout/test_judge_select_a3.py`（9 tests）；
+- `tests/metagpt/ext/agentlayout/test_judge_critic_a3.py`（11 tests）；
+- `tests/metagpt/ext/agentlayout/test_a3_l0_pipeline.py`（10 tests）。
+
+執行 A3-01～06 全套：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run \
+  --with pytest --with 'pydantic>=2' --with pillow \
+  pytest -q -o addopts='' \
+  --confcutdir=tests/metagpt/ext/agentlayout \
+  tests/metagpt/ext/agentlayout/test_a3_run_manifest.py \
+  tests/metagpt/ext/agentlayout/test_pfull_preprocessor.py \
+  tests/metagpt/ext/agentlayout/test_text_bitmap_normalizer.py \
+  tests/metagpt/ext/agentlayout/test_analyst_vision.py \
+  tests/metagpt/ext/agentlayout/test_layout_tree_v3.py \
+  tests/metagpt/ext/agentlayout/test_judge_select_a3.py \
+  tests/metagpt/ext/agentlayout/test_judge_critic_a3.py \
+  tests/metagpt/ext/agentlayout/test_a3_l0_pipeline.py
+```
+
+結果：`79 passed in 2.88s`（基準 49 + 新增 30）。
+
+涵蓋：
+
+- selection schema 純 ranking、無 score/verdict/critique 欄位、extra 欄位拒絕；
+- ranking 唯一性、selected=ranking[0]、exact permutation；
+- select prompt 無 ACCEPT/REJECT/threshold/35、恰 3 候選強制；
+- critic 最多 2 issues、模糊 issue type 結構性拒絕、target/desired_change 必填、
+  targets 必須存在、空 issues 合法、無 overall score 欄位；
+- 兩個 contract 欄位 disjoint、prompt hash 不同、pipeline 只呼叫 select 一次；
+- L0 happy path：Analyst/Planner 各 1 次、Mapper 3 次、Judge 1 次、B0 選定後
+  unconditional stop；
+- Director ≠3 concepts 與 candidate shortfall 的 versioned fail-closed 紀錄，
+  Judge 不被呼叫；
+- all-QC-fail 標記 degradation、仍全數帶標記送 Judge；
+- 非法 judge permutation 拒絕；
+- T0/T1 不呼叫 Planner、無 tree、三 slot 同一 condition；T3 需外部 oracle；
+- artifacts write-once、目錄不可重用；L1-Gated 明確 defer A3-07；
+- a3_pipeline.py source 無任何 legacy loop constructs。
+
+Ruff：`All checks passed`（新檔）。`py_compile` 與 `git diff --check` 通過。
+
+### 10.6 成本
+
+- API calls：0；paid tokens：0；所有驗證皆 fake Actions + 合成 PNG。
+
+### 10.7 邊界與下一步
+
+- 本階段未實際呼叫任何 MLLM，不能宣稱 Judge-Select 的選擇品質或 Critic 的 issue 精準度；那是 A3-08 N=5 smoke 與 A3-09C Gate C 的問題；
+- `A3L0Pipeline` 的 Director/Mapper/QC stage 目前以 callables 注入；A3-07/A3-08 需把真實 Actions（`ComposeConcept`/`GenerateLayout` 的 A3 版與 `quality_checker`）綁定到此 boundary，並接上 `run_a3.py` 的 `run` 子命令與 per-call usage/cost capture；
+- Judge-Critic 已是 gate-ready contract，但 repair gate、targeted repair routing、verifier 與 B0/B1 best-so-far guard 全部屬於 A3-07；
+- concept 的 spatial-diversity 驗證仍未實作（audit §4.9 既知 partial），不在本階段範圍。
+
+**A3-06 status: complete。下一階段：A3-07 L1-Gated、targeted repair、verifier 與 B0/B1 guard——入口是把 `JudgeCriticA3` 的 actionable issues 接上 deterministic gate 與單次修復路由，並在 `A3L0Pipeline` 旁建立 L1 variant（維持 unconditional stop 與 best-so-far guard）。**
