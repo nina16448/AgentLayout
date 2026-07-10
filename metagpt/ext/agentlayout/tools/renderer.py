@@ -252,6 +252,25 @@ def _paint_image_element(
         )
     paste_left, paste_top = layout_el.left, layout_el.top
     target_w, target_h = layout_el.width, layout_el.height
+    from metagpt.ext.agentlayout.tools.text_bitmap_normalizer import (
+        contain_size,
+        is_r3_text_bitmap,
+    )
+
+    if is_r3_text_bitmap(spec_el.asset_ref):
+        # R3: Mapper predicts the final bbox, but the typography bitmap must
+        # never be stretched to that bbox independently on x/y.  Use one scale
+        # factor and center the contained bitmap.  Unlike generic decorative
+        # images, normalized text may upscale beyond MAX_UPSCALE because its
+        # fixed 512px source size is a protocol normalization, not natural size.
+        draw_w, draw_h = contain_size(img.size, (target_w, target_h))
+        img = img.resize((draw_w, draw_h), Image.LANCZOS)
+        paste_left += (target_w - draw_w) // 2
+        paste_top += (target_h - draw_h) // 2
+        if layout_el.angle:
+            img = img.rotate(-layout_el.angle, expand=True, resample=Image.BICUBIC)
+        canvas.paste(img, (paste_left, paste_top), img)
+        return
     if img.size != (target_w, target_h):
         # Step 47 (2026-06-10): cap upscaling at MAX_UPSCALE x the asset's
         # native resolution. A 68px heart stretched to ~400px renders as a

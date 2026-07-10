@@ -19,7 +19,12 @@ from metagpt.ext.agentlayout.run_manifest import (  # noqa: E402
     write_json_once,
 )
 from metagpt.ext.agentlayout.tools.pfull_preprocessor import (  # noqa: E402
+    ASSET_MANIFEST_FILENAME,
     prepare_pfull_sample,
+)
+from metagpt.ext.agentlayout.tools.text_bitmap_normalizer import (  # noqa: E402
+    R3NormalizationConfig,
+    prepare_r3_sample,
 )
 
 
@@ -51,6 +56,10 @@ def main() -> int:
     )
     prepare.add_argument("--run-dir", type=Path, required=True)
     prepare.add_argument("--crello-root", type=Path, required=True)
+    normalize = sub.add_parser(
+        "normalize-r3", help="Normalize every P-Full text bitmap for an initialized run."
+    )
+    normalize.add_argument("--run-dir", type=Path, required=True)
     args = parser.parse_args()
 
     if args.command == "prepare-pfull":
@@ -95,6 +104,62 @@ def main() -> int:
                 )
         write_json_once(
             store.run_dir / "pfull_preparation.json",
+            {"total": len(sample_ids), "failed": failed, "samples": rows},
+        )
+        print(json.dumps({"total": len(sample_ids), "failed": failed}, indent=2))
+        return 1 if failed else 0
+
+    if args.command == "normalize-r3":
+        store = A3RunStore(args.run_dir)
+        manifest = store.manifest()
+        sample_ids = json.loads(
+            (store.run_dir / manifest.sample_ids_snapshot.stored_path).read_text()
+        )
+        image_config = manifest.config.image_normalization
+        normalization = R3NormalizationConfig(
+            long_edge_px=image_config.text_long_edge_px,
+            padding_px=image_config.text_padding_px,
+            alpha_threshold=image_config.alpha_threshold,
+            resize_filter=image_config.resize_filter,
+        )
+        rows = []
+        failed = 0
+        for sample_id in sample_ids:
+            sample_inputs = store.run_dir / "samples" / sample_id / "inputs"
+            pfull_manifest = sample_inputs / "pfull" / ASSET_MANIFEST_FILENAME
+            destination = sample_inputs / "r3"
+            try:
+                prepared = prepare_r3_sample(pfull_manifest, destination, normalization)
+                rows.append(
+                    {
+                        "sample_id": sample_id,
+                        "status": "normalized",
+                        "asset_count": len(prepared.assets),
+                        "text_bitmap_count": sum(
+                            asset.media_type == "text_bitmap" for asset in prepared.assets
+                        ),
+                    }
+                )
+            except Exception as error:  # noqa: BLE001 -- failure must be persisted
+                failed += 1
+                rows.append(
+                    {
+                        "sample_id": sample_id,
+                        "status": "failed",
+                        "error_type": type(error).__name__,
+                        "message": str(error),
+                    }
+                )
+                store.record_run_error(
+                    ErrorRecord(
+                        stage="r3_normalization",
+                        error_type=type(error).__name__,
+                        message=str(error),
+                        details={"sample_id": sample_id, "source": str(pfull_manifest)},
+                    )
+                )
+        write_json_once(
+            store.run_dir / "r3_normalization.json",
             {"total": len(sample_ids), "failed": failed, "samples": rows},
         )
         print(json.dumps({"total": len(sample_ids), "failed": failed}, indent=2))

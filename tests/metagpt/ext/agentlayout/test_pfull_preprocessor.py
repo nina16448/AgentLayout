@@ -226,3 +226,20 @@ def test_cli_prepares_initialized_run_without_api_calls(tmp_path: Path):
     output = store.run_dir / "samples" / "sample-001" / "inputs" / "pfull"
     assert (output / ASSET_MANIFEST_FILENAME).exists()
     assert json.loads((store.run_dir / "pfull_preparation.json").read_text())["failed"] == 0
+
+    normalize = subprocess.run(
+        [
+            sys.executable,
+            "layout_agent/run_a3.py",
+            "normalize-r3",
+            "--run-dir",
+            str(store.run_dir),
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(normalize.stdout) == {"total": 1, "failed": 0}
+    assert (store.run_dir / "samples" / "sample-001" / "inputs" / "r3" /
+            "r3_asset_manifest.json").exists()

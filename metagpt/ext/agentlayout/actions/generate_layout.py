@@ -32,7 +32,7 @@ import json
 import re
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import base64
 
@@ -515,9 +515,9 @@ class GenerateLayout(Action):
                 header += "; LEDGER OVERRIDE lines outrank everything else"
             block += header + "):\n" + "\n".join(lines) + "\n"
         return block + (
-            f"\nTranslate THIS concept into exact pixels. If the concept is "
-            f"asymmetric, your coordinates must be asymmetric too -- do not "
-            f"silently re-centre everything."
+            "\nTranslate THIS concept into exact pixels. If the concept is "
+            "asymmetric, your coordinates must be asymmetric too -- do not "
+            "silently re-centre everything."
         )
 
     @staticmethod
@@ -536,7 +536,14 @@ class GenerateLayout(Action):
             if el.content:
                 preview = el.content.strip().replace("\n", " ")
                 desc += f': "{preview[:80]}"'
-            if el.asset_ref and el.asset_ref.endswith("_text.png"):
+            from metagpt.ext.agentlayout.tools.text_bitmap_normalizer import (
+                is_r3_text_bitmap,
+                r3_prompt_descriptor,
+            )
+
+            if is_r3_text_bitmap(el.asset_ref):
+                desc += r3_prompt_descriptor(el.asset_ref)
+            elif el.asset_ref and el.asset_ref.endswith("_text.png"):
                 try:
                     with Image.open(el.asset_ref) as img:
                         nat_w, nat_h = img.size

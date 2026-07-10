@@ -46,7 +46,7 @@ layout_agent/runs/a3/
 | A3-00 | 現行程式 audit 與新舊邊界建立 | in progress |
 | A3-01 | Manifest、資料協定與 run directory 基礎設施 | complete |
 | A3-02 | P-Full input protocol | complete |
-| A3-03 | R3 text bitmap normalization 與 leakage tests | pending |
+| A3-03 | R3 text bitmap normalization 與 leakage tests | complete |
 | A3-04 | Analyst MLLM 與 contact sheet | pending |
 | A3-05 | Layout Tree contract 更新 | pending |
 | A3-06 | L0、Judge-Select 與 Judge-Critic | pending |
@@ -589,3 +589,125 @@ background_asset_id=None
 - 尚未把 P-Full assets 交給現行 text-only Analyst，依正式順序等待 A3-03/A3-04。
 
 **A3-02 status: complete。下一階段：A3-03 R3 normalization、renderer 與 leakage tests。**
+
+---
+
+## 7. A3-03：R3 normalization、renderer 與 leakage tests
+
+**日期：** 2026-07-10  
+**起始 commit：** `cd61fc8ff3c4daf696d3b8bcc56f58de4a498033`  
+**性質：** deterministic bitmap/renderer infrastructure；0 API calls、0 paid tokens。
+
+### 7.1 Frozen R3 normalization
+
+新增 `metagpt/ext/agentlayout/tools/text_bitmap_normalizer.py`：
+
+- manifest schema：`a3.r3-asset-manifest.v1`；
+- normalization policy：`r3.alpha-tight-long-edge.v1`；
+- 預設／A3 config frozen values：
+  - final long edge：512 px；
+  - final transparent padding：8 px；
+  - alpha threshold：1；
+  - resize filter：Lanczos；
+- 對 alpha channel 做 tight crop；
+- 先將 tight content 等比例縮放到 `long_edge - 2*padding`，再加固定 final padding，因此輸出 long edge 恰為 512；
+- normalized PNG 使用固定 RGBA、PNG compress level 9、無 optimize metadata，並保存 SHA-256；
+- 全透明、缺檔、無 content 或沒有 bitmap 的 text asset fail-closed，不退回 re-typeset/plain text；
+- R3 output directory 與 manifest 不可覆寫。
+
+R3 runtime asset contract保留：stable `asset_id`、文字 `content`、normalized bitmap ref、normalized width/height/aspect、hash。它刻意不包含 original text width/height、GT bbox 或 font size。原 bitmap hash只作 provenance，不提供可反推字級的尺寸。
+
+### 7.2 Renderer contract
+
+`renderer.py` 對 `_r3_text.png` 使用獨立 contain path：
+
+1. Mapper 仍預測 final bbox；
+2. renderer 以單一 scale factor 將 bitmap 放入 bbox；
+3. 水平／垂直置中；
+4. 不分別拉伸 width/height；
+5. 不套用 generic image 的 `MAX_UPSCALE=2`，因 512px 是 protocol normalization，不是 natural size；
+6. legacy generic image/text renderer 行為維持不變。
+
+### 7.3 Prompt leakage removal
+
+`GenerateLayout._format_element_list` 現在先辨識 R3 bitmap：
+
+- 只提供 fixed normalized bitmap 的 aspect ratio；
+- 明確要求 Mapper 依 design context 自行決定 final bbox scale/position；
+- 不提供 512px normalized dimensions；
+- 不提供 original/natural dimensions；
+- 不再套用 legacy `0.8x-1.2x natural size` 指令。
+
+`JudgeAesthetic` reject observer 也排除 R3 bitmap 的 legacy natural-size報告。R3 suffix check 位於一般 `_text.png` branch 之前，避免 `_r3_text.png` 被 suffix overlap 誤導到舊路徑。
+
+### 7.4 CLI integration
+
+`layout_agent/run_a3.py` 新增：
+
+```bash
+python layout_agent/run_a3.py normalize-r3 \
+  --run-dir layout_agent/runs/a3/<run_id>
+```
+
+命令從 immutable run config 讀取 normalization values，逐 sample 讀取 P-Full manifest，輸出：
+
+```text
+samples/<sample_id>/inputs/r3/
+  r3_asset_manifest.json
+  assets/asset_NNNN_r3_text.png
+```
+
+run level 寫 `r3_normalization.json`；所有失敗寫 versioned `ErrorRecord`，任何 sample 失敗皆非零退出。
+
+### 7.5 Tests
+
+新增 `tests/metagpt/ext/agentlayout/test_text_bitmap_normalizer.py`，連同 A3-01/A3-02 suite：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run \
+  --with pytest --with 'pydantic>=2' --with pillow \
+  pytest -q -o addopts='' \
+  --confcutdir=tests/metagpt/ext/agentlayout \
+  tests/metagpt/ext/agentlayout/test_a3_run_manifest.py \
+  tests/metagpt/ext/agentlayout/test_pfull_preprocessor.py \
+  tests/metagpt/ext/agentlayout/test_text_bitmap_normalizer.py
+```
+
+結果：`26 passed in 1.46s`。
+
+涵蓋：
+
+- alpha-tight bbox、fixed padding 與 exact long edge；
+- 相同 glyph 放在不同原始 canvas/offset 時產生 byte-identical normalized PNG；
+- R3 runtime manifest 不含 original dimensions/GT geometry/font size；
+- text-only fallback 拒絕；
+- prompt descriptor 只有 aspect ratio，沒有 pixel/natural size；
+- Generator/observer 確實繞過 legacy natural-size branch；
+- contain size 的橫／直向 aspect preservation；
+- end-to-end renderer 將 4:1 bitmap 放進 1:1 bbox 後仍為 4:1；
+- transparent bitmap fail-closed；
+- initialized run 的 `normalize-r3` CLI integration。
+
+Ruff：`All checks passed`。`py_compile` 通過。順帶移除 `generate_layout.py` 既有 unused `Any` import 與三個無插值 f-string，行為不變。
+
+### 7.6 Real cached-sample smoke（zero API）
+
+使用含 cached text bitmap 的 sample `5888cbf695a7a863ddcc214f`，輸出只寫 `/tmp`：
+
+```text
+P-Full/R3 assets：4
+R3 text bitmaps：2
+asset_0002：512x92，aspect=5.5652
+asset_0003：512x245，aspect=2.0898
+```
+
+兩個 text asset 都有相同 frozen long edge，但依自身 glyph 保留不同 aspect ratio；未沿用 meta.json 的 GT bbox/字級作 final scale。
+
+### 7.7 邊界與下一步
+
+- P-Full manifest 仍保留 original raster dimensions 作 input provenance；A3 runtime/Analyst 必須只讀 R3 manifest，不能把 P-Full text dimensions 放入 prompt；
+- 本階段只為 R3 suffix接入現有 renderer/prompt，尚未把 stable-ID R3 contact sheet 交給 Analyst；
+- Mapper 預測 bbox 後的 bitmap contain 已凍結，但 typography/readability效果只能在 N=5 smoke 後評估，不能由 unit test 宣稱美學提升；
+- 沒有修改 legacy R2 artifacts 或重新評估舊結果。
+
+**A3-03 status: complete。下一階段：A3-04 Analyst MLLM、background overview 與 asset contact sheet。**

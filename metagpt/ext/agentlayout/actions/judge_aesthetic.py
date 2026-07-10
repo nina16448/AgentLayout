@@ -632,7 +632,12 @@ class JudgeAesthetic(Action):
                 f"angle {el.angle}"
             )
             spec_el = spec_by_id.get(el.id)
-            if spec_el and (spec_el.asset_ref or "").endswith("_text.png"):
+            from metagpt.ext.agentlayout.tools.text_bitmap_normalizer import (
+                is_r3_text_bitmap,
+            )
+
+            if spec_el and (spec_el.asset_ref or "").endswith("_text.png") \
+                    and not is_r3_text_bitmap(spec_el.asset_ref):
                 try:
                     from PIL import Image as _PILImage
 
