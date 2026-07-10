@@ -1,0 +1,25 @@
+{
+  "loop": "L1-Gated",
+  "internal_judge": "gpt-5.4-mini-2026-03-17",
+  "evaluation_judge": null,
+  "dataset_split": "crello-cached-smoke",
+  "seed": 42,
+  "models": {
+    "analyst": {"model": "gpt-5.4-mini-2026-03-17", "image_detail": "high"},
+    "asset_planner": {"model": "gpt-5.4-mini-2026-03-17"},
+    "composition_director": {"model": "gpt-5.4-mini-2026-03-17", "image_detail": "high"},
+    "coordinate_mapper": {"model": "gpt-5.4-mini-2026-03-17", "image_detail": "high"},
+    "judge_select": {"model": "gpt-5.4-mini-2026-03-17", "image_detail": "high"},
+    "judge_critic": {"model": "gpt-5.4-mini-2026-03-17", "image_detail": "high"}
+  },
+  "schema_versions": {
+    "layout_tree": "a3.layout-tree.v1",
+    "judge_select_result": "a3.judge-select-result.v1",
+    "judge_critic_result": "a3.judge-critic-result.v1",
+    "l1_pipeline": "a3.l1-pipeline.v1",
+    "repair_gate": "a3.l1-repair-gate.v1",
+    "b0b1_guard": "a3.b0b1-guard.v1",
+    "issue_verifier": "a3.issue-verifier.v1"
+  },
+  "price_table_version": null
+}

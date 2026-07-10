@@ -1285,3 +1285,92 @@ Ruff：`All checks passed`。`py_compile` 與 `git diff --check` 通過。
 - **A3-08b 剩餘工作**：stage binding factory（把 6 個真實 Actions＋renderer/QC 接到 pipeline callables、per-call usage/cost capture）、`run_a3.py run` 子命令、凍結 N=5 sample IDs 與 smoke config；之後的第一次付費呼叫需使用者確認成本後才執行。
 
 **A3-08a status: complete。**
+
+---
+
+## 13. A3-08b：stage binding、run CLI、cost capture 與 smoke freeze
+
+**日期：** 2026-07-11  
+**起始 commit：** `39a4e86d46e8dfb657d0105b9e6a1650b2ea978a`  
+**性質：** 付費 smoke 前最後一段 zero-API 綁定；0 API calls、0 paid tokens。
+
+### 13.1 Stage binding（a3_stage_binding.py）
+
+`A3StageBinding`（一個 instance 服務一個 sample）把六個真實 Actions＋deterministic renderer/QC 接到 A3L0Pipeline/A3L1GatedPipeline 的 callables：
+
+- analyst → `AnalyzeA3Brief`（R3 manifest＋write-once artifacts dir）；輸出凍結後立刻導出 rendering `DesignSpec`；
+- planner → `PlanAssetsA3`；director → `ComposeConceptA3`（canvas 字串＋background overview base64）；
+- mapper → `GenerateLayoutA3`，三次 R0 呼叫各自獨立 `mapper_NN` artifacts dir，回傳 `Candidate.model_dump()`；
+- renderer → 既有 `render_to_file`（R3 contain path）＋frozen DesignSpec；
+- qc → 既有 `check_candidate`，violations 序列化為 `type: detail` 字串、completeness＝非背景元素覆蓋率；Analyst 未跑前 renderer/QC fail-closed；
+- judge_select → `JudgeSelectA3`（context 只帶 design_intent）；judge_critic → `JudgeCriticA3`（B0 render only）；
+- repair → 同一 `GenerateLayoutA3` 的 revision mode，concept 取 **B0 slot 對應的原 concept**（R0_SLOT_IDS index），帶 gate revision instruction＋B0 elements 作 base；
+- verifier → `issue_verifier.verify_issues`（manifest canvas 尺寸）。
+
+**Per-call cost capture**：每個 LLM stage 呼叫記一筆 `a3.stage-call-record.v1`（stage、wall seconds、cost manager 的 token/cost delta；provider 無 cost manager 時誠實記 `usage=null` 而非 0）。`write_call_records` write-once 落盤 `stage_calls.json`。
+
+Binding 對 Action 採 duck-typing，離線測試用 fake actions 驗證 wiring，不需拉 `metagpt.actions` 重依賴鏈。
+
+### 13.2 run CLI（fail-closed 授權）
+
+`run_a3.py` 新增 `run` 子命令：
+
+```bash
+python layout_agent/run_a3.py run \
+  --run-dir layout_agent/runs/a3/<run_id> \
+  --tree-arm T2 \
+  [--allow-api-calls]
+```
+
+- **無 `--allow-api-calls`：只印 call budget JSON（authorized=false）、exit 2、不建立任何輸出、不 import LLM 機件**；
+- 有 flag 才 lazy import 六個 Actions；per-sample 建 binding＋pipeline（L0/L1 依 run config.loop）、失敗寫 versioned ErrorRecord、run level write-once `a3_run_summary.json`；
+- call budget（不含 schema retry）：L0+T2＝7 calls/sample；L1-Gated+T2＝9 calls/sample（critic＋至多一次 revision）。
+
+### 13.3 Smoke freeze（config 與 sample IDs）
+
+- `layout_agent/configs/a3_smoke_l0.json`、`a3_smoke_l1_gated.json`：全 stage 固定 `gpt-5.4-mini-2026-03-17`、image_detail=high、seed=42、schema version map 完整；
+- `layout_agent/sample_ids/a3_smoke_n5.json`：**選樣規則（凍結）**＝cache `layout_agent/output/crello_*` 依字典序，取前 5 個能離線通過 `prepare_pfull_sample`＋`prepare_r3_sample` 且（≥2 placeable foregrounds、≥1 text bitmap）的 IDs；只讀 input metadata/assets、不看 GT coordinates 或任何 model output。掃描結果：前 5 個 ID 直接全數合格（tried=5, selected=5）：
+  `5888a28d95a7a863ddcc1c82, 5888a54d95a7a863ddcc1d0c, 5888b64795a7a863ddcc1d6d, 5888bb2995a7a863ddcc1f74, 5888c54095a7a863ddcc2082`。
+
+### 13.4 Tests
+
+新增 `test_a3_stage_binding.py`（6 tests）：
+
+- binding＋fake actions＋**真 renderer/真 QC** 跑完整 L0：三張 800x600 render 落地、completeness=1.0、Director 收到 canvas/b64、三個 mapper artifacts dir 互異、Judge context 來自凍結 Analyst 輸出；
+- call records 恰 7 筆（stage 順序鎖定）、fake 無 cost manager 時 usage=None、寫檔 write-once；
+- L1 整鏈：critic 只看 B0、revision 用 B0 的原 concept（slot 02→"Top banner"）＋gate instruction＋base elements、verifier evidence 帶 `a3.issue-verifier.v1`；
+- QC 缺元素→passed=False、completeness=0.5；Analyst 未跑前 QC 拒絕；
+- **CLI subprocess 測試**：無 `--allow-api-calls` 時 exit 2、budget JSON（L0+T2＝7/sample、N=2＝14 total）、stderr 明示 flag、無任何 run 輸出被建立。
+
+全套（13 個測試檔）：`128 passed in 3.91s`（A3-08a 基準 122＋新增 6）。
+
+Ruff：`All checks passed`。`py_compile` 與 `git diff --check` 通過。
+
+### 13.5 成本
+
+- API calls：0；paid tokens：0（選樣掃描與所有測試皆本地 deterministic）。
+
+### 13.6 N=5 smoke 的 exact commands 與 call budget（待使用者授權）
+
+```bash
+python layout_agent/run_a3.py init \
+  --config layout_agent/configs/a3_smoke_l0.json \
+  --sample-ids layout_agent/sample_ids/a3_smoke_n5.json \
+  --run-id a3-smoke-n5-l0-01
+python layout_agent/run_a3.py prepare-pfull --run-dir layout_agent/runs/a3/a3-smoke-n5-l0-01 --crello-root layout_agent/output
+python layout_agent/run_a3.py normalize-r3 --run-dir layout_agent/runs/a3/a3-smoke-n5-l0-01
+python layout_agent/run_a3.py prepare-analyst-vision --run-dir layout_agent/runs/a3/a3-smoke-n5-l0-01
+python layout_agent/run_a3.py run --run-dir layout_agent/runs/a3/a3-smoke-n5-l0-01 --tree-arm T2   # 印 budget 後拒絕
+python layout_agent/run_a3.py run --run-dir layout_agent/runs/a3/a3-smoke-n5-l0-01 --tree-arm T2 --allow-api-calls
+```
+
+Budget：L0 N=5 最多 35 model calls（無 retry 時）；L1-Gated 另一 run 最多 45 calls。實際 dollar 成本取決於 runtime 可用的 exact snapshot 與其牌價，未凍結前不虛報。
+
+### 13.7 邊界與剩餘阻塞
+
+- **模型阻塞**：config 凍結 `gpt-5.4-mini-2026-03-17`（new_plam §3.2），Actions 的 exact-model guard 會在 runtime model 不符時 fail-closed。執行前需確認 `~/.metagpt/config2.yaml` 指向該 snapshot（或由使用者決定改凍其他 snapshot 並重寫兩份 config＋log）；repo 歷史顯示 cost log 從來是 0（step91 觀察），stage-call usage 欄位屆時可能為 null，wall time 仍會記錄；
+- pairwise B0/B1 internal selection 仍為 None（未建 MLLM Action）；smoke 不需要；
+- `sample_record.json` 是 init 時 write-once 的 v1 契約，run 結果存於 `a3_run_summary.json`＋per-sample pipeline artifacts，不回寫 sample_record（v2 再議）；
+- 第一次付費呼叫依規範停在授權門口，等使用者確認。
+
+**A3-08b status: complete（zero-API 部分）。A3-08 剩餘＝實際 N=5 付費 smoke，需使用者授權 `--allow-api-calls` 與 model snapshot 確認。**

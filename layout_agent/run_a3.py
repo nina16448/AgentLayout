@@ -39,6 +39,153 @@ from metagpt.ext.agentlayout.tools.analyst_vision import (  # noqa: E402
 DEFAULT_RUNS_ROOT = REPO_ROOT / "layout_agent" / "runs" / "a3"
 
 
+def _call_budget(loop: str, tree_arm: str, sample_count: int) -> dict:
+    """System-call budget assuming no reliability retries (each stage may 3x)."""
+    per_sample = 1 + 1 + 3 + 1  # analyst + director + 3 mappers + judge_select
+    if tree_arm == "T2":
+        per_sample += 1  # planner
+    if loop == "L1-Gated":
+        per_sample += 2  # judge_critic + at most one revision mapper call
+    return {
+        "loop": loop,
+        "tree_arm": tree_arm,
+        "samples": sample_count,
+        "model_calls_per_sample_max": per_sample,
+        "model_calls_total_max": per_sample * sample_count,
+        "note": "excludes schema-retry attempts (up to 3x per stage) and assumes "
+        "every L1 sample triggers one revision",
+    }
+
+
+def _command_run(args: argparse.Namespace) -> int:
+    store = A3RunStore(args.run_dir)
+    manifest = store.manifest()
+    config = manifest.config
+    sample_ids = json.loads(
+        (store.run_dir / manifest.sample_ids_snapshot.stored_path).read_text()
+    )
+    budget = _call_budget(config.loop, args.tree_arm, len(sample_ids))
+    if not args.allow_api_calls:
+        print(json.dumps({"authorized": False, "budget": budget}, indent=2))
+        print(
+            "refusing to make paid model calls without --allow-api-calls",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Paid path: import the LLM machinery only after explicit authorization.
+    import asyncio
+
+    from metagpt.ext.agentlayout.a3_pipeline import A3L0Pipeline  # noqa: E402
+    from metagpt.ext.agentlayout.a3_pipeline_l1 import A3L1GatedPipeline  # noqa: E402
+    from metagpt.ext.agentlayout.a3_stage_binding import A3StageBinding  # noqa: E402
+    from metagpt.ext.agentlayout.actions.analyze_a3 import AnalyzeA3Brief  # noqa: E402
+    from metagpt.ext.agentlayout.actions.compose_concept_a3 import ComposeConceptA3  # noqa: E402
+    from metagpt.ext.agentlayout.actions.generate_layout_a3 import GenerateLayoutA3  # noqa: E402
+    from metagpt.ext.agentlayout.actions.judge_critic_a3 import JudgeCriticA3  # noqa: E402
+    from metagpt.ext.agentlayout.actions.judge_select_a3 import JudgeSelectA3  # noqa: E402
+    from metagpt.ext.agentlayout.actions.plan_assets_a3 import PlanAssetsA3  # noqa: E402
+
+    def _expected(stage: str) -> str:
+        return config.models[stage].model
+
+    rows = []
+    failed = 0
+    for sample_id in sample_ids:
+        sample_dir = store.run_dir / "samples" / sample_id
+        inputs = sample_dir / "inputs"
+        try:
+            r3 = R3AssetManifest.model_validate_json(
+                (inputs / "r3" / R3_MANIFEST_FILENAME).read_bytes()
+            )
+            pfull = PFullAssetManifest.model_validate_json(
+                (inputs / "pfull" / ASSET_MANIFEST_FILENAME).read_bytes()
+            )
+            binding = A3StageBinding(
+                r3_manifest=r3,
+                background_overview_path=inputs / "analyst_vision" / "background_overview.png",
+                renders_dir=sample_dir / "renders",
+                stages_dir=sample_dir / "stages",
+                analyst_action=AnalyzeA3Brief(expected_model=_expected("analyst")),
+                planner_action=PlanAssetsA3(expected_model=_expected("asset_planner")),
+                director_action=ComposeConceptA3(
+                    expected_model=_expected("composition_director")
+                ),
+                mapper_action=GenerateLayoutA3(
+                    expected_model=_expected("coordinate_mapper")
+                ),
+                judge_select_action=JudgeSelectA3(expected_model=_expected("judge_select")),
+                judge_critic_action=JudgeCriticA3(expected_model=_expected("judge_critic"))
+                if config.loop == "L1-Gated"
+                else None,
+            )
+            common = dict(
+                config=config,
+                analyst=binding.analyst,
+                planner=binding.planner,
+                director=binding.director,
+                mapper=binding.mapper,
+                renderer=binding.renderer,
+                qc=binding.qc,
+                judge_select=binding.judge_select,
+                artifacts_dir=sample_dir / "pipeline",
+            )
+            if config.loop == "L1-Gated":
+                pipeline = A3L1GatedPipeline(
+                    judge_critic=binding.judge_critic,
+                    repair=binding.repair,
+                    verifier=binding.verifier,
+                    **common,
+                )
+            else:
+                pipeline = A3L0Pipeline(**common)
+            result = asyncio.run(
+                pipeline.run(
+                    user_brief=build_prepared_input(pfull).user_brief,
+                    tree_arm=args.tree_arm,
+                )
+            )
+            binding.write_call_records(sample_dir / "stage_calls.json")
+            rows.append(
+                {
+                    "sample_id": sample_id,
+                    "status": "completed",
+                    "final": getattr(result, "final_slot_id", result.b0_slot_id),
+                    "stage_calls": len(binding.call_records),
+                }
+            )
+        except Exception as error:  # noqa: BLE001 -- failure must be persisted
+            failed += 1
+            rows.append(
+                {
+                    "sample_id": sample_id,
+                    "status": "failed",
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                }
+            )
+            store.record_run_error(
+                ErrorRecord(
+                    stage="a3_pipeline_run",
+                    error_type=type(error).__name__,
+                    message=str(error),
+                    details={"sample_id": sample_id, "tree_arm": args.tree_arm},
+                )
+            )
+    write_json_once(
+        store.run_dir / "a3_run_summary.json",
+        {
+            "tree_arm": args.tree_arm,
+            "budget": budget,
+            "total": len(sample_ids),
+            "failed": failed,
+            "samples": rows,
+        },
+    )
+    print(json.dumps({"total": len(sample_ids), "failed": failed}, indent=2))
+    return 1 if failed else 0
+
+
 def _common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--sample-ids", type=Path, required=True)
@@ -73,7 +220,23 @@ def main() -> int:
         help="Build background overview and foreground contact sheets without API calls.",
     )
     vision.add_argument("--run-dir", type=Path, required=True)
+    run = sub.add_parser(
+        "run",
+        help="Execute the A3 pipeline for an initialized, fully prepared run. "
+        "Refuses to spend money unless --allow-api-calls is given.",
+    )
+    run.add_argument("--run-dir", type=Path, required=True)
+    run.add_argument("--tree-arm", choices=["T0", "T1", "T2", "T3"], default="T2")
+    run.add_argument(
+        "--allow-api-calls",
+        action="store_true",
+        help="Explicitly authorize paid model calls. Without it, only the call "
+        "budget is printed and the command exits with status 2.",
+    )
     args = parser.parse_args()
+
+    if args.command == "run":
+        return _command_run(args)
 
     if args.command == "prepare-pfull":
         store = A3RunStore(args.run_dir)
