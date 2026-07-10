@@ -57,6 +57,79 @@ def _call_budget(loop: str, tree_arm: str, sample_count: int) -> dict:
     }
 
 
+def _command_snapshot_text_bitmaps(args: argparse.Namespace) -> int:
+    """Write A3 text-bitmap sidecars from the Crello dataset (no LLM calls)."""
+    from metagpt.ext.agentlayout.tools.pfull_preprocessor import (  # noqa: E402
+        A3_TEXT_BITMAP_SIDECAR_VERSION,
+        TEXT_BITMAP_SIDECAR_FILENAME,
+    )
+
+    payload = json.loads(args.ids.read_text(encoding="utf-8"))
+    id_pool = payload["ids"] if isinstance(payload, dict) else payload
+    targets = set()
+    for sample_id in id_pool:
+        sample_dir = args.crello_root / f"crello_{sample_id}"
+        if not (sample_dir / "meta.json").exists():
+            print(f"skip {sample_id}: no cached meta.json", file=sys.stderr)
+            continue
+        if (sample_dir / TEXT_BITMAP_SIDECAR_FILENAME).exists():
+            continue  # incremental: sidecar is write-once per sample
+        targets.add(sample_id)
+    print(f"targets: {len(targets)} samples (of {len(id_pool)} requested)")
+    if not targets:
+        return 0
+
+    from datasets import load_dataset  # noqa: E402
+
+    dataset = load_dataset(args.hf_dataset, split=args.split, streaming=True)
+    done = set()
+    saved = 0
+    mismatches = 0
+    for scanned, sample in enumerate(dataset, start=1):
+        sample_id = sample["id"]
+        if sample_id not in targets or sample_id in done:
+            if len(done) == len(targets):
+                break
+            continue
+        sample_dir = args.crello_root / f"crello_{sample_id}"
+        meta = json.loads((sample_dir / "meta.json").read_text(encoding="utf-8"))
+        images = sample["image"]
+        types = sample["type"]
+        bitmaps = {}
+        for position, element in enumerate(meta["elements"]):
+            index = int(element.get("idx", position))
+            if not (element.get("type_code") == 1 or element.get("kind") == "text"):
+                continue
+            if index >= len(images) or types[index] != 1:
+                mismatches += 1
+                print(f"  [WARN] {sample_id} idx={index}: dataset/meta mismatch", file=sys.stderr)
+                continue
+            filename = f"a3_text_{index:04d}.png"
+            # Raw dataset render, deliberately NOT resized to GT geometry.
+            images[index].convert("RGBA").save(sample_dir / filename, format="PNG")
+            bitmaps[str(index)] = filename
+            saved += 1
+        write_json_once(
+            sample_dir / TEXT_BITMAP_SIDECAR_FILENAME,
+            {
+                "version": A3_TEXT_BITMAP_SIDECAR_VERSION,
+                "sample_id": sample_id,
+                "bitmaps": bitmaps,
+            },
+        )
+        done.add(sample_id)
+        print(f"  [{len(done)}/{len(targets)}] {sample_id} (scanned={scanned})")
+        if len(done) == len(targets):
+            break
+    missing = sorted(targets - done)
+    print(
+        json.dumps(
+            {"done": len(done), "bitmaps_saved": saved, "mismatches": mismatches, "missing": missing}
+        )
+    )
+    return 0 if not missing else 1
+
+
 def _command_run_l1_tail(args: argparse.Namespace) -> int:
     """Gate C L1 arm: critic + at most one revision on a persisted L0 run."""
     store = A3RunStore(args.run_dir)
@@ -416,12 +489,25 @@ def main() -> int:
     tail.add_argument("--reuse-r0-from", type=Path, required=True)
     tail.add_argument("--tree-arm", choices=["T0", "T1", "T2", "T3"], default="T2")
     tail.add_argument("--allow-api-calls", action="store_true")
+    snapshot = sub.add_parser(
+        "snapshot-text-bitmaps",
+        help="Stream the Crello dataset and write A3 text-bitmap sidecars "
+        "(a3_text_bitmaps.json + raw-size PNGs) into cached sample dirs "
+        "WITHOUT touching meta.json. No LLM calls; downloads dataset data.",
+    )
+    snapshot.add_argument("--ids", type=Path, required=True,
+                          help="JSON array of sample IDs, or an object with an 'ids' key")
+    snapshot.add_argument("--crello-root", type=Path, required=True)
+    snapshot.add_argument("--hf-dataset", default="cyberagent/crello")
+    snapshot.add_argument("--split", default="test")
     args = parser.parse_args()
 
     if args.command == "run":
         return _command_run(args)
     if args.command == "run-l1-tail":
         return _command_run_l1_tail(args)
+    if args.command == "snapshot-text-bitmaps":
+        return _command_snapshot_text_bitmaps(args)
 
     if args.command == "prepare-pfull":
         store = A3RunStore(args.run_dir)

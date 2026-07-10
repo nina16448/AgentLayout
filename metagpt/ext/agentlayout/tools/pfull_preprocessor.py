@@ -48,6 +48,29 @@ class PFullInputError(ValueError):
     """The source sample cannot be converted without dropping an element."""
 
 
+# A3-owned text-bitmap sidecar: adds rendered text bitmaps to a legacy cache
+# directory WITHOUT mutating meta.json (the legacy cache stays byte-identical
+# for old experiments). Bitmaps are stored at the dataset's raw render size —
+# unlike the legacy step80 snapshot they are never resized to GT geometry.
+TEXT_BITMAP_SIDECAR_FILENAME = "a3_text_bitmaps.json"
+A3_TEXT_BITMAP_SIDECAR_VERSION = "a3.text-bitmap-sidecar.v1"
+
+
+def load_text_bitmap_sidecar(sample_dir: Path) -> Dict[int, str]:
+    """Resolve the optional sidecar to absolute bitmap paths by source index."""
+    path = sample_dir / TEXT_BITMAP_SIDECAR_FILENAME
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    version = data.get("version")
+    if version != A3_TEXT_BITMAP_SIDECAR_VERSION:
+        raise PFullInputError(f"unsupported text-bitmap sidecar version: {version!r}")
+    return {
+        int(index): str((sample_dir / ref).resolve())
+        for index, ref in (data.get("bitmaps") or {}).items()
+    }
+
+
 class PFullAsset(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -175,11 +198,17 @@ def prepare_pfull_sample(sample_dir: Path, output_dir: Path) -> PFullAssetManife
     # Inspect all raster pixels before choosing the single background.  Legacy
     # kind/classifier labels are deliberately ignored because full_canvas and
     # area_ratio were derived from designer bbox geometry.
+    # Sidecar bitmaps take precedence for text: they are A3-owned raw-size
+    # renders, while a legacy asset_ref may carry step80's GT-size resize.
+    sidecar = load_text_bitmap_sidecar(sample_dir)
+
     raster_inputs: Dict[int, tuple[Path, Image.Image]] = {}
     background_candidates: List[int] = []
     for position, descriptor in enumerate(descriptors):
         source_index = int(descriptor.get("idx", position))
         is_text = descriptor.get("type_code") == 1 or descriptor.get("kind") == "text"
+        if is_text and source_index in sidecar:
+            descriptor = {**descriptor, "asset_ref": sidecar[source_index]}
         if is_text and not descriptor.get("asset_ref"):
             continue
         if descriptor.get("asset_ref"):

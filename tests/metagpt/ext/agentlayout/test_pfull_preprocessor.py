@@ -10,9 +10,11 @@ from PIL import Image
 
 from metagpt.ext.agentlayout.run_manifest import A3RunStore
 from metagpt.ext.agentlayout.tools.pfull_preprocessor import (
+    A3_TEXT_BITMAP_SIDECAR_VERSION,
     ASSET_MANIFEST_FILENAME,
     FORBIDDEN_GT_KEYS,
     PFULL_POLICY_VERSION,
+    TEXT_BITMAP_SIDECAR_FILENAME,
     PFullInputError,
     build_prepared_input,
     prepare_pfull_sample,
@@ -139,6 +141,75 @@ def test_no_pixel_background_uses_blank_base_and_keeps_all_assets(tmp_path: Path
     assert manifest.background_asset_id is None
     assert len(manifest.foreground_assets()) == 1
     assert build_prepared_input(manifest).background_asset_ref is None
+
+
+def test_text_bitmap_sidecar_resolves_without_touching_meta(tmp_path: Path):
+    # A3-09 data fix: sidecar supplies text bitmaps for caches step80 never
+    # covered, and the legacy meta.json stays byte-identical.
+    background = _png(tmp_path / "bg.png", (200, 100), (20, 30, 40, 255))
+    elements = [
+        {"idx": 0, "type_code": 2, "kind": "image", "asset_ref": background,
+         "left": 0, "top": 0, "width": 200, "height": 100},
+        {"idx": 1, "type_code": 1, "kind": "text", "content": "SALE",
+         "left": 50, "top": 50, "width": 90, "height": 20},
+    ]
+    source = _sample(tmp_path, elements)
+    meta_before = (source / "meta.json").read_bytes()
+    _png(source / "a3_text_0001.png", (300, 64), (255, 255, 255, 255))
+    (source / TEXT_BITMAP_SIDECAR_FILENAME).write_text(
+        json.dumps(
+            {
+                "version": A3_TEXT_BITMAP_SIDECAR_VERSION,
+                "sample_id": "sample-001",
+                "bitmaps": {"1": "a3_text_0001.png"},
+            }
+        )
+    )
+    manifest = prepare_pfull_sample(source, tmp_path / "prepared_sidecar")
+    text_asset = next(a for a in manifest.assets if a.asset_id == "asset_0001")
+    assert text_asset.semantic_hint == "text_bitmap"
+    # The snapshot copies the sidecar's RAW render size, not GT geometry.
+    assert (text_asset.native_width, text_asset.native_height) == (300, 64)
+    assert (source / "meta.json").read_bytes() == meta_before
+
+
+def test_sidecar_takes_precedence_over_legacy_gt_sized_asset_ref(tmp_path: Path):
+    background = _png(tmp_path / "bg.png", (200, 100), (20, 30, 40, 255))
+    legacy = _png(tmp_path / "legacy_text.png", (90, 20), (0, 0, 0, 255))
+    elements = [
+        {"idx": 0, "type_code": 2, "kind": "image", "asset_ref": background,
+         "left": 0, "top": 0, "width": 200, "height": 100},
+        {"idx": 1, "type_code": 1, "kind": "text", "content": "SALE",
+         "asset_ref": legacy, "left": 50, "top": 50, "width": 90, "height": 20},
+    ]
+    source = _sample(tmp_path, elements)
+    _png(source / "a3_text_0001.png", (300, 64), (255, 255, 255, 255))
+    (source / TEXT_BITMAP_SIDECAR_FILENAME).write_text(
+        json.dumps(
+            {
+                "version": A3_TEXT_BITMAP_SIDECAR_VERSION,
+                "sample_id": "sample-001",
+                "bitmaps": {"1": "a3_text_0001.png"},
+            }
+        )
+    )
+    manifest = prepare_pfull_sample(source, tmp_path / "prepared_precedence")
+    text_asset = next(a for a in manifest.assets if a.asset_id == "asset_0001")
+    assert (text_asset.native_width, text_asset.native_height) == (300, 64)
+
+
+def test_unsupported_sidecar_version_fails_closed(tmp_path: Path):
+    background = _png(tmp_path / "bg.png", (200, 100), (20, 30, 40, 255))
+    elements = [
+        {"idx": 0, "type_code": 2, "kind": "image", "asset_ref": background,
+         "left": 0, "top": 0, "width": 200, "height": 100},
+    ]
+    source = _sample(tmp_path, elements)
+    (source / TEXT_BITMAP_SIDECAR_FILENAME).write_text(
+        json.dumps({"version": "a3.text-bitmap-sidecar.v999", "bitmaps": {}})
+    )
+    with pytest.raises(PFullInputError, match="sidecar version"):
+        prepare_pfull_sample(source, tmp_path / "prepared_badversion")
 
 
 def test_missing_non_text_asset_fails_instead_of_silently_dropping(tmp_path: Path):
