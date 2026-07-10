@@ -355,9 +355,9 @@ def test_artifacts_are_write_once_and_run_dirs_cannot_be_reused(tmp_path):
         _pipeline(Stages(tmp_path), artifacts_dir=artifacts)
 
 
-def test_l1_gated_is_explicitly_deferred_to_a3_07(tmp_path):
+def test_l0_pipeline_rejects_a_mismatched_loop_config(tmp_path):
     stages = Stages(tmp_path)
-    with pytest.raises(NotImplementedError, match="A3-07"):
+    with pytest.raises(ValueError, match="implements loop='L0'"):
         _pipeline(stages, config=_config("L1-Gated"))
 
 

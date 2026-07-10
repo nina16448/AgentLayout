@@ -11,8 +11,9 @@ back to the legacy multi-round ``pipeline.LayoutPipeline``. The L0 flow is:
       -> Judge-Select picks B0
       -> stop unconditionally.
 
-Judge-Critic is intentionally not wired here: L0 ends at selection, and the
-one gated revision that consumes critic output arrives with A3-07.
+Judge-Critic is intentionally not wired here: L0 ends at selection. The one
+gated revision that consumes critic output lives in
+``a3_pipeline_l1.A3L1GatedPipeline``, which reuses this module's R0 phase.
 
 Stages are injected as callables so the orchestration contract can be
 verified offline with fake Actions and zero API calls.
@@ -20,7 +21,7 @@ verified offline with fake Actions and zero API calls.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional
+from typing import Any, Awaitable, Callable, ClassVar, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -60,6 +61,7 @@ class QCVerdict(BaseModel):
 
     passed: bool
     violations: List[str] = Field(default_factory=list)
+    completeness: Optional[float] = Field(default=None, ge=0.0)
 
 
 class R0SlotRecord(BaseModel):
@@ -75,6 +77,7 @@ class R0SlotRecord(BaseModel):
     render_sha256: Optional[str] = None
     qc_passed: Optional[bool] = None
     qc_violations: List[str] = Field(default_factory=list)
+    qc_completeness: Optional[float] = None
     error: Optional[str] = None
 
 
@@ -111,8 +114,22 @@ class A3L0PipelineError(RuntimeError):
         self.record = record
 
 
+class R0PhaseOutcome(BaseModel):
+    """Everything the shared R0 phase produces up to and including B0 selection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    analyst_output: A3AnalystOutput
+    condition: TreeCondition
+    bundle: R0Bundle
+    degradations: List[str]
+    selection: JudgeSelectResult
+
+
 class A3L0Pipeline:
     """L0 orchestrator; every stage runs at most once per sample."""
+
+    LOOP: ClassVar[str] = "L0"
 
     def __init__(
         self,
@@ -127,10 +144,11 @@ class A3L0Pipeline:
         judge_select: Callable[[List[JudgeSelectCandidate]], Awaitable[JudgeSelectResult]],
         artifacts_dir: Optional[Path] = None,
     ):
-        if config.loop != "L0":
-            raise NotImplementedError(
-                "A3L0Pipeline only implements loop='L0'; the gated single revision "
-                "for loop='L1-Gated' arrives with A3-07"
+        if config.loop != self.LOOP:
+            raise ValueError(
+                f"{type(self).__name__} implements loop={self.LOOP!r}, got "
+                f"{config.loop!r}; use the A3 pipeline class matching the "
+                "configured loop"
             )
         self.config = config
         self.analyst = analyst
@@ -150,9 +168,9 @@ class A3L0Pipeline:
         if self.artifacts_dir is not None:
             write_json_once(self.artifacts_dir / filename, payload)
 
-    def _fail(
+    def _record_error(
         self, *, stage: str, error_type: str, message: str, details: Dict[str, Any]
-    ) -> A3L0PipelineError:
+    ) -> ErrorRecord:
         record = ErrorRecord(
             stage=stage,
             error_type=error_type,
@@ -163,7 +181,16 @@ class A3L0Pipeline:
             path = self.artifacts_dir / "errors" / f"error_{self._error_count:04d}.json"
             self._error_count += 1
             write_json_once(path, record.model_dump(mode="json"))
-        return A3L0PipelineError(record)
+        return record
+
+    def _fail(
+        self, *, stage: str, error_type: str, message: str, details: Dict[str, Any]
+    ) -> A3L0PipelineError:
+        return A3L0PipelineError(
+            self._record_error(
+                stage=stage, error_type=error_type, message=message, details=details
+            )
+        )
 
     async def _resolve_tree_condition(
         self,
@@ -183,13 +210,13 @@ class A3L0Pipeline:
             raise ValueError(f"{tree_arm} must not receive a tree")
         return make_tree_condition(tree_arm, analyst_output)
 
-    async def run(
+    async def _run_r0_phase(
         self,
         *,
         user_brief: str,
         tree_arm: TreeArm = "T2",
         oracle_tree: Optional[A3LayoutTree] = None,
-    ) -> A3L0Result:
+    ) -> R0PhaseOutcome:
         analyst_output = await self.analyst(user_brief)
         self._save("analyst_output.json", analyst_output.model_dump(mode="json"))
 
@@ -259,6 +286,7 @@ class A3L0Pipeline:
             verdict = self.qc(slot.candidate)
             slot.qc_passed = verdict.passed
             slot.qc_violations = list(verdict.violations)
+            slot.qc_completeness = verdict.completeness
 
         degradations: List[str] = []
         if not any(slot.qc_passed for slot in slots):
@@ -282,12 +310,30 @@ class A3L0Pipeline:
         validate_selection(selection, [slot.slot_id for slot in slots])
         self._save("judge_select_result.json", selection.model_dump(mode="json"))
 
+        return R0PhaseOutcome(
+            analyst_output=analyst_output,
+            condition=condition,
+            bundle=bundle,
+            degradations=degradations,
+            selection=selection,
+        )
+
+    async def run(
+        self,
+        *,
+        user_brief: str,
+        tree_arm: TreeArm = "T2",
+        oracle_tree: Optional[A3LayoutTree] = None,
+    ) -> A3L0Result:
+        outcome = await self._run_r0_phase(
+            user_brief=user_brief, tree_arm=tree_arm, oracle_tree=oracle_tree
+        )
         result = A3L0Result(
             tree_arm=tree_arm,
-            degradations=degradations,
-            bundle=bundle,
-            judge_select=selection,
-            b0_slot_id=selection.selected_candidate_id,
+            degradations=outcome.degradations,
+            bundle=outcome.bundle,
+            judge_select=outcome.selection,
+            b0_slot_id=outcome.selection.selected_candidate_id,
         )
         self._save("l0_result.json", result.model_dump(mode="json"))
         return result

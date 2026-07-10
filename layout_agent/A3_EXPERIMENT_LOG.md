@@ -50,7 +50,7 @@ layout_agent/runs/a3/
 | A3-04 | Analyst MLLM 與 contact sheet | complete |
 | A3-05 | Layout Tree contract 更新 | complete |
 | A3-06 | L0、Judge-Select 與 Judge-Critic | complete |
-| A3-07 | L1-Gated、repair verifier 與 B0/B1 guard | pending |
+| A3-07 | L1-Gated、repair verifier 與 B0/B1 guard | complete |
 | A3-08 | N=5 smoke | pending |
 | A3-09 | N=20 Analyst／Tree／Loop gates | pending |
 | A3-10 | N=100 正式實驗 | blocked by gates |
@@ -1107,3 +1107,104 @@ Ruff：`All checks passed`（新檔）。`py_compile` 與 `git diff --check` 通
 - concept 的 spatial-diversity 驗證仍未實作（audit §4.9 既知 partial），不在本階段範圍。
 
 **A3-06 status: complete。下一階段：A3-07 L1-Gated、targeted repair、verifier 與 B0/B1 guard——入口是把 `JudgeCriticA3` 的 actionable issues 接上 deterministic gate 與單次修復路由，並在 `A3L0Pipeline` 旁建立 L1 variant（維持 unconditional stop 與 best-so-far guard）。**
+
+---
+
+## 11. A3-07：L1-Gated 單次修復、verifier 與 B0/B1 guard
+
+**日期：** 2026-07-10  
+**起始 commit：** `8fa67aa4981ed1d8bb45b3466b66496993a3a447`  
+**性質：** gated single-revision orchestration；0 API calls、0 paid tokens、未執行任何 N=5/N=20/N=100。
+
+### 11.1 Repair gate 與 routing（tools/repair_gate.py）
+
+- gate policy version：`a3.l1-repair-gate.v1`；guard policy version：`a3.b0b1-guard.v1`；
+- `evaluate_repair_gate(critic, known_asset_ids)` 產生 versioned `RepairDecision`：
+  - critic 0 issues → `no_actionable_issue`（model validator 禁止此 outcome 攜帶 route/instruction）；
+  - 有 issues → `one_targeted_repair`，恰一個 route、一份 revision instruction、KEEP constraints（= 非 target 的全部 asset IDs）；
+  - target 不存在 → `validate_critic_targets` 直接拒絕；
+- **routing table 完整覆蓋 12 個 closed issue types**（test 鎖定 `set(ISSUE_ROUTING)==set(CriticIssueType)`）：
+  - bbox/spacing/alignment/scale/contrast 類 10 種 → `coordinate_mapper`；
+  - `hierarchy_error`、`tree_inconsistency` → `director_then_mapper`；混合 issues 時 Director 路由優先；
+  - semantic role / tree 推論錯誤依 new_plam §4.6 不進 runtime loop——因為 Judge-Critic 的 closed enum 根本無法表示這類 issue，結構上不可路由；
+- revision instruction 明文：「exactly ONE revision pass」、逐 issue 的 targets/observation/desired change、KEEP 清單、「semantic roles 與 Layout Tree frozen」；單輪 KEEP constraints 存在但無跨輪 ledger。
+
+### 11.2 Deterministic verifier 與 B0/B1 guard
+
+- `IssueVerification`：每個 gated issue 一筆 `issue_index`/`improved`/`evidence`；
+- `check_b1_against_b0` 實作 new_plam §4.7 條件 1–3，全部 fail-closed：
+  1. verifier 覆蓋必須恰等於 issue 集合（缺漏＝`verifier_coverage_mismatch`）且每項 `improved`；
+  2. B1 不得新增 hard violation（`set(b1)-set(b0)` 非空即拒）；
+  3. completeness 不得下降；B0 有訊號而 B1 缺訊號也拒（`completeness_signal_missing`）；
+- `resolve_winner` 實作條件 4：pairwise internal selection **只能把 B1 降回 B0，不能救回未通過 deterministic check 的 B1**；deterministic check 未過時 pairwise 完全不執行；
+- `B0B1GuardResult` versioned 落盤：deterministic verdict、全部 reasons、pairwise 是否使用、winner。
+
+### 11.3 A3L1GatedPipeline（a3_pipeline_l1.py）
+
+- pipeline version：`a3.l1-pipeline.v1`；`LOOP="L1-Gated"`；
+- 繼承 `A3L0Pipeline` 並共用同一 `_run_r0_phase`（本階段將 L0 的 R0+Select 流程抽成 `R0PhaseOutcome`，`A3L0Result` 行為不變；`QCVerdict`/`R0SlotRecord` 增加 optional `completeness`/`qc_completeness` 供 guard 用）；
+- L0/L1 class 都以 `LOOP` classvar 驗證 config：loop 不符即 `ValueError`（取代 A3-06 的 NotImplementedError，deferred 已兌現）；
+- 完整流程：R0 phase → `judge_critic(B0, known_asset_ids)` 一次 → gate →
+  - 無 issue：直接輸出 B0，`repair_attempted=False`，b1/guard/verifications 全 None；
+  - 有 issue：`_revise_once` 恰一次（repair callable → render → QC）→ verifier → guard → keep B0 or B1 → unconditional stop；
+- **repair 失敗不毀 sample**：B0 已存在，寫 versioned `RepairExecutionFailed` ErrorRecord、B1 記為 `status=failed`、guard 直接判 B0；
+- revision 消費**同一個 frozen tree condition**（test 以 object identity 鎖定）；Analyst/Planner/Director/R0 Mapper 呼叫數在 L1 全程維持 1/1/1/3；
+- artifacts（write-once）：L0 全套之外新增 `judge_critic_result.json`、`repair_decision.json`、`b1_candidate.json`、`issue_verifications.json`、`b0b1_guard.json`、`l1_result.json`；不寫 `l0_result.json`；
+- source-level test 鎖定 a3_pipeline_l1.py 無 ACCEPT/REJECT/threshold/consecutive/max_total_rounds/ledger/polish/reroute/while。
+
+### 11.4 Tests
+
+新增：
+
+- `tests/metagpt/ext/agentlayout/test_a3_repair_gate.py`（11 tests）；
+- `tests/metagpt/ext/agentlayout/test_a3_l1_pipeline.py`（12 tests）；
+- 更新 `test_a3_l0_pipeline.py` 的 deferred-L1 測試為 loop-mismatch 測試。
+
+執行 A3-01～07 全套（10 個測試檔）：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run \
+  --with pytest --with 'pydantic>=2' --with pillow \
+  pytest -q -o addopts='' \
+  --confcutdir=tests/metagpt/ext/agentlayout \
+  tests/metagpt/ext/agentlayout/test_a3_run_manifest.py \
+  tests/metagpt/ext/agentlayout/test_pfull_preprocessor.py \
+  tests/metagpt/ext/agentlayout/test_text_bitmap_normalizer.py \
+  tests/metagpt/ext/agentlayout/test_analyst_vision.py \
+  tests/metagpt/ext/agentlayout/test_layout_tree_v3.py \
+  tests/metagpt/ext/agentlayout/test_judge_select_a3.py \
+  tests/metagpt/ext/agentlayout/test_judge_critic_a3.py \
+  tests/metagpt/ext/agentlayout/test_a3_l0_pipeline.py \
+  tests/metagpt/ext/agentlayout/test_a3_repair_gate.py \
+  tests/metagpt/ext/agentlayout/test_a3_l1_pipeline.py
+```
+
+結果：`102 passed in 3.11s`（A3-06 基準 79 + 新增 23）。
+
+涵蓋：
+
+- routing table 恰覆蓋 12 個 closed types、mapper/director 路由與混合 dominance；
+- no-issue outcome 無 route/instruction；decision model outcome consistency；
+- unknown target 拒絕；KEEP constraints 與 revision instruction 內容；
+- guard：全通過、not-improved、coverage gap、新 hard violation、completeness 下降、
+  completeness 訊號缺失各自拒絕；pairwise 只能 demote 不能 rescue；
+- L1 happy path 選 B1、unimproved/violation/completeness 各自守回 B0；
+- 上游 stage frozen（Analyst/Planner/Director 各 1、Mapper 3、critic 1、repair ≤1）；
+- repair 失敗 fallback B0 + ErrorRecord；invalid critic targets 拒絕；
+- L1 artifacts write-once、目錄不可重用；L0/L1 loop-config 互斥；
+- 兩個 pipeline source 都無 legacy loop constructs。
+
+Ruff：`All checks passed`。`py_compile` 與 `git diff --check` 通過。
+
+### 11.5 成本
+
+- API calls：0；paid tokens：0；全部 fake stage callables + 合成 PNG。
+
+### 11.6 邊界與下一步
+
+- pairwise internal selection 的實際 MLLM prompt/Action 尚未建立（L1 允許 `pairwise_select=None` 跳過）；若 A3-08 要用 pairwise，需另立獨立 request/artifact contract，同 Select/Critic 模式；
+- verifier 目前是注入 callable；A3-08 前應把 `feedback_verifier.py` 的幾何 predicates 適配到 `IssueVerification`（issue type → deterministic check 的映射要 versioned）；
+- repair callable 尚未綁定真實 `GenerateLayout`/`ComposeConcept` A3 版；`director_then_mapper` 路由的實際兩段呼叫留待 stage binding；
+- L1 對品質的因果效果完全未測——那是 A3-09C Gate C 的問題；若 Gate C 未過，最終配置退回 L0。
+
+**A3-07 status: complete。下一階段：A3-08 N=5 smoke——入口是把真實 Actions（AnalyzeA3Brief/PlanAssetsA3/Director/Mapper A3 版/JudgeSelectA3/JudgeCriticA3）綁定到 A3L0Pipeline/A3L1GatedPipeline 的 stage boundary，接上 run_a3.py `run` 子命令與 per-call usage/cost capture，凍結 N=5 sample IDs 與 config 後才允許第一次付費呼叫。**
