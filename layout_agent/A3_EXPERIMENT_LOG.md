@@ -57,6 +57,7 @@ layout_agent/runs/a3/
 | A3-09H | 三位標註者 adjudication queue、finalizer 與 T3 oracle preflight | complete |
 | A3-09O | Human adjudication 20/20 finalized、T3 oracle trees 發布 | complete |
 | A3-10P | Relation-100 剩餘 80：三人標註＋人工裁決＋oracle 發布（reference tree 100/100 齊） | complete |
+| A3-10R | Crello-Relation N=100 T0/T2/T3 正式實驗＋human-reference 指標 | complete |
 | A3-10 | N=100 正式實驗 | blocked by gates |
 
 ---
@@ -1958,3 +1959,44 @@ Paired sign tests：**T3−T0 PCA 12W/0L/8T p=0.0005 顯著**；T3−T2 SGC 14W/
 - API calls：**0**（標註、裁決、驗證、finalization 全程零付費）。
 - **Human reference tree 覆蓋達 relation-100 全數 100/100**（pilot 20＋本批 80），Phase 3 的 T3 臂與 human-reference SGC/TLC/PCA 指標來源已就緒。
 - 剩餘 Phase 3 前置：Gate B 升級條件 2（T2 vs T0 human semantic-grouping preference）仍未驗證；N=100 各臂付費 budget 需另行提案與授權。
+
+---
+
+## 23. A3-10R：Crello-Relation N=100 T0/T2/T3 正式實驗
+
+**日期：** 2026-07-11
+
+### 23.1 升級決定與協定
+
+使用者明文決定**豁免 Gate B 升級條件 2（human semantic-grouping preference）**，直接進 Phase 3（「這可以先跳過先讓你跑N100」）；條件 1（幾何方向）與 3（T3 upper bound）已於 §21 滿足。T1 依 new_plam §8「預算不足可省」未跑。前置：ids 凍結 `sample_ids/a3_relation_n100.json`（=relation100_ids）；兩批 oracle 逐位元組合併至 `runs/a3/relation100_oracle_trees/`（100 棵、含 `MERGE_PROVENANCE.json` 記錄來源與 SHA-256）。三臂獨立 run-id、四步 zero-cost prep（3×100 failed 0）、無 flag preflight（T0 600／T2 700／T3 600）皆通過後，使用者逐字授權執行。
+
+### 23.2 執行結果
+
+| Arm | Run-id | 完成 | Calls | Wall |
+| --- | --- | --- | ---: | ---: |
+| T0 | `a3-rel100-t0-01` | 100/100 | 600 | 3153s |
+| T2 | `a3-rel100-t2-01` | **98/100** | 692 | 3782s |
+| T3 | `a3-rel100-t3-01` | **99/100** | 598 | 3214s |
+
+失敗 3 例（皆 per-sample、error record 落盤、non-retryable）：T2 `5d67ed46`＋T3 `5da04604` 為 CandidateShortfall（3 render 只完成 2）；T2 `5f644f40` 為 Planner 連 3 attempt 輸出重複 asset ID。實際 calls 合計 **1,890**（nominal 1,900，失敗提早中止）；provider 回報 cost 0（已知現象）。
+
+### 23.3 Human-reference SGC/TLC/PCA（全臂同一棵 human tree；配對檢定取兩臂皆完成之交集）
+
+| Arm | SGC | TLC | PCA |
+| --- | ---: | ---: | ---: |
+| T0（n=100） | 0.6465 | 0.6277 | 0.6930 |
+| T2（n=98） | 0.7037 | 0.6711 | 0.7614 |
+| T3（n=99） | **0.7779** | **0.7271** | **0.8215** |
+
+Paired sign tests（two-sided）：
+
+- **T2 vs T0：三軸全顯著**——SGC 64W/34L p=0.0032、TLC 63W/32L p=0.0019、PCA 47W/25L p=0.0128。
+- **T3 vs T0：三軸全極顯著**——SGC 74W/25L p≈3e-6、TLC 70W/29L p=5e-5、PCA 55W/18L p=2e-5。
+- **T3 vs T2**：SGC 64W/33L p=0.0022、TLC 60W/35L p=0.0134 顯著；PCA 46W/29L p=0.064 邊緣。
+
+### 23.4 判讀
+
+- **N=20 的「T2 無增益」結論在 N=100 被推翻**：predicted tree 相對無 tree 在三軸全部顯著改善；N=20 只見方向與本結果一致（統計功效不足）。引用 tree ablation 一律以本節為準、不可再引 §21.3 的 T2−T0 null。
+- 三臂呈乾淨的 tree 品質梯度 **T0 < T2 < T3**：tree 通道有效（T2>T0），tree 品質進一步加分（T3>T2，SGC/TLC 顯著）。T3 同時是可解釋的 upper bound。
+- Caveat：Gate B 升級條件 2 之 human preference 未驗證即升級（使用者決定），論文引用時幾何指標主張成立、human-perceived 分組偏好主張仍需補人測。
+- A3-10R status：**complete**。Phase 3 剩餘項目（Crello-General N=100 final system、matched judge evaluation、human preference study、failure analysis 等）另行規劃。
