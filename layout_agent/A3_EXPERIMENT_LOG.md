@@ -56,6 +56,7 @@ layout_agent/runs/a3/
 | A3-09M | Human-tree SGC/TLC/PCA 與 tree prediction metrics | complete |
 | A3-09H | 三位標註者 adjudication queue、finalizer 與 T3 oracle preflight | complete |
 | A3-09O | Human adjudication 20/20 finalized、T3 oracle trees 發布 | complete |
+| A3-10P | Relation-100 剩餘 80：三人標註＋人工裁決＋oracle 發布（reference tree 100/100 齊） | complete |
 | A3-10 | N=100 正式實驗 | blocked by gates |
 
 ---
@@ -1933,3 +1934,27 @@ Paired sign tests：**T3−T0 PCA 12W/0L/8T p=0.0005 顯著**；T3−T2 SGC 14W/
 ### 21.5 A3-10 前置：relation-100 剩餘 80 sample 標註包
 
 同日使用者要求準備 N=100 剩餘標註。relation-100（`output2/step97_relation_subset/relation100_ids.json`）扣除 pilot 20（真子集、oracle 直接沿用）＝**80 個**，凍結為 `layout_agent/sample_ids/a3_relation_annot_n80.json`。新 run `a3-relation-annot-n80-01` 走 `init → prepare-pfull → normalize-r3 → prepare-analyst-vision → prepare-annotation`：**80/80 prepared、failed 0**（packet＋空白 form＋contact sheets，部分 sample 兩張），全程 **0 API calls**。80 個的標註／裁決協定（幾位標註者、是否沿用單人 oracle 模式）為使用者待決事項。
+
+---
+
+## 22. A3-10P：relation-100 剩餘 80 的三人標註、人工裁決與 oracle 發布
+
+**日期：** 2026-07-11
+
+### 22.1 三人標註與唯讀驗證
+
+三位標註者（hui、neiji、nina）各完成 80 份，**240/240** 通過 HumanAnnotation schema、annotator/sample id 一致性、packet coverage（每位 1,045 assets）與樹結構檢查。`uncertain` 分布極不均：nina 0、hui 23、**neiji 527（50.4%）**——使用者確認 neiji 屬誠實不確定、維持現狀（uncertain 依協定排除於 primary agreement 之外另計）。
+
+### 22.2 Adjudication queue 與人工裁決
+
+`prepare-adjudication`（write-once）：**80/80 packets、failed 0**；80/80 sample 皆有分歧、合計 **485 個 disagreeing assets**；三人 aggregate agreement 平均 same-group Jaccard **0.571**、edge Jaccard **0.357**、role-type agreement **0.658**。使用者選擇**逐分歧裁決**（非單人 oracle 模式）：逐 sample 對照三人 decisions 完成 `annotation_adjudicated.json`＋`adjudication_record.json`（adjudicator=`nina`，80/80）。
+
+### 22.3 Finalization
+
+`finalize-adjudication` all-or-nothing：**80/80 valid、failed 0**。`adjudication/oracle_trees/` 80 棵、全部 `source="human_oracle"`；`adjudication_finalization.json` 存在且 `failed == 0`。裁決後最終 uncertain assets **23**（neiji 的 527 個不確定絕大多數已由裁決者定案）。
+
+### 22.4 成本與狀態
+
+- API calls：**0**（標註、裁決、驗證、finalization 全程零付費）。
+- **Human reference tree 覆蓋達 relation-100 全數 100/100**（pilot 20＋本批 80），Phase 3 的 T3 臂與 human-reference SGC/TLC/PCA 指標來源已就緒。
+- 剩餘 Phase 3 前置：Gate B 升級條件 2（T2 vs T0 human semantic-grouping preference）仍未驗證；N=100 各臂付費 budget 需另行提案與授權。
