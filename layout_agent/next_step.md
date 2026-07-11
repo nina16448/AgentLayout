@@ -298,12 +298,23 @@ Results and provenance are documented in `A3_EXPERIMENT_LOG.md` §23.8
    interpretation passed (50/50 checks).
 5. Done: results appended to `A3_EXPERIMENT_LOG.md` §23.8; scoped work
    (log, this handoff, evaluation sidecar) committed and pushed.
-6. Next: do not start S_DL/S_QL/S_TV/S_IO. First report the exact judge
-   snapshot, matched-pair protocol, call count, and estimated cost for
-   explicit approval. The proposal below was submitted on 2026-07-12 and is
-   AWAITING AUTHORIZATION.
+6. Done: the paid judge proposal below was submitted on 2026-07-12, the user
+   authorized it verbatim ("授權"), and the run completed the same day.
 
-## Paid judge proposal (submitted 2026-07-12, awaiting authorization)
+## Paid judge run — complete (2026-07-12)
+
+Executed exactly as proposed below. Outcome: 398 API calls (1 param probe +
+397 scoring, cap 420 untouched), 397/397 parsed OK, zero retry burn, wall
+113.3s. Results published atomically at
+`layout_agent/evaluations/a3-cole/a3.cole-judge.v1/a3-relation-n100-cole-v1/`
+and documented in `A3_EXPERIMENT_LOG.md` §23.9. Headline: all three arms lose
+to designer GT on S_mean4 (77.6–79.5% of GT, p ≤ 2e-18); between-arm
+differences are all non-significant — the tree channel moves semantic
+organization (§23.3) but neither geometry (§23.8) nor COLE aesthetics.
+The SEGA/PKU and COLE evaluation lines are now BOTH CLOSED. No further paid
+work is pending in this task file.
+
+## Paid judge proposal (submitted 2026-07-12, authorized and executed)
 
 - Judge snapshot: `gpt-5.4-mini-2026-03-17` (pinned in `~/.metagpt/config2.yaml`;
   already in `MULTI_MODAL_MODELS`, so vision input works — Step 91 lesson

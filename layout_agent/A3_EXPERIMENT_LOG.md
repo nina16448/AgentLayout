@@ -2068,3 +2068,38 @@ Source failures 保留為顯式 `source_skipped` rows（與 §23.2 的 3 例一�
 **獨立驗證（read-only、50 項檢查全過）**：三 artifact SHA-256 與發布記錄一致（manifest `c96937a6…`、aggregate `5eeed54f…`、per_sample `a70121e4…`）；`validate_evaluation_bundle()` 重載通過（records=300, runs=3）；四個適用軸的聚合平均值由 per-sample rows 獨立重算並逐格吻合（rel_tol 1e-12）、zero-contribution/skipped 計數吻合；三臂 per-sample 順序與 manifest 的 100-ID 快照（sha256 `840347c0…`）逐位一致；來源 run trees 前後 hash 不變、無 staging 殘留。
 
 **Status**：Phase 3 必跑項 4（幾何六軸）以本節為 final。付費 matched COLE judge 四軸（S_DL/S_QL/S_TV/S_IO）仍在授權邊界外，須先提 judge snapshot、matched-pair 協定、call 數與預算。
+
+### 23.9 Matched COLE judge 四軸（付費項；gpt-5.4-mini；2026-07-12 使用者授權執行）
+
+依 §23.8 後提交並獲授權的提案執行。腳本 `layout_agent/judge_a3_cole.py`：輸入直接由已驗證的 SEGA sidecar 解析（`b0_slot_id`＋`b0_render_sha256` 逐檔 pin、付費前 preflight 重驗）；COLE prompt/parser 逐字沿用 `step21_phaseb_eval.py`（prompt SHA-256 記錄於 aggregate）；judge=`gpt-5.4-mini-2026-03-17`（絕對評分、每圖單 call、無 arm 標籤=blind by construction）。**398 calls（含 1 參數探針）、cap 420 未觸、397/397 全部解析成功、零 retry 耗損、wall 113.3s**。結果原子發布於 `layout_agent/evaluations/a3-cole/a3.cole-judge.v1/a3-relation-n100-cole-v1/`。實際帳單以 provider dashboard 為準（提案估 <$2）；本腳本未記 per-call token usage（已知 limitation）。
+
+**Arm means（S_mean4 = SDL/SQL/STV/SIO 平均；SGI 另列）**：
+
+| Arm | n | SDL | SQL | STV | SIO | SGI | S_mean4 | % of GT |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| GT | 100 | 7.01 | 7.45 | 6.86 | 5.63 | 7.33 | **6.738** | — |
+| T0 | 100 | 5.22 | 5.85 | 5.05 | 4.79 | 5.77 | 5.228 | 77.6% |
+| T2 | 98 | 5.47 | 5.99 | 5.19 | 4.77 | 6.05 | 5.355 | 79.5% |
+| T3 | 99 | 5.43 | 5.88 | 5.24 | 4.80 | 6.02 | 5.338 | 79.2% |
+
+**Paired sign tests（S_mean4；two-sided）＋ bootstrap 95% CI（seed 20260712、10k）**：
+
+| 比較 | n | W/L/T | p | Δmean [CI] |
+| --- | ---: | --- | --- | --- |
+| T0 vs GT | 100 | 4/88/8 | 1.2e-21 | −1.510 [−1.730, −1.300] |
+| T2 vs GT | 98 | 6/83/9 | 2.0e-18 | −1.375 [−1.571, −1.176] |
+| T3 vs GT | 99 | 7/86/6 | 2.1e-18 | −1.389 [−1.604, −1.174] |
+| T2 vs T0 | 98 | 46/34/18 | 0.219 | +0.112 [−0.099, +0.329] |
+| T3 vs T0 | 99 | 45/39/15 | 0.586 | +0.131 [−0.081, +0.341] |
+| T3 vs T2 | 97 | 43/42/12 | 1.0 | +0.026 [−0.186, +0.232] |
+
+Per-axis：三臂 vs GT 四軸全部極顯著落後（p ≤ 1.4e-12）。臂間四軸全不顯著；唯一邊緣趨勢 T2−T0 SDL 42W/26L p=0.068（方向有利 tree）。
+
+**判讀**：
+
+1. **三臂在 COLE 美學評分全面顯著輸設計師 GT**（77.6–79.5% of GT）——A3 架構的美學天花板與 tree 條件無關。
+2. **tree 通道不動美學軸**：T2/T3 vs T0 的 S_mean4 與全部 per-axis 皆不顯著。與 §23.5/23.8（幾何六軸持平）合併成一致敘事：**predicted/oracle tree 帶來的是語意組織增益（§23.3 SGC/TLC/PCA 全顯著），不以幾何或美學品質為代價、也不帶來美學增益**。
+3. T3（oracle tree）與 T2（predicted tree）在美學上無差（p=1.0）——tree 品質梯度只反映在語意軸，進一步支持「語意組織」與「美學」是正交通道。
+4. **協定警告**：本表為 A3-only、GT-referenced、gpt-5.4-mini judge；不可與 Step 70/92 舊架構 COLE 表（gpt-4o judge）同表或互相換算（2026-07-12 裁示：舊架構視為不存在）。
+
+**Status**：Phase 3 必跑項 7（matched judge evaluation）complete。SEGA/PKU＋COLE 兩條評測線至此全部結案。
