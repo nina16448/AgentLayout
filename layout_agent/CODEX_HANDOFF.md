@@ -11,7 +11,7 @@
 ## 1. 新 session 首先要讀的文件（依序讀到 EOF）
 
 1. `layout_agent/CODEX_HANDOFF.md`（本檔）
-2. `layout_agent/new_plam.md`（唯一的新架構與實驗規格；worktree 中有使用者未 commit 的修改，**以 worktree 版為準**）
+2. `layout_agent/new_plam.md`（唯一的新架構與實驗規格）
 3. `layout_agent/A3_EXPERIMENT_LOG.md`（A3 唯一實作與實驗流水帳，§2～§17 是完整歷史）
 
 紀錄規則不變：A3 一切內容**只**追加到 `A3_EXPERIMENT_LOG.md`；不得寫 `IMPLEMENTATION_LOG.md`、`result.md`；不得修改論文。
