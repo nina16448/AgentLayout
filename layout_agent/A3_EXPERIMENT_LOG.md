@@ -1929,3 +1929,7 @@ Paired sign tests：**T3−T0 PCA 12W/0L/8T p=0.0005 顯著**；T3−T2 SGC 14W/
 - 付費 model calls：**660**（授權範圍內、零 retry）；provider 回報 token/cost 0。
 - 分析全程 zero-cost（`human_tree_metrics.py` 唯讀聚合）；run artifacts 不 commit。
 - A3-09 全部 gates：**complete**。下一決策點：A3-10 N=100 設計（text bitmap 池已備 100/100，但 human tree annotation 只覆蓋 pilot N=20，T3 臂與 Gate 指標在 N=100 的 reference tree 來源需先定案）。
+
+### 21.5 A3-10 前置：relation-100 剩餘 80 sample 標註包
+
+同日使用者要求準備 N=100 剩餘標註。relation-100（`output2/step97_relation_subset/relation100_ids.json`）扣除 pilot 20（真子集、oracle 直接沿用）＝**80 個**，凍結為 `layout_agent/sample_ids/a3_relation_annot_n80.json`。新 run `a3-relation-annot-n80-01` 走 `init → prepare-pfull → normalize-r3 → prepare-analyst-vision → prepare-annotation`：**80/80 prepared、failed 0**（packet＋空白 form＋contact sheets，部分 sample 兩張），全程 **0 API calls**。80 個的標註／裁決協定（幾位標註者、是否沿用單人 oracle 模式）為使用者待決事項。
