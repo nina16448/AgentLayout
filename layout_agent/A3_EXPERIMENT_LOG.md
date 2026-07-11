@@ -2000,3 +2000,17 @@ Paired sign tests（two-sided）：
 - 三臂呈乾淨的 tree 品質梯度 **T0 < T2 < T3**：tree 通道有效（T2>T0），tree 品質進一步加分（T3>T2，SGC/TLC 顯著）。T3 同時是可解釋的 upper bound。
 - Caveat：Gate B 升級條件 2 之 human preference 未驗證即升級（使用者決定），論文引用時幾何指標主張成立、human-perceived 分組偏好主張仍需補人測。
 - A3-10R status：**complete**。Phase 3 剩餘項目（Crello-General N=100 final system、matched judge evaluation、human preference study、failure analysis 等）另行規劃。
+
+### 23.5 SEGA/PKU 幾何六軸（Phase 3 必跑項 4；zero-cost、`sega_metrics.py` PKU 忠實移植）
+
+cls 對映：text/text_bitmap→1、image→2；Und_l/Und_s **0 by design**（A3 不產 cls=3 underlay）。Rea/Occ 只有 14/100 sample 有像素底圖可算；該 14 張底圖全為平坦填色，Sobel 梯度為 0 → **Rea 三臂全 0、全平手（無訊號）**。
+
+| Arm | Ali↓ | Ove↓ | Rea↓(n=14) | Occ↓(n=14) |
+| --- | ---: | ---: | ---: | ---: |
+| T0 | 0.00029 | 0.1142 | 0.0 | 0.0156 |
+| T2 | 0.00106 | 0.1151 | 0.0 | 0.0157 |
+| T3 | 0.00090 | 0.1414 | 0.0 | 0.0167 |
+
+Paired sign tests：全部不顯著。僅兩個邊緣趨勢（tree 臂略差）：T2−T0 Ali p=0.057（Ali 大多平手：87–79% ties）、T3−T2 Ove 58W/39L p=0.067。**判讀：tree 條件在幾何整潔軸持平——§23.3 的語意組織增益（SGC/TLC/PCA 全顯著）不是用幾何品質換來的**；T3 Ove 邊緣上升與「相關元素放近」一致，屬可解釋的 trade-off 方向但未達顯著。
+
+**協定警告**：本表在 A3 P-Full 協定（text＋image 全部為 placeable、pixel-only background）下計算，**不可**與 Step 89/92 的 text-as-image 協定表或 SEGA Table 3 同表比較；僅供三臂內部對照。S_DL/S_QL/S_TV/S_IO/S_mean4（matched COLE judge，Phase 3 必跑項 7）為付費項目，budget 另行提案。
