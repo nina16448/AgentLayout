@@ -54,6 +54,7 @@ layout_agent/runs/a3/
 | A3-08 | N=5 smoke（L0 5/5、L1-Gated 5/5） | complete |
 | A3-09 | N=20 gates（Gate C complete＝L0 勝出；Gate A/B blocked on human annotation） | in progress |
 | A3-09M | Human-tree SGC/TLC/PCA 與 tree prediction metrics | complete |
+| A3-09H | 三位標註者 adjudication queue、finalizer 與 T3 oracle preflight | infra complete；blocked on human adjudication |
 | A3-10 | N=100 正式實驗 | blocked by gates |
 
 ---
@@ -1753,3 +1754,95 @@ Pairwise mean（現有 `compute_agreement.role_type_agreement` 實際只比較 `
 - API calls：**0**；paid tokens / dollar cost：**0**；所有 metric、tests、annotation validation/agreement 都是 local deterministic Python。
 - A3-09M status：**complete**。
 - 下一入口：使用者 adjudication → `AdjudicationRecord`＋final `annotation_to_oracle_tree` → Gate A（vision vs text-only，各約 140 calls）與 Gate B（T0/T2/T3；L0）付費 runs。任何 paid run 仍須先逐 arm 報 budget 並取得明確授權；Gate C 的 L0 決策不重啟。
+
+---
+
+## 19. A3-09H：human adjudication queue 與 T3 oracle handoff
+
+**日期：** 2026-07-11
+**起始 commit：** `1b40fa569cd759434cf39a0e0f17aa5e103523ea`
+**性質：** zero-cost human-work handoff infrastructure；0 API calls、0 paid tokens；未做任何自動 adjudication。
+
+### 19.1 發現的 contract 缺口
+
+Pilot 現有 `T`、`hui`、`neiji` 三份獨立 annotation／sample，但原本只有：
+
+- pairwise `compute_agreement(a,b)`；
+- 只容納單一 `AgreementReport` 的 `AdjudicationRecord`；
+- `annotation_to_oracle_tree`，沒有 queue、比較 packet、完成表單、批次 validator 或 T3 CLI oracle input。
+
+直接選其中一位當 base/winner 會構成未授權的自動裁決；三位 annotations 也不能只保留任意一組 pairwise report。因此本階段建立 evidence-only packet：保留所有來源與 pairwise 結果，最終選擇仍完全由使用者作成。
+
+### 19.2 Adjudication packet contract
+
+新增 `metagpt/ext/agentlayout/tools/adjudication.py`：
+
+- `a3.adjudication-packet.v1`；每份 source annotation 保存 filename＋raw SHA-256；
+- load 時逐份執行 `HumanAnnotation.model_validate`、manifest coverage、filename/annotator identity，以及 `annotation_to_oracle_tree` 的 parent/cycle/group structural validation；
+- N 位 annotator 產生全部 `N choose 2` pairwise `AgreementReport`；三位即 3 份；
+- `aggregate_agreement` 明確定義為各 pair 的 defined Jaccard／semantic-type agreement arithmetic mean，`disagreeing_assets` 取 union；原欄位 `role_type_agreement` 仍只代表既有 contract 的 semantic-type agreement；
+- per-asset comparison 同時呈現每位 annotator 的 semantic type、exact free-text role、same-group member set、group ID/label、parent/relation、uncertain；
+- 不存在 selected/winner 欄位；`requires_adjudication` 只標示是否有差異，不作決策；
+- `annotation_adjudicated_form.json` 與 `adjudication_record_form.json` 只預填**所有 annotator 逐字一致**的欄位；任何分歧保持空字串／`null`，故在使用者填完前刻意無法通過 schema；
+- `validate_adjudication_submission` 強制 packet sample/provenance、annotator IDs、frozen aggregate、adjudicator identity、asset coverage 及完整 A3 tree validity一致，才回傳 `source="human_oracle"` tree。
+
+### 19.3 CLI 與 real pilot materialization
+
+`layout_agent/run_a3.py` 新增：
+
+```bash
+python layout_agent/run_a3.py prepare-adjudication \
+  --run-dir layout_agent/runs/a3/a3-gateab-pilot-n20-01
+```
+
+輸出使用全新的 write-once namespace，沒有修改任何既有 `annotation_*.json`：
+
+```text
+adjudication/
+  ADJUDICATION_GUIDE.md
+  FINALIZATION_GUIDE.md
+  adjudication_queue.json
+  samples/<sample_id>/
+    adjudication_packet.json
+    annotation_adjudicated_form.json
+    adjudication_record_form.json
+```
+
+Real execution：**20/20 prepared、0 failed**。目前 namespace 共 63 files（CLI 62＋finalization supplement 1）；20 packets 全部 schema-valid，60 個 source hashes 全吻合。每 sample 有 8–24 個需決定 assets，總計 **298 assets** 至少一欄有分歧；因此沒有產生任何 completed form、record 或 oracle tree。
+
+使用者完成每 sample 的兩份 copy-before-edit 表單後，執行：
+
+```bash
+python layout_agent/run_a3.py finalize-adjudication \
+  --run-dir layout_agent/runs/a3/a3-gateab-pilot-n20-01
+```
+
+Finalizer 採 two-phase all-or-nothing：先驗 20/20 completed forms、record、來源 hash與 tree contract，任一錯誤即 exit 1 且不寫任何 oracle。全數通過才 write-once 發布：
+
+```text
+adjudication/oracle_trees/<sample_id>.json
+adjudication/adjudication_finalization.json
+```
+
+缺少 human completed forms 的實際 preflight 結果：0 valid／20 `FileNotFoundError`、exit 1；確認 `oracle_trees/` 與 finalization summary 均未建立。
+
+### 19.4 Gate B T3 fail-closed input
+
+`run_a3.py run` 新增 `--oracle-trees-from <directory>`：
+
+- `--tree-arm T3` 缺此參數立即 exit 1；
+- 非 T3 禁止帶此參數；
+- 在任何 Action/paid call 前，一次載入全部 sample tree，驗證 `source="human_oracle"`，並和該 Gate run 的 R3 foreground stable IDs 做 exact coverage preflight；
+- 只有全部 oracle 合法時才進既有 `--allow-api-calls` budget gate；無授權仍 exit 2，不產生 run output；
+- pipeline 明確收到對應 sample 的 `oracle_tree`，不再以 `None` 進 T3 後才失敗。
+
+### 19.5 Tests 與成本
+
+新增 `test_a3_adjudication.py`（8 tests）並擴充 `test_a3_stage_binding.py` 1 test，涵蓋：三位 annotator 全 pairwise＋aggregate、逐 asset disagreement、unanimous-only forms、schema/coverage/source hash、duplicate/sample mismatch、write-once、human-only guide、completed submission validation、oracle source check、T3 complete-set/coverage preflight 與 paid gate refusal。
+
+完整 A3 suite（A3-09M 162＋本階段 9）：**171 passed in 4.77s**。Ruff、conda `meta` py_compile 與 scoped diff check 另行通過。
+
+- API calls：**0**；paid tokens／dollar cost：**0**。
+- A3-09H infrastructure：**complete**。
+- 人工作業：**blocked on 使用者 adjudication 20/20**；此狀態不授權 Gate A/B 付費 calls。
+- 下一入口：使用者依 `adjudication/ADJUDICATION_GUIDE.md` 填完 20 組 completed forms → zero-cost `finalize-adjudication` → 報 Gate A/B 各 arm budget並等待明確授權。

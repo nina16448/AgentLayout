@@ -132,6 +132,208 @@ def _command_prepare_annotation(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def _command_prepare_adjudication(args: argparse.Namespace) -> int:
+    """Build a no-winner comparison queue from independent annotations."""
+    from metagpt.ext.agentlayout.tools.adjudication import (  # noqa: E402
+        build_adjudication_guide,
+        build_adjudication_packet,
+        load_annotation_submissions,
+        save_adjudication_materials,
+    )
+    from metagpt.ext.agentlayout.tools.annotation import (  # noqa: E402
+        ANNOTATION_PACKET_FILENAME,
+        AnnotationPacket,
+    )
+
+    store = A3RunStore(args.run_dir)
+    manifest = store.manifest()
+    sample_ids = json.loads(
+        (store.run_dir / manifest.sample_ids_snapshot.stored_path).read_text()
+    )
+    destination = store.run_dir / "adjudication"
+    destination.mkdir(parents=True, exist_ok=False)
+    with (destination / "ADJUDICATION_GUIDE.md").open(
+        "x", encoding="utf-8"
+    ) as handle:
+        handle.write(build_adjudication_guide())
+
+    rows = []
+    failed = 0
+    for sample_id in sample_ids:
+        sample_dir = store.run_dir / "samples" / sample_id
+        annotation_dir = sample_dir / "annotation"
+        try:
+            r3 = R3AssetManifest.model_validate_json(
+                (sample_dir / "inputs" / "r3" / R3_MANIFEST_FILENAME).read_bytes()
+            )
+            source_packet = AnnotationPacket.model_validate_json(
+                (annotation_dir / ANNOTATION_PACKET_FILENAME).read_bytes()
+            )
+            submissions = load_annotation_submissions(annotation_dir, r3)
+            packet = build_adjudication_packet(
+                submissions,
+                annotation_directory=f"samples/{sample_id}/annotation",
+                contact_sheet_files=source_packet.contact_sheet_files,
+            )
+            save_adjudication_materials(
+                packet, destination / "samples" / sample_id
+            )
+            rows.append(
+                {
+                    "sample_id": sample_id,
+                    "status": "prepared",
+                    "annotator_ids": packet.annotator_ids,
+                    "pairwise_reports": len(packet.pairwise_agreements),
+                    "assets_requiring_decision": sum(
+                        bool(asset.disagreement_fields) for asset in packet.assets
+                    ),
+                    "requires_adjudication": packet.requires_adjudication,
+                }
+            )
+        except Exception as error:  # noqa: BLE001 -- preserve every failure
+            failed += 1
+            rows.append(
+                {
+                    "sample_id": sample_id,
+                    "status": "failed",
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                }
+            )
+            error_dir = destination / "errors"
+            error_dir.mkdir(parents=True, exist_ok=True)
+            write_json_once(
+                error_dir / f"{sample_id}.json",
+                {
+                    "stage": "adjudication_preparation",
+                    "sample_id": sample_id,
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                },
+            )
+    write_json_once(
+        destination / "adjudication_queue.json",
+        {
+            "version": "a3.adjudication-queue.v1",
+            "source_run_id": manifest.run_id,
+            "total": len(sample_ids),
+            "failed": failed,
+            "samples": rows,
+        },
+    )
+    print(json.dumps({"total": len(sample_ids), "failed": failed}, indent=2))
+    return 1 if failed else 0
+
+
+def _command_finalize_adjudication(args: argparse.Namespace) -> int:
+    """Validate completed human decisions and publish T3 oracle trees."""
+    import hashlib
+
+    from metagpt.ext.agentlayout.tools.adjudication import (  # noqa: E402
+        ADJUDICATED_ANNOTATION_FILENAME,
+        ADJUDICATION_PACKET_FILENAME,
+        ADJUDICATION_RECORD_FILENAME,
+        AdjudicationPacket,
+        validate_adjudication_submission,
+    )
+    from metagpt.ext.agentlayout.tools.annotation import (  # noqa: E402
+        AdjudicationRecord,
+        HumanAnnotation,
+    )
+
+    store = A3RunStore(args.run_dir)
+    manifest = store.manifest()
+    sample_ids = json.loads(
+        (store.run_dir / manifest.sample_ids_snapshot.stored_path).read_text()
+    )
+    adjudication_root = store.run_dir / "adjudication"
+    oracle_root = adjudication_root / "oracle_trees"
+    summary_path = adjudication_root / "adjudication_finalization.json"
+    if oracle_root.exists() or summary_path.exists():
+        raise FileExistsError("adjudication finalization is write-once")
+
+    validated = []
+    errors = []
+    for sample_id in sample_ids:
+        sample_dir = adjudication_root / "samples" / sample_id
+        try:
+            packet = AdjudicationPacket.model_validate_json(
+                (sample_dir / ADJUDICATION_PACKET_FILENAME).read_bytes()
+            )
+            annotation_path = sample_dir / ADJUDICATED_ANNOTATION_FILENAME
+            record_path = sample_dir / ADJUDICATION_RECORD_FILENAME
+            final_annotation = HumanAnnotation.model_validate_json(
+                annotation_path.read_bytes()
+            )
+            record = AdjudicationRecord.model_validate_json(record_path.read_bytes())
+            for source in packet.sources:
+                source_path = store.run_dir / packet.annotation_directory / source.filename
+                source_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
+                if source_hash != source.sha256:
+                    raise ValueError(
+                        f"source annotation changed after packet creation: {source_path}"
+                    )
+            tree = validate_adjudication_submission(packet, final_annotation, record)
+            validated.append(
+                {
+                    "sample_id": sample_id,
+                    "tree": tree,
+                    "annotation_sha256": hashlib.sha256(
+                        annotation_path.read_bytes()
+                    ).hexdigest(),
+                    "record_sha256": hashlib.sha256(record_path.read_bytes()).hexdigest(),
+                }
+            )
+        except Exception as error:  # noqa: BLE001 -- report all human form errors
+            errors.append(
+                {
+                    "sample_id": sample_id,
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                }
+            )
+
+    # Human forms are editable until valid. Validation is all-or-nothing so a
+    # partial submission never creates a misleading partial oracle set.
+    if errors:
+        print(
+            json.dumps(
+                {"total": len(sample_ids), "valid": len(validated), "errors": errors},
+                indent=2,
+            )
+        )
+        return 1
+
+    oracle_root.mkdir(parents=True, exist_ok=False)
+    rows = []
+    for item in validated:
+        tree_path = oracle_root / f"{item['sample_id']}.json"
+        tree_payload = item["tree"].model_dump(mode="json")
+        write_json_once(tree_path, tree_payload)
+        rows.append(
+            {
+                "sample_id": item["sample_id"],
+                "annotation_sha256": item["annotation_sha256"],
+                "record_sha256": item["record_sha256"],
+                "oracle_tree_path": str(tree_path.relative_to(store.run_dir)),
+                "oracle_tree_sha256": hashlib.sha256(tree_path.read_bytes()).hexdigest(),
+            }
+        )
+    write_json_once(
+        summary_path,
+        {
+            "version": "a3.adjudication-finalization.v1",
+            "source_run_id": manifest.run_id,
+            "total": len(rows),
+            "failed": 0,
+            "oracle_root": str(oracle_root.relative_to(store.run_dir)),
+            "samples": rows,
+        },
+    )
+    print(json.dumps({"total": len(rows), "failed": 0}, indent=2))
+    return 0
+
+
 def _command_snapshot_text_bitmaps(args: argparse.Namespace) -> int:
     """Write A3 text-bitmap sidecars from the Crello dataset (no LLM calls)."""
     from metagpt.ext.agentlayout.tools.pfull_preprocessor import (  # noqa: E402
@@ -378,7 +580,46 @@ def _command_run(args: argparse.Namespace) -> int:
     sample_ids = json.loads(
         (store.run_dir / manifest.sample_ids_snapshot.stored_path).read_text()
     )
+    oracle_trees = {}
+    if args.tree_arm == "T3":
+        if args.oracle_trees_from is None:
+            print("T3 requires --oracle-trees-from", file=sys.stderr)
+            return 1
+        from metagpt.ext.agentlayout.tools.adjudication import (  # noqa: E402
+            load_oracle_tree,
+        )
+
+        try:
+            for sample_id in sample_ids:
+                tree = load_oracle_tree(args.oracle_trees_from, sample_id)
+                r3 = R3AssetManifest.model_validate_json(
+                    (
+                        store.run_dir
+                        / "samples"
+                        / sample_id
+                        / "inputs"
+                        / "r3"
+                        / R3_MANIFEST_FILENAME
+                    ).read_bytes()
+                )
+                expected_ids = {asset.asset_id for asset in r3.foreground_assets()}
+                tree_ids = {node.asset_id for node in tree.nodes}
+                if tree_ids != expected_ids:
+                    raise ValueError(
+                        f"{sample_id} oracle coverage mismatch: "
+                        f"missing={sorted(expected_ids - tree_ids)}, "
+                        f"extra={sorted(tree_ids - expected_ids)}"
+                    )
+                oracle_trees[sample_id] = tree
+        except Exception as error:  # noqa: BLE001 -- fail before any paid call
+            print(f"invalid T3 oracle tree set: {error}", file=sys.stderr)
+            return 1
+    elif args.oracle_trees_from is not None:
+        print("--oracle-trees-from is only valid with --tree-arm T3", file=sys.stderr)
+        return 1
     budget = _call_budget(config.loop, args.tree_arm, len(sample_ids))
+    if args.oracle_trees_from is not None:
+        budget["oracle_trees_from"] = str(args.oracle_trees_from.resolve())
     if not args.allow_api_calls:
         print(json.dumps({"authorized": False, "budget": budget}, indent=2))
         print(
@@ -463,6 +704,7 @@ def _command_run(args: argparse.Namespace) -> int:
                 pipeline.run(
                     user_brief=build_prepared_input(pfull).user_brief,
                     tree_arm=args.tree_arm,
+                    oracle_tree=oracle_trees.get(sample_id),
                 )
             )
             rows.append(
@@ -504,6 +746,11 @@ def _command_run(args: argparse.Namespace) -> int:
         {
             "tree_arm": args.tree_arm,
             "analyst_arm": args.analyst_arm,
+            "oracle_trees_from": (
+                str(args.oracle_trees_from.resolve())
+                if args.oracle_trees_from is not None
+                else None
+            ),
             "budget": budget,
             "total": len(sample_ids),
             "failed": failed,
@@ -556,6 +803,11 @@ def main() -> int:
     run.add_argument("--run-dir", type=Path, required=True)
     run.add_argument("--tree-arm", choices=["T0", "T1", "T2", "T3"], default="T2")
     run.add_argument(
+        "--oracle-trees-from",
+        type=Path,
+        help="Directory containing <sample_id>.json human-oracle trees; required for T3.",
+    )
+    run.add_argument(
         "--analyst-arm",
         choices=["vision", "text-only"],
         default="vision",
@@ -593,10 +845,26 @@ def main() -> int:
         "form + contact sheets, WITHOUT the background) for a prepared run.",
     )
     annotation.add_argument("--run-dir", type=Path, required=True)
+    adjudication = sub.add_parser(
+        "prepare-adjudication",
+        help="Build a zero-cost, write-once human adjudication queue from "
+        "independent annotation_*.json files. Never chooses a winner.",
+    )
+    adjudication.add_argument("--run-dir", type=Path, required=True)
+    finalize = sub.add_parser(
+        "finalize-adjudication",
+        help="Validate completed human adjudication forms all-or-nothing and "
+        "publish write-once T3 oracle trees. No API calls.",
+    )
+    finalize.add_argument("--run-dir", type=Path, required=True)
     args = parser.parse_args()
 
     if args.command == "prepare-annotation":
         return _command_prepare_annotation(args)
+    if args.command == "prepare-adjudication":
+        return _command_prepare_adjudication(args)
+    if args.command == "finalize-adjudication":
+        return _command_finalize_adjudication(args)
 
     if args.command == "run":
         return _command_run(args)

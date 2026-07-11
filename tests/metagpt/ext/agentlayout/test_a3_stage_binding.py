@@ -474,3 +474,61 @@ def test_run_command_refuses_paid_calls_without_explicit_authorization(tmp_path)
     assert "--allow-api-calls" in proc.stderr
     # Refusal must not have created any run outputs.
     assert not (tmp_path / "runs" / "smoke-test" / "a3_run_summary.json").exists()
+
+
+def test_t3_run_preflights_complete_human_oracle_set_before_paid_gate(tmp_path):
+    from metagpt.ext.agentlayout.run_manifest import A3RunStore
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(_config("L0").model_dump_json())
+    ids_path = tmp_path / "ids.json"
+    ids_path.write_text(json.dumps(["sample01", "sample02"]))
+    run_dir = tmp_path / "runs" / "t3-test"
+    A3RunStore.create(
+        runs_root=tmp_path / "runs",
+        run_id="t3-test",
+        config_path=config_path,
+        sample_ids_path=ids_path,
+        repo_root=REPO,
+    )
+    base_command = [
+        sys.executable,
+        str(REPO / "layout_agent" / "run_a3.py"),
+        "run",
+        "--run-dir",
+        str(run_dir),
+        "--tree-arm",
+        "T3",
+    ]
+    missing = subprocess.run(
+        base_command,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert missing.returncode == 1
+    assert "requires --oracle-trees-from" in missing.stderr
+
+    oracle_root = tmp_path / "oracles"
+    oracle_root.mkdir()
+    oracle = _tree().model_copy(update={"source": "human_oracle"})
+    for sample_id in ("sample01", "sample02"):
+        (oracle_root / f"{sample_id}.json").write_text(oracle.model_dump_json())
+        manifest_path = run_dir / "samples" / sample_id / "inputs" / "r3"
+        manifest_path.mkdir(parents=True)
+        manifest = _manifest(tmp_path).model_copy(update={"sample_id": sample_id})
+        (manifest_path / "r3_asset_manifest.json").write_text(
+            manifest.model_dump_json()
+        )
+    refused = subprocess.run(
+        [*base_command, "--oracle-trees-from", str(oracle_root)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert refused.returncode == 2
+    payload = json.loads(refused.stdout)
+    assert payload["budget"]["model_calls_per_sample_max"] == 6
+    assert payload["budget"]["model_calls_total_max"] == 12
+    assert payload["budget"]["oracle_trees_from"] == str(oracle_root.resolve())
+    assert not (run_dir / "a3_run_summary.json").exists()
