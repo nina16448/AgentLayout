@@ -52,9 +52,10 @@ layout_agent/runs/a3/
 | A3-06 | L0、Judge-Select 與 Judge-Critic | complete |
 | A3-07 | L1-Gated、repair verifier 與 B0/B1 guard | complete |
 | A3-08 | N=5 smoke（L0 5/5、L1-Gated 5/5） | complete |
-| A3-09 | N=20 gates（Gate C complete＝L0 勝出；Gate A/B blocked on human annotation） | in progress |
+| A3-09 | N=20 gates（Gate C complete＝L0 勝出；Gate A/B oracle ready、等付費授權） | in progress |
 | A3-09M | Human-tree SGC/TLC/PCA 與 tree prediction metrics | complete |
-| A3-09H | 三位標註者 adjudication queue、finalizer 與 T3 oracle preflight | infra complete；blocked on human adjudication |
+| A3-09H | 三位標註者 adjudication queue、finalizer 與 T3 oracle preflight | complete |
+| A3-09O | Human adjudication 20/20 finalized、T3 oracle trees 發布 | complete |
 | A3-10 | N=100 正式實驗 | blocked by gates |
 
 ---
@@ -1846,3 +1847,38 @@ adjudication/adjudication_finalization.json
 - A3-09H infrastructure：**complete**。
 - 人工作業：**blocked on 使用者 adjudication 20/20**；此狀態不授權 Gate A/B 付費 calls。
 - 下一入口：使用者依 `adjudication/ADJUDICATION_GUIDE.md` 填完 20 組 completed forms → zero-cost `finalize-adjudication` → 報 Gate A/B 各 arm budget並等待明確授權。
+
+---
+
+## 20. A3-09O：human adjudication 完成與 T3 oracle finalization
+
+**日期：** 2026-07-11
+
+### 20.1 裁決形式：adjudicator 全量重新標註
+
+使用者（adjudicator `nina`）未逐欄調停三位標註者，而是對 20/20 pilot samples 做完整獨立重新標註，寫入各 `samples/<sample_id>/annotation/annotation_nina.json`（HumanAnnotation v1，全欄位含中文 semantic_role）。此為 ADJUDICATION_GUIDE 允許的合法裁決：每一項 per-asset 決定皆由人類做出，且不以 T/hui/neiji 任一位為自動 winner。三份原始標註（frozen SHA-256）全程未動。
+
+### 20.2 唯讀預驗證與人工修正
+
+finalize 前先以唯讀腳本驗證 nina 20 份標註（HumanAnnotation schema＋packet coverage＋`annotation_to_oracle_tree` 結構檢查）：
+
+- 首輪 **10/20 失敗**：9 個 sample 用了非 enum 的 `semantic_type`（`text`／`heading`／`footer`／`footnote`）；`5914233f95a7a863ddcd777c` assets 4/5 四欄全空。錯誤逐欄交回使用者，由使用者本人修正（無代填）。
+- 次輪 19/20：`5889bc5995a7a863ddcc3b97` 檔內 `sample_id` 為 `5899bc59…`（單字元 typo，asset coverage 與 packet 完全吻合、內容屬於該目錄）；由本 session 修正該單一欄位。
+- 終輪 **20/20 valid**：298 assets、`uncertain` assets **4**、`sample_uncertain` **0**。
+
+### 20.3 機械轉錄與 finalizer
+
+每個 sample 的兩份 completed 檔以零決策方式產生：`annotation_adjudicated.json` = `annotation_nina.json` 逐位元組複製；`adjudication_record.json` = 預填 record form ＋ `adjudicator_id: "nina"` ＋ 事實性 provenance note。template forms、packets、queue、raw annotations 均未修改。
+
+```bash
+python layout_agent/run_a3.py finalize-adjudication \
+  --run-dir layout_agent/runs/a3/a3-gateab-pilot-n20-01
+```
+
+結果：**20/20 valid、failed 0**。`adjudication/oracle_trees/*.json` = **20**，每棵 `source == "human_oracle"`；`adjudication/adjudication_finalization.json` 存在且 `failed == 0`（含每 sample annotation/record/oracle-tree SHA-256）。
+
+### 20.4 成本與狀態
+
+- API calls：**0**；paid tokens／dollar cost：**0**（全程 schema 驗證與檔案操作）。
+- A3-09O status：**complete**。Gate B T3 的 `--oracle-trees-from` 輸入已就緒。
+- 下一入口：Gate A/B 各 arm budget 已回報（nominal 合計 660 calls，不含 reliability retries），等待使用者逐 arm 付費授權；未授權前不帶 `--allow-api-calls`。
