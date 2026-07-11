@@ -300,7 +300,42 @@ Results and provenance are documented in `A3_EXPERIMENT_LOG.md` §23.8
    (log, this handoff, evaluation sidecar) committed and pushed.
 6. Next: do not start S_DL/S_QL/S_TV/S_IO. First report the exact judge
    snapshot, matched-pair protocol, call count, and estimated cost for
-   explicit approval.
+   explicit approval. The proposal below was submitted on 2026-07-12 and is
+   AWAITING AUTHORIZATION.
+
+## Paid judge proposal (submitted 2026-07-12, awaiting authorization)
+
+- Judge snapshot: `gpt-5.4-mini-2026-03-17` (pinned in `~/.metagpt/config2.yaml`;
+  already in `MULTI_MODAL_MODELS`, so vision input works — Step 91 lesson
+  applied). Temperature 0.0, max_tokens 600.
+- Protocol: COLE absolute scoring, one call per image, prompt verbatim from
+  `layout_agent/output/step21_phaseb_eval.py::COLE_PROMPT` (5 axes, single
+  JSON response). Absolute per-image scoring is blind by construction (no arm
+  label reaches the judge). Aggregation: S_mean4 plus per-axis; matched-pair
+  stats (two-sided sign test + bootstrap CI on per-sample deltas) for
+  T0/T2/T3 vs designer GT and T2−T0, T3−T0, T3−T2, restricted to samples
+  where both images exist.
+- Inputs (all verified present, zero missing): per-arm selected B0 render
+  resolved from the formal sidecar's `b0_slot_id`/`b0_render_sha256`
+  (T0 100, T2 98, T3 99) and designer GT
+  `layout_agent/output/crello_<id>/ground_truth_preview.jpg` (100).
+- Call count: 397 scoring calls, retry margin ≤ ~420. No other paid calls.
+- Token estimate: ~700 prompt-text tokens + ~1.1k–2.3k image tokens per call
+  (600×1200 canvas), ≤600 output. Totals ≈ 0.7–1.2M input, 0.16–0.24M output.
+- Cost estimate: at gpt-5-mini-tier public pricing ($0.25/M input, $2/M
+  output) ≈ **$0.6–0.8, hard upper bound < $2**. Caveat: repo cost logs
+  historically report $0; the real bill is on the provider dashboard.
+- Runtime estimate: ~15–25 min at concurrency 8 (~2.8s/call observed for the
+  same judge shape in Step 92).
+- Output: new results section in `A3_EXPERIMENT_LOG.md` (§23.9) and a
+  versioned result file under `layout_agent/evaluations/`; the SEGA sidecar
+  `a3-relation-n100-t0-t2-t3-sega-v1` is never rerun or overwritten.
+- Protocol warning: this is an A3-only, GT-referenced table. Old-architecture
+  COLE tables (Step 70/92) are not citable next to it (user ruling
+  2026-07-12: pre-A3 line treated as nonexistent).
+- Stop conditions: pre-flight existence/hash check before the first paid
+  call; abort and report if JSON parse-failure rate exceeds 5% in the first
+  40 calls; never exceed 420 calls.
 
 ## Dirty-worktree boundary
 
