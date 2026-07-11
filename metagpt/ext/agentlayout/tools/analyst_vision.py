@@ -226,6 +226,46 @@ asset IDs. Uniform cells deliberately remove original placement and scale.
 Output one JSON object only, without markdown fences."""
 
 
+def build_text_only_analyst_prompt(manifest: R3AssetManifest, user_brief: str) -> str:
+    """Gate A ablation arm: identical output contract, zero visual access.
+
+    The prompt states explicitly that no images are attached, so semantic
+    judgements come from text content and media type alone. Everything else
+    (schema, ID coverage, the background_image ban) matches the vision arm.
+    """
+    schema = A3AnalystOutput.model_json_schema()
+    return f"""Role: You are the semantic design Analyst in AgentLayout A3.
+
+You have NO visual access in this configuration: no background image and no
+foreground thumbnails are attached. Reason from the brief, each asset's text
+content and its media type alone.
+
+# User brief
+{user_brief}
+
+# Canvas
+{manifest.canvas_width}x{manifest.canvas_height}
+
+# Foreground assets
+{json.dumps(_prompt_assets(manifest), ensure_ascii=False, indent=2)}
+
+# Responsibilities
+- Assign every foreground asset a semantic type and semantic role.
+- semantic_type must NEVER be "background_image": every listed asset is
+  placeable foreground by contract. Use "decorative_image" when unsure
+  about a non-text asset.
+- background_summary must describe only what the brief implies; do not
+  invent visual details you cannot see.
+- State semantic constraints only. Do NOT output coordinates, bbox, x/y,
+  width, height, font size, original scale, z-index or file paths.
+- Include every listed asset ID exactly once; never invent or rename IDs.
+
+# Output JSON Schema
+{json.dumps(schema, ensure_ascii=False, indent=2)}
+
+Output one JSON object only, without markdown fences."""
+
+
 def build_vision_packet(manifest: R3AssetManifest, user_brief: str) -> AnalystVisionPacket:
     prompt = build_analyst_prompt(manifest, user_brief)
     background = build_background_overview(manifest)

@@ -1569,3 +1569,56 @@ done: 100/100、bitmaps_saved: 542、mismatches: 0（scanned≈1954）
 - LLM calls：0；HF 串流下載一次 test split（~1954 樣本掃描）；
 - **A3-09 剩餘阻塞只剩人工**：Gate A/B 需要真人對 Crello-Relation pilot（N=20）做雙標註＋adjudication。工具鏈（packet/form/agreement/adjudication/oracle-tree 轉換）已就緒，产生 annotation packets 只差一個對已 prep run 的批次命令（可在標註開始前補）；
 - Gate A 另需 text-only Analyst ablation 臂（Action 未建，工作量小、zero-cost 可先建）。
+
+---
+
+## 17. A3-09 前置收尾：text-only 臂、annotation 批次命令與 pilot 標註包
+
+**日期：** 2026-07-11  
+**起始 commit：** `b155af5d`  
+**性質：** Gate A/B 最後零成本前置；0 LLM calls。
+
+### 17.1 Gate A text-only Analyst 臂
+
+- `analyst_vision.build_text_only_analyst_prompt`：與 vision 臂**同一 output schema/coverage/background_image 禁令**，prompt 明示「NO visual access」且要求不得虛構視覺細節（背景描述只能來自 brief）；
+- `actions/analyze_a3_text_only.py`（`AnalyzeA3TextOnly`）：不附任何 image、exact-model guard、error-aware retry ×3、request（`a3.analyst-text-only-request.v1`，image_labels=[]）與 attempts write-once；
+- `run_a3.py run --analyst-arm vision|text-only`：binding 層換 Action，其餘 stage/budget/protocol 完全一致；`analyst_arm` 記入 run summary。Gate A 兩臂只差 Analyst 可見性一個變因。
+
+### 17.2 prepare-annotation 批次命令
+
+`run_a3.py prepare-annotation --run-dir <prepared-run>`：逐 sample 輸出自足標註包至 `samples/<id>/annotation/`：
+
+```text
+annotation_packet.json   （brief＋asset IDs/media/content＋packet hash）
+annotation_form.json     （空白表單，標註者填 role/group/parent/uncertain）
+asset_contact_sheet_NN.png（只複製 contact sheets——不含 background overview、
+                            不含任何 GT 產物）
+```
+
+run level `annotation_preparation.json`；失敗寫 versioned ErrorRecord。
+
+### 17.3 Gate A/B pilot N=20 凍結
+
+`layout_agent/sample_ids/a3_gateab_pilot_n20.json`＋`configs/a3_gateab_pilot_l0.json`：
+
+- **選樣規則（凍結）**：依 step97 `relation100_ids.json` 的 stored 順序，取前 10 個 tier=rich＋前 10 個 tier=medium（維持 step97 tier-stratified、pre-generation、model-blind 性質）；
+- 註記：其中 2 個 ID（5888bb29…、5888c540…）與 N=5 smoke 重疊——smoke 只驗管線未做任何評估，標註只看 input，無汙染；
+- pilot run `a3-gateab-pilot-n20-01` 已完成 init→prepare-pfull→normalize-r3→prepare-analyst-vision→**prepare-annotation 20/20**（全 zero-cost）；標註包落於 `layout_agent/runs/a3/a3-gateab-pilot-n20-01/samples/*/annotation/`。
+
+### 17.4 Tests
+
+新增 text-only prompt/action 測試（無 image、宣告無視覺、同 leakage 規則）。全套：**144 passed in 3.59s**。Ruff／py_compile 通過。
+
+### 17.5 A3-09 待辦與依賴（快照）
+
+| 事項 | 狀態 |
+| --- | --- |
+| Gate C | ✅ complete（L0 定案） |
+| Gate B 資料（bitmap sidecar） | ✅ relation-100 全 ready |
+| Annotation 工具鏈＋pilot 標註包 | ✅ 20 份已產出待分發 |
+| Gate A text-only 臂 | ✅ 已建 |
+| **Human annotation（pilot N=20 雙標註＋adjudication）** | ⏸ **等真人**——分發 `samples/*/annotation/`，每位標註者填回 `annotation_form.json`（annotator_id 各自唯一），回收後以 `compute_agreement`＋`AdjudicationRecord`＋`annotation_to_oracle_tree` 合成 T3 oracle |
+| Gate A 兩臂付費 run（vision vs text-only，各 N=20×7 calls） | 標註回收後執行（tree metrics 需 human trees） |
+| Gate B T0/T2/T3 付費 runs（L0、各 N=20） | 同上；T3 需 oracle trees |
+
+**A3-09 前置全部完成；關鍵路徑現在完全在人工標註上。**

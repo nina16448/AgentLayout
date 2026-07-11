@@ -12,6 +12,7 @@ from metagpt.ext.agentlayout.tools.analyst_vision import (
     analyst_output_to_design_spec,
     build_analyst_prompt,
     build_background_overview,
+    build_text_only_analyst_prompt,
     build_contact_sheets,
     build_vision_packet,
     parse_analyst_output,
@@ -182,6 +183,26 @@ def test_asset_understanding_rejects_background_image_at_schema_level(tmp_path: 
         A3AnalystOutput.model_validate(payload)
     prompt = build_analyst_prompt(manifest, "brief")
     assert 'must NEVER be "background_image"' in prompt
+
+
+def test_text_only_analyst_prompt_declares_no_visual_access(tmp_path: Path):
+    # Gate A ablation arm: same contract, zero images, no invented visuals.
+    manifest = _r3_manifest(tmp_path)
+    prompt = build_text_only_analyst_prompt(manifest, "Summer sale poster")
+    assert "NO visual access" in prompt
+    assert "contact-sheet" not in prompt
+    assert 'must NEVER be "background_image"' in prompt
+    assert "invent visual details" in prompt
+    # Same leakage rules as the vision arm.
+    assert "/home/" not in prompt
+    assert "Do NOT output coordinates" in prompt
+
+    repo = Path(__file__).resolve().parents[4]
+    source = (repo / "metagpt/ext/agentlayout/actions/analyze_a3_text_only.py").read_text()
+    assert "support_image_input" not in source
+    assert "aask(attempt_prompt)" in source and "images=" not in source
+    assert "actual_model != self.expected_model" in source
+    assert "Previous response validation error" in source
 
 
 def test_analyst_output_parser_accepts_fenced_json(tmp_path: Path):

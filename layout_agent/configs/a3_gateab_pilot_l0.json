@@ -1,0 +1,23 @@
+{
+  "loop": "L0",
+  "internal_judge": "gpt-5.4-mini-2026-03-17",
+  "evaluation_judge": null,
+  "dataset_split": "crello-relation-pilot",
+  "seed": 42,
+  "models": {
+    "analyst": {"model": "gpt-5.4-mini-2026-03-17", "image_detail": "high"},
+    "asset_planner": {"model": "gpt-5.4-mini-2026-03-17"},
+    "composition_director": {"model": "gpt-5.4-mini-2026-03-17", "image_detail": "high"},
+    "coordinate_mapper": {"model": "gpt-5.4-mini-2026-03-17", "image_detail": "high"},
+    "judge_select": {"model": "gpt-5.4-mini-2026-03-17", "image_detail": "high"}
+  },
+  "schema_versions": {
+    "layout_tree": "a3.layout-tree.v1",
+    "judge_select_result": "a3.judge-select-result.v1",
+    "l0_pipeline": "a3.l0-pipeline.v1",
+    "annotation_packet": "a3.annotation-packet.v1",
+    "human_annotation": "a3.human-annotation.v1",
+    "adjudication": "a3.annotation-adjudication.v1"
+  },
+  "price_table_version": null
+}

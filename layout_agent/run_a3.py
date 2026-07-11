@@ -57,6 +57,81 @@ def _call_budget(loop: str, tree_arm: str, sample_count: int) -> dict:
     }
 
 
+def _command_prepare_annotation(args: argparse.Namespace) -> int:
+    """Build self-contained annotation packets (no background, no GT)."""
+    import shutil
+
+    from metagpt.ext.agentlayout.tools.annotation import (  # noqa: E402
+        build_annotation_packet,
+        save_annotation_packet,
+    )
+
+    store = A3RunStore(args.run_dir)
+    manifest = store.manifest()
+    sample_ids = json.loads(
+        (store.run_dir / manifest.sample_ids_snapshot.stored_path).read_text()
+    )
+    rows = []
+    failed = 0
+    for sample_id in sample_ids:
+        sample_dir = store.run_dir / "samples" / sample_id
+        inputs = sample_dir / "inputs"
+        destination = sample_dir / "annotation"
+        try:
+            pfull = PFullAssetManifest.model_validate_json(
+                (inputs / "pfull" / ASSET_MANIFEST_FILENAME).read_bytes()
+            )
+            r3 = R3AssetManifest.model_validate_json(
+                (inputs / "r3" / R3_MANIFEST_FILENAME).read_bytes()
+            )
+            vision_dir = inputs / "analyst_vision"
+            sheets = sorted(
+                path.name for path in vision_dir.glob("asset_contact_sheet_*.png")
+            )
+            if not sheets:
+                raise FileNotFoundError("no contact sheets; run prepare-analyst-vision first")
+            packet = build_annotation_packet(
+                r3, build_prepared_input(pfull).user_brief, sheets
+            )
+            save_annotation_packet(packet, destination)
+            # Copy ONLY the contact sheets: annotators never receive the
+            # background overview or any GT-derived artifact.
+            for sheet in sheets:
+                shutil.copyfile(vision_dir / sheet, destination / sheet)
+            rows.append(
+                {
+                    "sample_id": sample_id,
+                    "status": "prepared",
+                    "packet_sha256": packet.packet_sha256,
+                    "contact_sheets": sheets,
+                }
+            )
+        except Exception as error:  # noqa: BLE001 -- failure must be persisted
+            failed += 1
+            rows.append(
+                {
+                    "sample_id": sample_id,
+                    "status": "failed",
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                }
+            )
+            store.record_run_error(
+                ErrorRecord(
+                    stage="annotation_preparation",
+                    error_type=type(error).__name__,
+                    message=str(error),
+                    details={"sample_id": sample_id},
+                )
+            )
+    write_json_once(
+        store.run_dir / "annotation_preparation.json",
+        {"total": len(sample_ids), "failed": failed, "samples": rows},
+    )
+    print(json.dumps({"total": len(sample_ids), "failed": failed}, indent=2))
+    return 1 if failed else 0
+
+
 def _command_snapshot_text_bitmaps(args: argparse.Namespace) -> int:
     """Write A3 text-bitmap sidecars from the Crello dataset (no LLM calls)."""
     from metagpt.ext.agentlayout.tools.pfull_preprocessor import (  # noqa: E402
@@ -319,6 +394,7 @@ def _command_run(args: argparse.Namespace) -> int:
     from metagpt.ext.agentlayout.a3_pipeline_l1 import A3L1GatedPipeline  # noqa: E402
     from metagpt.ext.agentlayout.a3_stage_binding import A3StageBinding  # noqa: E402
     from metagpt.ext.agentlayout.actions.analyze_a3 import AnalyzeA3Brief  # noqa: E402
+    from metagpt.ext.agentlayout.actions.analyze_a3_text_only import AnalyzeA3TextOnly  # noqa: E402
     from metagpt.ext.agentlayout.actions.compose_concept_a3 import ComposeConceptA3  # noqa: E402
     from metagpt.ext.agentlayout.actions.generate_layout_a3 import GenerateLayoutA3  # noqa: E402
     from metagpt.ext.agentlayout.actions.judge_critic_a3 import JudgeCriticA3  # noqa: E402
@@ -346,7 +422,11 @@ def _command_run(args: argparse.Namespace) -> int:
                 background_overview_path=inputs / "analyst_vision" / "background_overview.png",
                 renders_dir=sample_dir / "renders",
                 stages_dir=sample_dir / "stages",
-                analyst_action=AnalyzeA3Brief(expected_model=_expected("analyst")),
+                analyst_action=(
+                    AnalyzeA3TextOnly(expected_model=_expected("analyst"))
+                    if args.analyst_arm == "text-only"
+                    else AnalyzeA3Brief(expected_model=_expected("analyst"))
+                ),
                 planner_action=PlanAssetsA3(expected_model=_expected("asset_planner")),
                 director_action=ComposeConceptA3(
                     expected_model=_expected("composition_director")
@@ -423,6 +503,7 @@ def _command_run(args: argparse.Namespace) -> int:
         store.run_dir / "a3_run_summary.json",
         {
             "tree_arm": args.tree_arm,
+            "analyst_arm": args.analyst_arm,
             "budget": budget,
             "total": len(sample_ids),
             "failed": failed,
@@ -475,6 +556,12 @@ def main() -> int:
     run.add_argument("--run-dir", type=Path, required=True)
     run.add_argument("--tree-arm", choices=["T0", "T1", "T2", "T3"], default="T2")
     run.add_argument(
+        "--analyst-arm",
+        choices=["vision", "text-only"],
+        default="vision",
+        help="Gate A ablation: 'text-only' swaps in AnalyzeA3TextOnly (no images).",
+    )
+    run.add_argument(
         "--allow-api-calls",
         action="store_true",
         help="Explicitly authorize paid model calls. Without it, only the call "
@@ -500,7 +587,16 @@ def main() -> int:
     snapshot.add_argument("--crello-root", type=Path, required=True)
     snapshot.add_argument("--hf-dataset", default="cyberagent/crello")
     snapshot.add_argument("--split", default="test")
+    annotation = sub.add_parser(
+        "prepare-annotation",
+        help="Build self-contained human-annotation packets (packet + empty "
+        "form + contact sheets, WITHOUT the background) for a prepared run.",
+    )
+    annotation.add_argument("--run-dir", type=Path, required=True)
     args = parser.parse_args()
+
+    if args.command == "prepare-annotation":
+        return _command_prepare_annotation(args)
 
     if args.command == "run":
         return _command_run(args)
