@@ -1,0 +1,454 @@
+{
+  "schema_version": "a3.sega-evaluation.v1",
+  "protocol_version": "a3.sega-pku-protocol.v1",
+  "evaluation_id": "a3-relation-n100-t0-t2-t3-sega-v1",
+  "created_at": "2026-07-11T19:49:53.656568+00:00",
+  "mode": "evaluate",
+  "command": "/home/hui0705/.conda/envs/meta/bin/python /home/hui0705/MetaGPT/layout_agent/evaluate_a3_sega.py --run-dir /home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t0-01 --run-dir /home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t2-01 --run-dir /home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t3-01 --evaluation-id a3-relation-n100-t0-t2-t3-sega-v1 --output-root /home/hui0705/MetaGPT/layout_agent/evaluations/a3-sega --saliency-mode basnet-isnet",
+  "command_argv": [
+    "/home/hui0705/.conda/envs/meta/bin/python",
+    "/home/hui0705/MetaGPT/layout_agent/evaluate_a3_sega.py",
+    "--run-dir",
+    "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t0-01",
+    "--run-dir",
+    "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t2-01",
+    "--run-dir",
+    "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t3-01",
+    "--evaluation-id",
+    "a3-relation-n100-t0-t2-t3-sega-v1",
+    "--output-root",
+    "/home/hui0705/MetaGPT/layout_agent/evaluations/a3-sega",
+    "--saliency-mode",
+    "basnet-isnet"
+  ],
+  "source_runs": [
+    {
+      "run_id": "a3-rel100-t0-01",
+      "run_dir": "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t0-01",
+      "summary": {
+        "path": "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t0-01/a3_run_summary.json",
+        "sha256": "0e9d1fcfcc7b55789dc2b82c11becaeb8d3318e72e52fe1149576fddef8fe356",
+        "size_bytes": 10724
+      },
+      "manifest": {
+        "path": "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t0-01/run_manifest.json",
+        "sha256": "041462b41e44b3e9081a5d68eb9e2aafdd9ebbf74074ab67e511691a7f95d8cd",
+        "size_bytes": 3224
+      },
+      "sample_ids": {
+        "path": "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t0-01/sample_ids.json",
+        "sha256": "d524bef20e4b99a092e346c29d376255672ed8c2fcb3f5ebdcf794fdf7f0cc6c",
+        "size_bytes": 2702
+      },
+      "summary_counts": {
+        "reported_total": 100,
+        "reported_completed": null,
+        "reported_failed": 0,
+        "reported_sample_n": 100,
+        "completed_n": 100,
+        "failed_n": 0,
+        "other_status_n": 0,
+        "formal_complete": true
+      },
+      "selection": {
+        "max_samples": null,
+        "selected_n": 100,
+        "formal_complete_run": true
+      },
+      "observed_counts": {
+        "selected_n": 100,
+        "source_valid_n": 100,
+        "source_skipped_n": 0,
+        "evaluated_n": 100,
+        "validated_only_n": 0
+      }
+    },
+    {
+      "run_id": "a3-rel100-t2-01",
+      "run_dir": "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t2-01",
+      "summary": {
+        "path": "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t2-01/a3_run_summary.json",
+        "sha256": "325cebbe3c52533ec81c5188f3f85448e44eb5e60a596a3df940446053132499",
+        "size_bytes": 11138
+      },
+      "manifest": {
+        "path": "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t2-01/run_manifest.json",
+        "sha256": "cdea8938b6b209cfffcb53a24ce7e936263dc991c1959a2d5869e0e6a6760f28",
+        "size_bytes": 3224
+      },
+      "sample_ids": {
+        "path": "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t2-01/sample_ids.json",
+        "sha256": "d524bef20e4b99a092e346c29d376255672ed8c2fcb3f5ebdcf794fdf7f0cc6c",
+        "size_bytes": 2702
+      },
+      "summary_counts": {
+        "reported_total": 100,
+        "reported_completed": null,
+        "reported_failed": 2,
+        "reported_sample_n": 100,
+        "completed_n": 98,
+        "failed_n": 2,
+        "other_status_n": 0,
+        "formal_complete": true
+      },
+      "selection": {
+        "max_samples": null,
+        "selected_n": 100,
+        "formal_complete_run": true
+      },
+      "observed_counts": {
+        "selected_n": 100,
+        "source_valid_n": 98,
+        "source_skipped_n": 2,
+        "evaluated_n": 98,
+        "validated_only_n": 0
+      }
+    },
+    {
+      "run_id": "a3-rel100-t3-01",
+      "run_dir": "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t3-01",
+      "summary": {
+        "path": "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t3-01/a3_run_summary.json",
+        "sha256": "7636ff0897e56586cad6ac80582f6506e3eba231aacd077c1f95145b099b1355",
+        "size_bytes": 10986
+      },
+      "manifest": {
+        "path": "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t3-01/run_manifest.json",
+        "sha256": "ea05236ff6f4437e6afd3e325a67a44109bafeb15acdb72c3640d32bb25ddd9d",
+        "size_bytes": 3224
+      },
+      "sample_ids": {
+        "path": "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-rel100-t3-01/sample_ids.json",
+        "sha256": "d524bef20e4b99a092e346c29d376255672ed8c2fcb3f5ebdcf794fdf7f0cc6c",
+        "size_bytes": 2702
+      },
+      "summary_counts": {
+        "reported_total": 100,
+        "reported_completed": null,
+        "reported_failed": 1,
+        "reported_sample_n": 100,
+        "completed_n": 99,
+        "failed_n": 1,
+        "other_status_n": 0,
+        "formal_complete": true
+      },
+      "selection": {
+        "max_samples": null,
+        "selected_n": 100,
+        "formal_complete_run": true
+      },
+      "observed_counts": {
+        "selected_n": 100,
+        "source_valid_n": 99,
+        "source_skipped_n": 1,
+        "evaluated_n": 99,
+        "validated_only_n": 0
+      }
+    }
+  ],
+  "matched_samples": {
+    "count": 100,
+    "ordered_sample_ids": [
+      "5888bb2995a7a863ddcc1f74",
+      "5888c54095a7a863ddcc2082",
+      "5888dd7995a7a863ddcc2e86",
+      "5889bc5995a7a863ddcc3b97",
+      "589b457b95a7a863ddcc5331",
+      "58ab17ba95a7a863ddcc77bf",
+      "58ab189395a7a863ddcc7847",
+      "58cbc44595a7a863ddccc20b",
+      "5909cfb695a7a863ddcd37cb",
+      "5914233f95a7a863ddcd777c",
+      "592d1a2b95a7a863ddcd97aa",
+      "592fdd7e95a7a863ddcdbe67",
+      "5930177f95a7a863ddcdc313",
+      "5931132c95a7a863ddcdc5d3",
+      "59313e5495a7a863ddcdc9ac",
+      "5952704d95a7a863ddcdecb5",
+      "5952794195a7a863ddcdf36a",
+      "5952934395a7a863ddcdff21",
+      "599ecb061350e83293007738",
+      "59b2809c1350e8329300dbe4",
+      "59bb96701350e8329301120a",
+      "5a034425d8141396fe9898fa",
+      "5a21848dd8141396fe9a33eb",
+      "5a240260d8141396fe9a9de3",
+      "5a26bcecd8141396fe9ac474",
+      "5a9968cff07aee6977a29a68",
+      "5aa915fef07aee69773a3ef4",
+      "5b6aaf851cc8aa542986ad50",
+      "5b6ab3e01cc8aa542994ee9d",
+      "5b85707d1cc8aa542972823c",
+      "5b9a550e18654940f754c07c",
+      "5b9bc6a018654940f781b996",
+      "5ba8b598ebe74117be0792c9",
+      "5bbc9b3a78e1194aa616041e",
+      "5bbcbdfd78e1194aa69fe067",
+      "5bd05c0e78e1194aa6210e31",
+      "5bd9d0209259f9ba54b29c99",
+      "5be174d215d5cddfd04fd1a2",
+      "5be97b9241fdeab19f985504",
+      "5bf55e578caf671e1c2272f0",
+      "5bf828a38caf671e1c2632e9",
+      "5c263de4133a785392318ba9",
+      "5c41f55b048d064dbcc85b80",
+      "5c41f7a3048d064dbccfae94",
+      "5c5af7a1048d064dbc1f0d67",
+      "5c5b0913048d064dbc785e7c",
+      "5c5b095c048d064dbc7a0ede",
+      "5c6c147785ea3c16f98dd907",
+      "5c77eda885ea3c16f9f29101",
+      "5ca5faf823c829c8218ffb10",
+      "5cb89d8aadbc796055f970af",
+      "5cd67f1f7d4459dfe12714cf",
+      "5cd6984b7d4459dfe140c0b4",
+      "5cde64e47d4459dfe1b81863",
+      "5ce3ba947d4459dfe1cebd75",
+      "5cfe2ad78cba87f943da4ec5",
+      "5d08f3708cba87f943ec4e3f",
+      "5d08f7a08cba87f943f48a6d",
+      "5d0cf79f8cba87f943616ca6",
+      "5d234eaf8cba87f94322b763",
+      "5d4ae4aecf657b21effa9831",
+      "5d67ed46cf657b21ef7bdad9",
+      "5d68dd6ce79a2a634ea111b8",
+      "5d6903b8abc8ea6d1c0305fd",
+      "5d6909e8abc8ea6d1c0cda03",
+      "5d9c8fa2abc8ea6d1cd0d3e7",
+      "5d9cad82abc8ea6d1c23ebf1",
+      "5d9cadb1abc8ea6d1c246dc8",
+      "5da04604abc8ea6d1cbe2935",
+      "5da071b5abc8ea6d1c1f1d6f",
+      "5dbbff2eabc8ea6d1c15c382",
+      "5dc27c32abc8ea6d1cbf115a",
+      "5df211c29fea0cc374abbbba",
+      "5df216b89fea0cc374b8d341",
+      "5df3af489fea0cc3742457a9",
+      "5df7606b9fea0cc374d371db",
+      "5e0213489fea0cc374175712",
+      "5e0219159fea0cc37425a627",
+      "5e04ba7f9fea0cc3749733ea",
+      "5e0621989fea0cc3748583f6",
+      "5e0d99499fea0cc374a71bcc",
+      "5e202d829fea0cc3744908a8",
+      "5e2031da9fea0cc37450dd01",
+      "5e28090f9fea0cc3748fc62a",
+      "5e6f770e4b3890eb07175aee",
+      "5e8762404b3890eb0782ad22",
+      "5e8d96cb4b3890eb071c683d",
+      "5e8ef9fb4b3890eb0760bade",
+      "5e90704d499b85dcc7d7114d",
+      "5e984f83499b85dcc792f6be",
+      "5ea01126499b85dcc781e788",
+      "5ea2d990499b85dcc7aaeb92",
+      "5ea97187499b85dcc7c45e3d",
+      "5f114599499b85dcc796da51",
+      "5f3b84c8a637ee11e32ee4c9",
+      "5f4c9d6fa637ee11e34ab88b",
+      "5f5b5a3da637ee11e3e5adbf",
+      "5f644f40a637ee11e3669a1c",
+      "5f96aca7a637ee11e30bb517",
+      "5fbf5b4aa637ee11e3a82536"
+    ],
+    "ordered_sample_ids_sha256": "840347c0fe232dbfd4330775a62bdedcfc89c3562e5282b9a373d1485ba9ed19"
+  },
+  "protocol_lineage": {
+    "schema_version": "a3.sega-evaluation.v1",
+    "protocol_version": "a3.sega-pku-protocol.v1",
+    "bbox_input": "A3 B0 left-top-width-height",
+    "bbox_metric_frame": "xyxy, clipped to canvas",
+    "validity_filter": {
+      "minimum_canvas_fraction": 0.001,
+      "comparison": "area >= threshold"
+    },
+    "alignment": "PKU layout-wide-min aggregation quirk",
+    "overlay_denominator": "non-underlay element count",
+    "underlay": "P-Full v1 has no legal underlay class; current A3 is N/A",
+    "readability": "background-only float64 Sobel; definition-aligned, not PKU bit-exact",
+    "blank_background": {
+      "renderer_contract": "R3",
+      "rgb": [
+        255,
+        255,
+        255
+      ]
+    },
+    "occlusion": {
+      "mode": "basnet-isnet",
+      "detector": {
+        "contract": "frozen BASNet + ISNet, pixel-wise maximum",
+        "fusion": "pixelwise_max",
+        "fail_closed": true,
+        "network_downloads_allowed": false,
+        "basnet": {
+          "model_id": "creative-graphic-design/BASNet",
+          "revision": "c04f6d78a10d2d558260629c3b00a9ed0568dbc6",
+          "load_contract": {
+            "revision_argument": "c04f6d78a10d2d558260629c3b00a9ed0568dbc6",
+            "from_pretrained_path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/snapshots/c04f6d78a10d2d558260629c3b00a9ed0568dbc6",
+            "local_files_only": true,
+            "trust_remote_code": true,
+            "force_download": false
+          },
+          "snapshot_path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/snapshots/c04f6d78a10d2d558260629c3b00a9ed0568dbc6",
+          "artifacts": {
+            "config.json": {
+              "path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/blobs/c4646206f7c2ccdcc26b6ec82f44ab4688a92479",
+              "sha256": "ab4be234682c7d12e4c3e13ffcc8b280065cf843041eb09b11ac34da5474e895",
+              "size_bytes": 299
+            },
+            "model.safetensors": {
+              "path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/blobs/83db9a738691a9eca622ec38fac24b31e5b47121bec65570a3cf83f0f00ede32",
+              "sha256": "83db9a738691a9eca622ec38fac24b31e5b47121bec65570a3cf83f0f00ede32",
+              "size_bytes": 348466168
+            },
+            "configuration_basnet.py": {
+              "path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/blobs/fe1998bb960a364ef88af93a437752eb4053ef4c",
+              "sha256": "c1bc7468735626fe48cf2ba2c5f7837ef48df791bbb005725e2b097b16d74041",
+              "size_bytes": 364
+            },
+            "modeling_basnet.py": {
+              "path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/blobs/4291067986b33b05b634598002e9b3c15547719a",
+              "sha256": "f8dd9e81d5ea0fc414ca0e0f0a30375d65234a5e91434f4c2b20804f95ff3491",
+              "size_bytes": 16207
+            }
+          }
+        },
+        "isnet": {
+          "model_id": "rembg/isnet-general-use",
+          "artifact": {
+            "path": "/home/hui0705/.u2net/isnet-general-use.onnx",
+            "sha256": "60920e99c45464f2ba57bee2ad08c919a52bbf852739e96947fbb4358c0d964a",
+            "md5": "fc16ebd8b0c10d971d3513d564d01e29",
+            "size_bytes": 178648008
+          },
+          "provider": "CPUExecutionProvider",
+          "download_path": "forbidden; direct verified ONNX bytes"
+        },
+        "pku_deviation": "ISNet replaces the PFPN branch used by PKU PosterLayout",
+        "implementation_sha256": "3b0a3a42df7000c8664cbc76e0084560a0dac0554dee640ca7d463b039ea3165",
+        "runtime_identity": {
+          "basnet": {
+            "model_id": "creative-graphic-design/BASNet",
+            "requested_revision": "c04f6d78a10d2d558260629c3b00a9ed0568dbc6",
+            "resolved_snapshot": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/snapshots/c04f6d78a10d2d558260629c3b00a9ed0568dbc6",
+            "from_pretrained_path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/snapshots/c04f6d78a10d2d558260629c3b00a9ed0568dbc6",
+            "local_files_only": true,
+            "trust_remote_code": true,
+            "force_download": false,
+            "model_class_module": "transformers_modules.c04f6d78a10d2d558260629c3b00a9ed0568dbc6.modeling_basnet",
+            "model_class_name": "BASNetModel",
+            "config_class_module": "transformers_modules.c04f6d78a10d2d558260629c3b00a9ed0568dbc6.configuration_basnet",
+            "config_class_name": "BASNetConfig",
+            "torch_version": "2.3.1+cu121",
+            "transformers_version": "4.57.6",
+            "executed_code": {
+              "configuration_basnet.py": {
+                "executed_path": "/home/hui0705/.cache/huggingface/modules/transformers_modules/c04f6d78a10d2d558260629c3b00a9ed0568dbc6/configuration_basnet.py",
+                "executed_sha256": "c1bc7468735626fe48cf2ba2c5f7837ef48df791bbb005725e2b097b16d74041",
+                "authoritative_path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/blobs/fe1998bb960a364ef88af93a437752eb4053ef4c",
+                "authoritative_sha256": "c1bc7468735626fe48cf2ba2c5f7837ef48df791bbb005725e2b097b16d74041"
+              },
+              "modeling_basnet.py": {
+                "executed_path": "/home/hui0705/.cache/huggingface/modules/transformers_modules/c04f6d78a10d2d558260629c3b00a9ed0568dbc6/modeling_basnet.py",
+                "executed_sha256": "f8dd9e81d5ea0fc414ca0e0f0a30375d65234a5e91434f4c2b20804f95ff3491",
+                "authoritative_path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/blobs/4291067986b33b05b634598002e9b3c15547719a",
+                "authoritative_sha256": "f8dd9e81d5ea0fc414ca0e0f0a30375d65234a5e91434f4c2b20804f95ff3491"
+              }
+            }
+          },
+          "isnet": {
+            "requested_model_name": "isnet-general-use",
+            "session_model_name": "isnet-general-use",
+            "session_reported_name": "isnet-general-use",
+            "session_class_module": "rembg.sessions.dis_general_use",
+            "session_class_name": "DisSession",
+            "rembg_version": "2.0.61",
+            "onnxruntime_version": "1.19.2",
+            "requested_providers": [
+              "CPUExecutionProvider"
+            ],
+            "active_providers": [
+              "CPUExecutionProvider"
+            ],
+            "available_providers": [
+              "AzureExecutionProvider",
+              "CPUExecutionProvider"
+            ],
+            "verified_artifact": {
+              "path": "/home/hui0705/.u2net/isnet-general-use.onnx",
+              "sha256": "60920e99c45464f2ba57bee2ad08c919a52bbf852739e96947fbb4358c0d964a",
+              "md5": "fc16ebd8b0c10d971d3513d564d01e29",
+              "size_bytes": 178648008
+            },
+            "session_construction": "direct verified bytes; downloader bypassed"
+          }
+        }
+      },
+      "sobel_fallback_forbidden": true
+    },
+    "code_runtime_lineage": {
+      "sources": {
+        "sega_metrics.py": {
+          "path": "/home/hui0705/MetaGPT/metagpt/ext/agentlayout/evaluation/sega_metrics.py",
+          "sha256": "d224caffcd4b6bbbe99b90b73c6c2df71aec59b521174741e0678cad32c48cef",
+          "size_bytes": 20675
+        },
+        "a3_sega_evaluator.py": {
+          "path": "/home/hui0705/MetaGPT/metagpt/ext/agentlayout/evaluation/a3_sega_evaluator.py",
+          "sha256": "afd178554579d2b6e8487d7ffe91d75dea37fecf899d21341b26ef0cfc375391",
+          "size_bytes": 68355
+        },
+        "evaluate_a3_sega.py": {
+          "path": "/home/hui0705/MetaGPT/layout_agent/evaluate_a3_sega.py",
+          "sha256": "372a62c4e688a3f9f7c32d6ee93e067ffbd06179ce4bc32868d0a0a956f90c5f",
+          "size_bytes": 17316
+        },
+        "saliency_basnet_isnet.py": {
+          "path": "/home/hui0705/MetaGPT/metagpt/ext/agentlayout/evaluation/saliency_basnet_isnet.py",
+          "sha256": "3b0a3a42df7000c8664cbc76e0084560a0dac0554dee640ca7d463b039ea3165",
+          "size_bytes": 18912
+        }
+      },
+      "runtime": {
+        "python": {
+          "version": "3.9.25",
+          "implementation": "CPython",
+          "executable": "/home/hui0705/.conda/envs/meta/bin/python3.9"
+        },
+        "platform": {
+          "system": "Linux",
+          "release": "5.15.0-139-generic",
+          "machine": "x86_64",
+          "platform": "Linux-5.15.0-139-generic-x86_64-with-glibc2.31"
+        },
+        "numpy": "1.26.4",
+        "cv2": "4.10.0",
+        "Pillow": "11.3.0",
+        "torch": "2.3.1+cu121",
+        "torchvision": "0.18.1+cu121",
+        "transformers": "4.57.6",
+        "rembg": "2.0.61",
+        "onnxruntime": "1.19.2",
+        "pydantic": "2.9.2",
+        "pooch": "v1.9.0",
+        "onnxruntime_available_providers": [
+          "AzureExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      }
+    }
+  },
+  "write_policy": {
+    "source_runs_read_only": true,
+    "output_is_versioned_sidecar": true,
+    "existing_output_overwrite": false,
+    "atomic_staging_publish": true,
+    "atomic_no_replace_publish": "renameat2(RENAME_NOREPLACE)"
+  },
+  "cost": {
+    "llm_api_calls": 0,
+    "llm_cost_usd": 0.0,
+    "model_downloads": 0
+  }
+}

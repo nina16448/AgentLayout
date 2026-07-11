@@ -1,0 +1,220 @@
+{
+  "schema_version": "a3.sega-evaluation.v1",
+  "protocol_version": "a3.sega-pku-protocol.v1",
+  "evaluation_id": "a3-relation-n100-t0-t2-t3-sega-v1",
+  "runs": {
+    "a3-rel100-t0-01": {
+      "sample_counts": {
+        "selected_n": 100,
+        "source_valid_n": 100,
+        "source_skipped_n": 0,
+        "evaluated_n": 100,
+        "validated_only_n": 0
+      },
+      "metrics": {
+        "Ali": {
+          "value": 0.00039344577614799106,
+          "applicable_n": 100,
+          "valid_n": 100,
+          "skipped_n": 0,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 0,
+          "not_applicable_n": 0,
+          "zero_contribution_n": 94
+        },
+        "Ove": {
+          "value": 0.11029703455008535,
+          "applicable_n": 100,
+          "valid_n": 100,
+          "skipped_n": 0,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 0,
+          "not_applicable_n": 0,
+          "zero_contribution_n": 3
+        },
+        "Und_l": {
+          "value": null,
+          "applicable_n": 0,
+          "valid_n": 0,
+          "skipped_n": 0,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 0,
+          "not_applicable_n": 100,
+          "zero_contribution_n": 0
+        },
+        "Und_s": {
+          "value": null,
+          "applicable_n": 0,
+          "valid_n": 0,
+          "skipped_n": 0,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 0,
+          "not_applicable_n": 100,
+          "zero_contribution_n": 0
+        },
+        "Rea": {
+          "value": 0.0,
+          "applicable_n": 100,
+          "valid_n": 100,
+          "skipped_n": 0,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 0,
+          "not_applicable_n": 0,
+          "zero_contribution_n": 100
+        },
+        "Occ": {
+          "value": 0.005604150408513137,
+          "applicable_n": 100,
+          "valid_n": 100,
+          "skipped_n": 0,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 0,
+          "not_applicable_n": 0,
+          "zero_contribution_n": 0
+        }
+      }
+    },
+    "a3-rel100-t2-01": {
+      "sample_counts": {
+        "selected_n": 100,
+        "source_valid_n": 98,
+        "source_skipped_n": 2,
+        "evaluated_n": 98,
+        "validated_only_n": 0
+      },
+      "metrics": {
+        "Ali": {
+          "value": 0.0010906792273481,
+          "applicable_n": 98,
+          "valid_n": 98,
+          "skipped_n": 2,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 2,
+          "not_applicable_n": 0,
+          "zero_contribution_n": 85
+        },
+        "Ove": {
+          "value": 0.11855469211026877,
+          "applicable_n": 98,
+          "valid_n": 98,
+          "skipped_n": 2,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 2,
+          "not_applicable_n": 0,
+          "zero_contribution_n": 2
+        },
+        "Und_l": {
+          "value": null,
+          "applicable_n": 0,
+          "valid_n": 0,
+          "skipped_n": 2,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 2,
+          "not_applicable_n": 98,
+          "zero_contribution_n": 0
+        },
+        "Und_s": {
+          "value": null,
+          "applicable_n": 0,
+          "valid_n": 0,
+          "skipped_n": 2,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 2,
+          "not_applicable_n": 98,
+          "zero_contribution_n": 0
+        },
+        "Rea": {
+          "value": 0.0,
+          "applicable_n": 98,
+          "valid_n": 98,
+          "skipped_n": 2,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 2,
+          "not_applicable_n": 0,
+          "zero_contribution_n": 98
+        },
+        "Occ": {
+          "value": 0.005628733500349222,
+          "applicable_n": 98,
+          "valid_n": 98,
+          "skipped_n": 2,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 2,
+          "not_applicable_n": 0,
+          "zero_contribution_n": 0
+        }
+      }
+    },
+    "a3-rel100-t3-01": {
+      "sample_counts": {
+        "selected_n": 100,
+        "source_valid_n": 99,
+        "source_skipped_n": 1,
+        "evaluated_n": 99,
+        "validated_only_n": 0
+      },
+      "metrics": {
+        "Ali": {
+          "value": 0.0006464536794323366,
+          "applicable_n": 99,
+          "valid_n": 99,
+          "skipped_n": 1,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 1,
+          "not_applicable_n": 0,
+          "zero_contribution_n": 90
+        },
+        "Ove": {
+          "value": 0.15041344770396506,
+          "applicable_n": 99,
+          "valid_n": 99,
+          "skipped_n": 1,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 1,
+          "not_applicable_n": 0,
+          "zero_contribution_n": 2
+        },
+        "Und_l": {
+          "value": null,
+          "applicable_n": 0,
+          "valid_n": 0,
+          "skipped_n": 1,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 1,
+          "not_applicable_n": 99,
+          "zero_contribution_n": 0
+        },
+        "Und_s": {
+          "value": null,
+          "applicable_n": 0,
+          "valid_n": 0,
+          "skipped_n": 1,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 1,
+          "not_applicable_n": 99,
+          "zero_contribution_n": 0
+        },
+        "Rea": {
+          "value": 0.0,
+          "applicable_n": 99,
+          "valid_n": 99,
+          "skipped_n": 1,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 1,
+          "not_applicable_n": 0,
+          "zero_contribution_n": 99
+        },
+        "Occ": {
+          "value": 0.005972501210145759,
+          "applicable_n": 99,
+          "valid_n": 99,
+          "skipped_n": 1,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 1,
+          "not_applicable_n": 0,
+          "zero_contribution_n": 0
+        }
+      }
+    }
+  }
+}

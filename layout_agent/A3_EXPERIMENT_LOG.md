@@ -2026,3 +2026,45 @@ Latency（per-call mean）：analyst ~11s（最重，含 vision）、director ~6
 1. **所有需要人力的實驗永久跳過**（含 human semantic-grouping preference study）——時程考量；論文相應主張列 limitation，不補人測。
 2. **指標修訂由使用者本人接手**——本 session 不再改動任何 metric 定義。
 3. **舊架構（pre-A3 pipeline，Step 1–97 線）視為不存在**——論文不引舊表、不維護舊協定可比性；A3 為唯一架構。COLE judge 換用 gpt-5.4-mini 的「與 Step 70/92 不可比」顧慮隨之失效（舊表不進論文）。
+
+### 23.8 Formal SEGA/PKU 六軸重評（hardened evaluator、BASNet+ISNet Occ、zero-cost；2026-07-12）
+
+以強化後的可重現評測器（`layout_agent/evaluate_a3_sega.py` + `metagpt/ext/agentlayout/evaluation/a3_sega_evaluator.py`，Phase 1 hardening 於 commit `7bc92845`）對 Relation N=100 三臂做正式評測。評測 ID `a3-relation-n100-t0-t2-t3-sega-v1`，原子發布於 `layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-relation-n100-t0-t2-t3-sega-v1/`。執行 2617.50s（43m37s）、exit 0、**0 LLM/API call、0 下載、$0.00**。執行指令（含 API-key unset、offline flags、loopback proxy、單執行緒）：
+
+```bash
+env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u GEMINI_API_KEY \
+  -u GOOGLE_API_KEY -u AZURE_OPENAI_API_KEY \
+  HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+  WANDB_MODE=offline http_proxy=http://127.0.0.1:9 \
+  https_proxy=http://127.0.0.1:9 ALL_PROXY=socks5://127.0.0.1:9 \
+  NO_PROXY=localhost,127.0.0.1 OMP_NUM_THREADS=1 \
+  /usr/bin/time -p conda run --no-capture-output -n meta \
+  python layout_agent/evaluate_a3_sega.py \
+  --run-dir layout_agent/runs/a3/a3-rel100-t0-01 \
+  --run-dir layout_agent/runs/a3/a3-rel100-t2-01 \
+  --run-dir layout_agent/runs/a3/a3-rel100-t3-01 \
+  --evaluation-id a3-relation-n100-t0-t2-t3-sega-v1 \
+  --saliency-mode basnet-isnet
+```
+
+結果（cell = `value; applicable_n/valid_n/skipped_n/source_skipped_n/not_applicable_n`；所有軸 `metric_skipped_n=0`）：
+
+| Arm | Ali↓ | Ove↓ | Und_l | Und_s | Rea↓ | Occ↓ |
+| --- | --- | --- | --- | --- | --- | --- |
+| T0 | `0.00039344577614799106; 100/100/0/0/0` | `0.11029703455008535; 100/100/0/0/0` | `N/A; 0/0/0/0/100` | `N/A; 0/0/0/0/100` | `0; 100/100/0/0/0` | `0.005604150408513137; 100/100/0/0/0` |
+| T2 | `0.0010906792273481; 98/98/2/2/0` | `0.11855469211026877; 98/98/2/2/0` | `N/A; 0/0/2/2/98` | `N/A; 0/0/2/2/98` | `0; 98/98/2/2/0` | `0.005628733500349222; 98/98/2/2/0` |
+| T3 | `0.0006464536794323366; 99/99/1/1/0` | `0.15041344770396506; 99/99/1/1/0` | `N/A; 0/0/1/1/99` | `N/A; 0/0/1/1/99` | `0; 99/99/1/1/0` | `0.005972501210145759; 99/99/1/1/0` |
+
+Source failures 保留為顯式 `source_skipped` rows（與 §23.2 的 3 例一致）：T2 `5d67ed46cf657b21ef7bdad9`（CandidateShortfall 2/3）、T2 `5f644f40a637ee11e3669a1c`（Planner 重複 asset ID）、T3 `5da04604abc8ea6d1cbe2935`（CandidateShortfall 2/3）。
+
+**與 §23.5 舊表的差異（引用一律以本節為準）**：
+
+1. Occ 改為 frozen **BASNet（revision `c04f6d78a10d2d558260629c3b00a9ed0568dbc6`、本地 snapshot）+ ISNet（`rembg.sessions.dis_general_use.DisSession`、`CPUExecutionProvider`）pixel-wise max**，對全部樣本計算（背景無 raster asset 時重建 R3 的不透明白畫布），非 §23.5 的 n=14 子集；
+2. Und_l/Und_s 由「0 by design」更正為 **N/A**——P-Full v1 無合法 underlay 欄位、raster asset 不猜測為 underlay，故 applicable_n=0；
+3. Rea 三臂全 0 與 §23.5 一致（平坦填色底圖 Sobel 梯度為 0，無訊號）。
+
+**協定警告**：ISNet 取代 PKU PosterLayout 的 PFPN branch，Occ 只能在「同一 matched pipeline 重評的方法之間」直接比較；published SEGA 數值僅為文獻參考。本表亦不可與 Step 89/92 text-as-image 協定表同表比較。
+
+**獨立驗證（read-only、50 項檢查全過）**：三 artifact SHA-256 與發布記錄一致（manifest `c96937a6…`、aggregate `5eeed54f…`、per_sample `a70121e4…`）；`validate_evaluation_bundle()` 重載通過（records=300, runs=3）；四個適用軸的聚合平均值由 per-sample rows 獨立重算並逐格吻合（rel_tol 1e-12）、zero-contribution/skipped 計數吻合；三臂 per-sample 順序與 manifest 的 100-ID 快照（sha256 `840347c0…`）逐位一致；來源 run trees 前後 hash 不變、無 staging 殘留。
+
+**Status**：Phase 3 必跑項 4（幾何六軸）以本節為 final。付費 matched COLE judge 四軸（S_DL/S_QL/S_TV/S_IO）仍在授權邊界外，須先提 judge snapshot、matched-pair 協定、call 數與預算。

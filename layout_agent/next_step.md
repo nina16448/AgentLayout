@@ -4,22 +4,25 @@ Repository: `/home/hui0705/MetaGPT`
 
 Branch: `feat/step76-89-sega-pipeline`
 
-Updated: 2026-07-12 02:56 (Asia/Taipei; Phase 1 hardening round 2 checkpoint)
+Updated: 2026-07-12 (Asia/Taipei; independent verification passed, results
+documented and committed)
 
 ## Current objective
 
-Finish the zero-LLM SEGA/PKU rule-based evaluation requested by
-`layout_agent/SEGA_METRICS_REMOTE_AGENT_TASK.md`. Phase 1 hardening is
-implemented and locally green, but the formal Relation T0/T2/T3 run is
-**blocked pending independent final verification/anti-pattern/code-quality
-review**. Do not run N=100 until those reviews clear this checkpoint. The paid
-four-axis judge remains behind a separate cost and authorization boundary.
+The zero-LLM SEGA/PKU rule-based evaluation requested by
+`layout_agent/SEGA_METRICS_REMOTE_AGENT_TASK.md` is COMPLETE. Phase 1
+hardening, the real-detector smoke, the formal full Relation T0/T2/T3
+evaluation, and the independent read-only verification (50 checks, all green)
+all passed. Results are documented in `A3_EXPERIMENT_LOG.md` §23.8 and the
+sidecar is committed. The only remaining item is the paid four-axis judge
+(S_DL/S_QL/S_TV/S_IO), which stays behind a separate cost and authorization
+boundary: before any run, report the exact judge snapshot, matched-pair
+protocol, call count, and estimated cost, and obtain explicit approval.
 
-## Phase 1 implementation and hardening — verification pending
+## Phase 1 implementation and hardening — complete
 
-Second-round P1 hardening is now implemented and local production-shape smoke
-validation passes, but independent review is still pending and the formal N=100
-run remains blocked. New contracts in this round:
+Second-round P1 hardening, production-shape smoke validation, and the
+independent Phase 1 gate passed. New contracts in this round:
 
 - BASNet loads from the exact authoritative local snapshot path. The actual
   executed config/model class source paths and hashes must match the snapshot;
@@ -147,63 +150,157 @@ It completed successfully, recorded the full matched 100-ID snapshot and
 runtime lineage, and used zero detector inference, model download, LLM/API call,
 or cost. No formal Relation N=100 metric run has been launched yet.
 
-## Exact next action: independent Phase 1 review (formal run blocked)
+## Phase 2 real-detector smoke — complete
 
-Re-run the complete combined command, Python compilation, `git diff --check`, and a fresh
-one-sample-per-arm `/tmp` validate-only smoke. Independently audit all P1
-contracts above. Only after all reviews pass may the following formal command
-evaluate the existing Relation T0/T2/T3 runs with cached, offline BASNet and
-ISNet:
+At 2026-07-12 03:05 CST, a non-formal `--max-samples 1` run executed actual
+BASNet + ISNet inference for the same matched sample in all three Relation arms.
+It exited 0 in 44.73 seconds and atomically wrote:
+
+`/tmp/a3-sega-phase2-real-smoke-20260712/a3.sega-pku-protocol.v1/phase2-real-inference-smoke-1`
+
+Exact command (the API-key unsets, offline flags, loopback-only proxy, and
+single-thread setting were part of the execution environment):
 
 ```bash
-conda run -n meta python layout_agent/evaluate_a3_sega.py \
+env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u GEMINI_API_KEY \
+  -u GOOGLE_API_KEY -u AZURE_OPENAI_API_KEY \
+  HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+  WANDB_MODE=offline http_proxy=http://127.0.0.1:9 \
+  https_proxy=http://127.0.0.1:9 ALL_PROXY=socks5://127.0.0.1:9 \
+  NO_PROXY=localhost,127.0.0.1 OMP_NUM_THREADS=1 \
+  /usr/bin/time -p conda run --no-capture-output -n meta \
+  python layout_agent/evaluate_a3_sega.py \
   --run-dir layout_agent/runs/a3/a3-rel100-t0-01 \
   --run-dir layout_agent/runs/a3/a3-rel100-t2-01 \
   --run-dir layout_agent/runs/a3/a3-rel100-t3-01 \
-  --evaluation-id a3-relation-n100-t0-t2-t3-sega-v1
+  --evaluation-id phase2-real-inference-smoke-1 \
+  --output-root /tmp/a3-sega-phase2-real-smoke-20260712 \
+  --saliency-mode basnet-isnet --max-samples 1
 ```
 
-Do not add `--max-samples` to the formal run. Do not use
-`--saliency-mode skip` for a complete six-axis result. The command must not call
-an LLM/API or download weights.
+Smoke aggregates (Ali, Ove, Und_l, Und_s, Rea, Occ):
 
-Authoritative source counts expected before metric evaluation:
+- T0: `0`, `0.09605119628000214`, `N/A`, `N/A`, `0`,
+  `0.002626500702801232`;
+- T2: `0`, `0.12941374203268638`, `N/A`, `N/A`, `0`,
+  `0.008867530419493225`;
+- T3: `0`, `0.12208100618597029`, `N/A`, `N/A`, `0`,
+  `0.0021821770869935786`.
 
-- T0: 100 completed, 0 source-failed;
-- T2: 98 completed, 2 source-failed;
-- T3: 99 completed, 1 source-failed.
+Each arm has `selected_n=1`, `evaluated_n=1`, and `skipped_n=0` for the four
+applicable axes. Both underlay axes correctly have `value=null`,
+`applicable_n=0`, and `not_applicable_n=1`. The sidecar has three JSONL rows
+and no staging residue. Runtime identity confirms BASNet revision
+`c04f6d78a10d2d558260629c3b00a9ed0568dbc6` loaded from its exact local
+snapshot and exact `rembg.sessions.dis_general_use.DisSession` ISNet using
+`CPUExecutionProvider`. The run made 0 LLM/API calls, 0 downloads, and cost
+$0.00. Source run trees, evaluator code, BASNet artifacts, and ISNet artifact
+hashes are identical before and after the smoke.
 
-The sidecar should contain 300 `per_sample.jsonl` rows, including all three
-explicit `source_skipped` rows. For applicable metrics, T2/T3 `skipped_n` must
-include 2/1 source failures. For Und_l/Und_s, `value` and `applicable_n` must
-remain `null` and `0`; successful rows are `not_applicable`, while failed source
-rows remain separately visible through `source_skipped_n`. Never rewrite N/A as
-zero.
+## Formal Phase 2 Relation evaluation — complete, verification pending
 
-After completion, verify:
+The formal run started at 2026-07-12 03:06:19 CST and exited 0 after
+`2617.50` seconds (43m37.50s). It atomically published evaluation ID
+`a3-relation-n100-t0-t2-t3-sega-v1` at:
+
+- relative: `layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-relation-n100-t0-t2-t3-sega-v1`;
+- absolute: `/home/hui0705/MetaGPT/layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-relation-n100-t0-t2-t3-sega-v1`.
+
+Exact execution command and environment:
 
 ```bash
-jq '.runs | with_entries(.value = {sample_counts: .value.sample_counts, metrics: .value.metrics})' \
-  layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/\
-a3-relation-n100-t0-t2-t3-sega-v1/aggregate.json
-
-wc -l layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/\
-a3-relation-n100-t0-t2-t3-sega-v1/per_sample.jsonl
+env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u GEMINI_API_KEY \
+  -u GOOGLE_API_KEY -u AZURE_OPENAI_API_KEY \
+  HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+  WANDB_MODE=offline http_proxy=http://127.0.0.1:9 \
+  https_proxy=http://127.0.0.1:9 ALL_PROXY=socks5://127.0.0.1:9 \
+  NO_PROXY=localhost,127.0.0.1 OMP_NUM_THREADS=1 \
+  /usr/bin/time -p conda run --no-capture-output -n meta \
+  python layout_agent/evaluate_a3_sega.py \
+  --run-dir layout_agent/runs/a3/a3-rel100-t0-01 \
+  --run-dir layout_agent/runs/a3/a3-rel100-t2-01 \
+  --run-dir layout_agent/runs/a3/a3-rel100-t3-01 \
+  --evaluation-id a3-relation-n100-t0-t2-t3-sega-v1 \
+  --saliency-mode basnet-isnet
 ```
 
-## Phase 2 completion checklist
+The manifest records 0 LLM/API calls, 0 model downloads, and `$0.00` LLM
+cost. The result has exactly 300 `per_sample.jsonl` rows: T0 evaluated 100/100,
+T2 evaluated 98/100 with 2 source failures, and T3 evaluated 99/100 with 1
+source failure.
 
-1. Confirm the source run trees remain byte-identical and outputs exist only in
-   the versioned sidecar.
-2. Report per arm: six aggregate axes, `valid_n`, `skipped_n`,
-   `source_skipped_n`, `applicable_n`, `not_applicable_n`, and every failed
-   sample ID/reason.
-3. Confirm detector revision/hash lineage and retain the ISNet-for-PFPN,
-   matched-evaluator-only, cross-paper-literature-only caveat.
-4. Append the exact command, results, and provenance to `A3_EXPERIMENT_LOG.md`.
-5. Update this `next_step.md` immediately before any session switch.
-6. Do not start S_DL/S_QL/S_TV/S_IO. First report the exact judge snapshot,
-   matched-pair protocol, call count, and estimated cost for explicit approval.
+Metric cells below are `value; applicable_n/valid_n/skipped_n/source_skipped_n/not_applicable_n`.
+Every metric has `metric_skipped_n=0`.
+
+| Arm | Ali | Ove | Und_l | Und_s | Rea | Occ |
+| --- | --- | --- | --- | --- | --- | --- |
+| T0 | `0.00039344577614799106; 100/100/0/0/0` | `0.11029703455008535; 100/100/0/0/0` | `N/A; 0/0/0/0/100` | `N/A; 0/0/0/0/100` | `0; 100/100/0/0/0` | `0.005604150408513137; 100/100/0/0/0` |
+| T2 | `0.0010906792273481; 98/98/2/2/0` | `0.11855469211026877; 98/98/2/2/0` | `N/A; 0/0/2/2/98` | `N/A; 0/0/2/2/98` | `0; 98/98/2/2/0` | `0.005628733500349222; 98/98/2/2/0` |
+| T3 | `0.0006464536794323366; 99/99/1/1/0` | `0.15041344770396506; 99/99/1/1/0` | `N/A; 0/0/1/1/99` | `N/A; 0/0/1/1/99` | `0; 99/99/1/1/0` | `0.005972501210145759; 99/99/1/1/0` |
+
+Source failures retained as explicit `source_skipped` rows:
+
+- T2 `5d67ed46cf657b21ef7bdad9`: `A3L0PipelineError`, candidate shortfall
+  (2/3 R0 candidates completed);
+- T2 `5f644f40a637ee11e3669a1c`: `ValueError`, PlanAssetsA3 exhausted three
+  attempts because the A3 layout tree contained duplicate asset IDs;
+- T3 `5da04604abc8ea6d1cbe2935`: `A3L0PipelineError`, candidate shortfall
+  (2/3 R0 candidates completed).
+
+The immediate read-only postcheck reloaded the full sidecar through
+`validate_evaluation_bundle()` and passed with `records=300`, `runs=3`. There
+is no staging residue. Artifact SHA-256 values are:
+
+- `evaluation_manifest.json`: `c96937a6d9b19caf8a87980e0f5bb4a49df346b19df79c4a57eb4ce1fddf4ff9`;
+- `aggregate.json`: `5eeed54fc4b9e9e688b2a87300a48477e5ec240b1fdb0a4126b42959db21377d`;
+- `per_sample.jsonl`: `a70121e4edd1ebc7f6dbea16435218e9daca1595257aed434a843294afdfd55b`.
+
+Pre/post source tree hashes are identical: T0
+`7c3931ee4164705c0c848d05ec68e7ecf5a0b14a9a5beaf3bc4431cf0e4044b8`,
+T2 `c460178325ef2d5f017f5bfe9498c0f1126d838bf75bff9a8812173f35c639d6`,
+and T3 `0aa7e075fa8b5873950075f3e55fb6e6cdd26c92dc7ed0b6ea8b40e1ddda30e3`.
+Evaluator code and all detector artifact hashes and mtimes are also unchanged.
+Runtime lineage records BASNet revision
+`c04f6d78a10d2d558260629c3b00a9ed0568dbc6` and exact
+`rembg.sessions.dis_general_use.DisSession` ISNet with
+`CPUExecutionProvider`. ISNet replaces PKU's PFPN branch, so Occ is directly
+comparable only across methods re-evaluated with this matched pipeline;
+published SEGA results remain literature references only.
+
+## Independent verification — passed (2026-07-12)
+
+A read-only verification script re-ran 50 checks against the published
+sidecar, all green:
+
+- SHA-256 of all three artifacts matches the recorded publication hashes;
+- `validate_evaluation_bundle()` reloads the full bundle (records=300, runs=3);
+- all four applicable-axis aggregate means were independently recomputed from
+  `per_sample.jsonl` and match `aggregate.json` cell-by-cell (rel_tol 1e-12),
+  including zero-contribution/skipped/applicable counts;
+- Und_l/Und_s are `not_applicable` on every evaluated row with null aggregates;
+- source-skipped sample IDs match the three recorded failures exactly;
+- per-sample ordering in every arm matches the manifest's 100-ID snapshot
+  (count and sha256 `840347c0…` self-consistent);
+- no staging residue; the sidecar contains exactly the three artifacts.
+
+Results and provenance are documented in `A3_EXPERIMENT_LOG.md` §23.8
+(supersedes §23.5 for citation). Do not rerun or overwrite this evaluation ID.
+
+## Phase 2 verification/handoff checklist
+
+1. Done: source run trees are byte-identical and output exists only in the
+   versioned sidecar.
+2. Done: this handoff records all six aggregate axes, count denominators, and
+   every source-failed sample ID/reason.
+3. Done: detector revision/hash lineage and the ISNet-for-PFPN,
+   matched-evaluator-only caveat are recorded.
+4. Done: independent read-only verification of the formal bundle and
+   interpretation passed (50/50 checks).
+5. Done: results appended to `A3_EXPERIMENT_LOG.md` §23.8; scoped work
+   (log, this handoff, evaluation sidecar) committed and pushed.
+6. Next: do not start S_DL/S_QL/S_TV/S_IO. First report the exact judge
+   snapshot, matched-pair protocol, call count, and estimated cost for
+   explicit approval.
 
 ## Dirty-worktree boundary
 
@@ -217,6 +314,7 @@ files are limited to:
 - `tests/metagpt/ext/agentlayout/test_a3_sega_evaluator.py`
 - `layout_agent/next_step.md`
 
-No commit or push has been performed. No formal Relation N=100 evaluation,
-detector inference, model download, LLM/API call, or paid judge was performed
-during Phase 1.
+Phase 1 code and tests were committed in `7bc92845`. The formal evaluation
+sidecar, the §23.8 log entry, and this handoff are committed in the follow-up
+scoped commit on `feat/step76-89-sega-pipeline`. No detector download, LLM/API
+call, or paid judge has been performed at any point in this line of work.
