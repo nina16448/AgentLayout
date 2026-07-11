@@ -52,7 +52,7 @@ layout_agent/runs/a3/
 | A3-06 | L0、Judge-Select 與 Judge-Critic | complete |
 | A3-07 | L1-Gated、repair verifier 與 B0/B1 guard | complete |
 | A3-08 | N=5 smoke（L0 5/5、L1-Gated 5/5） | complete |
-| A3-09 | N=20 gates（Gate C complete＝L0 勝出；Gate A/B oracle ready、等付費授權） | in progress |
+| A3-09 | N=20 gates（Gate C＝L0；Gate A/B 五臂 20/20 executed、指標已算） | complete |
 | A3-09M | Human-tree SGC/TLC/PCA 與 tree prediction metrics | complete |
 | A3-09H | 三位標註者 adjudication queue、finalizer 與 T3 oracle preflight | complete |
 | A3-09O | Human adjudication 20/20 finalized、T3 oracle trees 發布 | complete |
@@ -1882,3 +1882,50 @@ python layout_agent/run_a3.py finalize-adjudication \
 - API calls：**0**；paid tokens／dollar cost：**0**（全程 schema 驗證與檔案操作）。
 - A3-09O status：**complete**。Gate B T3 的 `--oracle-trees-from` 輸入已就緒。
 - 下一入口：Gate A/B 各 arm budget 已回報（nominal 合計 660 calls，不含 reliability retries），等待使用者逐 arm 付費授權；未授權前不帶 `--allow-api-calls`。
+
+---
+
+## 21. A3-09AB：Gate A/B 五臂付費執行與 human-oracle 指標
+
+**日期：** 2026-07-11
+
+### 21.1 授權與執行協定
+
+使用者逐字授權「授權全部五個 arm 帶 --allow-api-calls 執行」。五臂各建獨立 run-id，共用 `a3_gateab_pilot_l0.json`（L0、gpt-5.4-mini-2026-03-17）與 `a3_gateab_pilot_n20.json`（N=20，與 human oracle 同一批）。每臂先各自 `init → prepare-pfull → normalize-r3 → prepare-analyst-vision`（zero-cost、failed 0），再跑無 flag preflight（五臂 budget 與提案完全一致、exit 2），最後依序帶 `--allow-api-calls` 執行。
+
+| Arm | Run-id | Calls | Wall | 完成 |
+| --- | --- | ---: | ---: | --- |
+| Gate A vision T2 | `a3-gatea-t2-vision-n20-01` | 140 | 771s | 20/20、failed 0 |
+| Gate A text-only T2 | `a3-gatea-t2-textonly-n20-01` | 140 | 652s | 20/20、failed 0 |
+| Gate B T0 | `a3-gateb-t0-n20-01` | 120 | 628s | 20/20、failed 0 |
+| Gate B T2 | `a3-gateb-t2-n20-01` | 140 | 786s | 20/20、failed 0 |
+| Gate B T3 | `a3-gateb-t3-n20-01` | 120 | 656s | 20/20、failed 0 |
+
+實際 model calls 合計 **660**＝nominal（零 schema-retry）。T3 oracle preflight 通過並記錄 `oracle_trees_from`。provider 回報 cost 仍為 0（已知現象），實際美元成本無法自 runtime 取得。
+
+### 21.2 Gate A：predicted tree vs human oracle（A3-09M 指標，certain nodes）
+
+| Arm | same-group F1 | edge F1 | type acc | exact-role acc |
+| --- | ---: | ---: | ---: | ---: |
+| vision | 0.4684 | 0.3088 | 0.6785 | 0.0 |
+| text-only | 0.5142 | 0.1818 | 0.5743 | 0.0 |
+
+Paired sign test（vision − text-only）：**edge F1 13W/4L/3T p=0.049、type acc 12W/2L/6T p=0.0129，vision 顯著較好**；same-group F1 8W/12L p=0.50（text-only 均值略高但不顯著）。exact-role accuracy 兩臂皆 0——模型自由文字 role 與人類中文 role 逐字比對本質上不可能命中，此軸只能當 lower bound，不具鑑別力。**Gate A 判讀：保留 vision Analyst**（層級結構與語意型別顯著優於 text-only；分組軸無差異證據）。
+
+### 21.3 Gate B：B0 layout vs 同一棵 human reference tree（SGC/TLC/PCA）
+
+三臂 20/20 全部 defined、零 skip；不做 predicted-tree 自評。
+
+| Arm | SGC | TLC | PCA |
+| --- | ---: | ---: | ---: |
+| T0 | 0.6375 | 0.6075 | 0.6817 |
+| T2 | 0.6373 | 0.6385 | 0.7188 |
+| T3（human tree 注入） | **0.7528** | 0.6467 | **0.8534** |
+
+Paired sign tests：**T3−T0 PCA 12W/0L/8T p=0.0005 顯著**；T3−T2 SGC 14W/6L p=0.115（方向有利未顯著）；其餘（含 T2−T0 全軸）皆不顯著。**Gate B 判讀：human tree 注入（T3）在 parent-child adjacency 上有顯著、乾淨的提升，SGC 方向有利；T2 predicted tree 相對 T0 無可辨識增益**——tree 條件的價值目前主要來自 tree 的品質（human > predicted），而非 tree 通道本身。
+
+### 21.4 成本與狀態
+
+- 付費 model calls：**660**（授權範圍內、零 retry）；provider 回報 token/cost 0。
+- 分析全程 zero-cost（`human_tree_metrics.py` 唯讀聚合）；run artifacts 不 commit。
+- A3-09 全部 gates：**complete**。下一決策點：A3-10 N=100 設計（text bitmap 池已備 100/100，但 human tree annotation 只覆蓋 pilot N=20，T3 臂與 Gate 指標在 N=100 的 reference tree 來源需先定案）。
