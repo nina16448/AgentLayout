@@ -530,6 +530,7 @@ Tree ablation 一律使用 L0，避免 Judge repair 掩蓋 tree 造成的差異�
 ### 7.2 Layout realization
 
 SGC、TLC、PCA 必須改用同一份 human reference tree 評估所有 arms，不再用各 arm 自己的 predicted tree。
+計算方法在 layout_agent/Metrics.md
 
 - SGC：同 group 是否比異 group 緊密。
 - TLC：同組元素是否通常比異組元素更接近。
