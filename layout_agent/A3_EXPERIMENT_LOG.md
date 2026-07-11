@@ -2014,3 +2014,15 @@ cls 對映：text/text_bitmap→1、image→2；Und_l/Und_s **0 by design**（A3
 Paired sign tests：全部不顯著。僅兩個邊緣趨勢（tree 臂略差）：T2−T0 Ali p=0.057（Ali 大多平手：87–79% ties）、T3−T2 Ove 58W/39L p=0.067。**判讀：tree 條件在幾何整潔軸持平——§23.3 的語意組織增益（SGC/TLC/PCA 全顯著）不是用幾何品質換來的**；T3 Ove 邊緣上升與「相關元素放近」一致，屬可解釋的 trade-off 方向但未達顯著。
 
 **協定警告**：本表在 A3 P-Full 協定（text＋image 全部為 placeable、pixel-only background）下計算，**不可**與 Step 89/92 的 text-as-image 協定表或 SEGA Table 3 同表比較；僅供三臂內部對照。S_DL/S_QL/S_TV/S_IO/S_mean4（matched COLE judge，Phase 3 必跑項 7）為付費項目，budget 另行提案。
+
+### 23.6 Failure、cost 與 latency 分析（Phase 3 必跑項 9；zero-cost）
+
+失敗 3/300（1.0%）：CandidateShortfall ×2（T2 `5d67ed46`、T3 `5da04604`——3 個 mapper candidate 只有 2 個完整 render）、Planner 重複 asset ID ×1（T2 `5f644f40`——3 attempts 全數輸出重複 ID，屬 T2 特有失敗模式：T0/T3 無 Planner call）。全部 error record 落盤、fail-loud、無靜默跳過。
+
+Latency（per-call mean）：analyst ~11s（最重，含 vision）、director ~6.6–6.9s、planner 6.6s（僅 T2）、mapper ~3.6–3.8s（×3/sample）、judge_select ~2.8s。Per-sample 端到端約 31–38s；T2 較 T0 多一個 planner call（+6.6s、+100 calls/100 samples）。三臂 calls 600/692/598；provider 回報 token/cost 0（已知現象）、wall time 3153/3782/3214s。
+
+### 23.7 執行決策記錄（2026-07-12，使用者裁示）
+
+1. **所有需要人力的實驗永久跳過**（含 human semantic-grouping preference study）——時程考量；論文相應主張列 limitation，不補人測。
+2. **指標修訂由使用者本人接手**——本 session 不再改動任何 metric 定義。
+3. **舊架構（pre-A3 pipeline，Step 1–97 線）視為不存在**——論文不引舊表、不維護舊協定可比性；A3 為唯一架構。COLE judge 換用 gpt-5.4-mini 的「與 Step 70/92 不可比」顧慮隨之失效（舊表不進論文）。
