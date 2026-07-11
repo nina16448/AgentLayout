@@ -53,6 +53,7 @@ layout_agent/runs/a3/
 | A3-07 | L1-Gated、repair verifier 與 B0/B1 guard | complete |
 | A3-08 | N=5 smoke（L0 5/5、L1-Gated 5/5） | complete |
 | A3-09 | N=20 gates（Gate C complete＝L0 勝出；Gate A/B blocked on human annotation） | in progress |
+| A3-09M | Human-tree SGC/TLC/PCA 與 tree prediction metrics | complete |
 | A3-10 | N=100 正式實驗 | blocked by gates |
 
 ---
@@ -1622,3 +1623,133 @@ run level `annotation_preparation.json`；失敗寫 versioned ErrorRecord。
 | Gate B T0/T2/T3 付費 runs（L0、各 N=20） | 同上；T3 需 oracle trees |
 
 **A3-09 前置全部完成；關鍵路徑現在完全在人工標註上。**
+
+---
+
+## 18. A3-09M：human-tree evaluation metrics
+
+**日期：** 2026-07-11
+**起始 local HEAD：** `91793a30`（upstream `6493e3e1`；本階段開始前已有一筆未 push 的 handoff 文件 commit）
+**性質：** deterministic evaluation infrastructure；0 API calls、0 paid tokens；未修改任何既有 run artifact。
+
+### 18.1 A3 human-tree SGC / TLC / PCA
+
+新增 `metagpt/ext/agentlayout/tools/human_tree_metrics.py`。輸入介面明確要求：
+
+- 一棵呼叫端注入的 `A3LayoutTree(source="human_oracle")`；不讀取 arm 自己的 predicted tree 或任何 global tree state；
+- legacy `Candidate` 的 pixel `left/top/width/height` 與 canvas width/height；bbox 先分別除以 canvas width/height，再建立一次共用距離矩陣；
+- tree 以 stable asset ID 對 Candidate；tree 外元素（含 legacy `bg_*`）忽略，tree element 缺漏或重複則整筆記 `None`＋`layout:*` skip reason，不做猜測式對齊。
+
+共用距離為外框 L1 間隙：
+
+```text
+d(i,j) = max(0, gap_x) + max(0, gap_y)
+gap_x  = max(x_i,x_j) - min(x_i+w_i,x_j+w_j)
+```
+
+重疊或相貼為 0。三個 metric 的實作與邊界：
+
+- **SGC**：每個 non-singleton group 先算組內 pair mean，再對 group mean 取平均（group-level `D_intra`）；`D_inter` 是所有跨 group pair 的 pair-level mean；`SGC = D_inter / (D_intra + D_inter + 1e-6)`。單 group → `sgc:single_group`；全部 groups singleton → `sgc:all_groups_singleton`；均為 `None`。
+- **TLC**：列舉所有 anchor-ordered `(i,j,l)`，`i,j` 同 group、`i,l` 異 group；近者得 1、平手得 0.5、否則 0。無 triplet → `None`＋`tlc:no_triplets`。
+- **PCA**：每個 non-root `(parent, child)` 檢查 `d(parent,child) <= median_{j!=parent} d(parent,j)`；無 non-root edge → `None`＋`pca:no_edges`。
+
+**與 `Metrics.md` legacy 定義的唯一結構差異（A3 contract 規定）：** group 不再由 legacy tree 的 root 直接子樹推導，而是逐字使用 `A3LayoutTree.groups[*].member_ids` 的 explicit exact partition；PCA edge 直接讀 `A3TreeNode.parent_id`，排除 `parent_id == "root"`。舊 `semantic_group_metrics.py` 完全未修改，保留作 Step-90 predicted-tree 自我一致性歷史實作。
+
+### 18.2 Tree prediction metrics
+
+`evaluate_tree_prediction(predicted, human_oracle)` 強制兩棵 tree stable-ID coverage 完全一致，輸出：
+
+- same-group unordered pair Precision / Recall / F1；
+- directed parent-child edge Precision / Recall / F1；
+- `semantic_type` accuracy；
+- `semantic_role` **case-sensitive exact-string** accuracy（不另報 normalized role score）；
+- P/R/F1 同時保存 TP、predicted-set size、reference-set size；雙方 relation set 都空時定義為 exact match `1/1/1`，只有單側為空則依 zero-division rule 記 0。
+
+Human oracle 中 `confidence == 0.5` 的 uncertain node 不強迫算錯：所有涉及該 node 的 pair/edge，以及其 type/role，從 primary metrics 排除；另報 uncertain node IDs、uncertain-only pair/edge P/R/F1、uncertain type/role accuracy，以及排除的 relation counts。
+
+### 18.3 Tests 與驗收
+
+先建立測試並確認因新模組不存在而 collection error，再實作至全綠。新增 `tests/metagpt/ext/agentlayout/test_human_tree_metrics.py`（18 tests），涵蓋：
+
+1. `d` 的重疊／相貼／水平／垂直／對角五種案例；
+2. 同組緊貼異組遠離（SGC > 0.999、TLC=1、PCA=1）與同組打散（SGC<0.5、TLC<0.5）；
+3. 全部重疊 TLC=0.5；single-group、all-singleton、no-triplet、no-edge 與 missing/duplicate ID skip；
+4. 固定 `random.Random(20260711)` 的 1000 次 Monte Carlo，TLC mean 落在 `0.5±0.05`；
+5. SGC group-level mean 的數值反例、pixel normalization scale invariance、tree 外元素排除與 PCA median criterion；
+6. tree prediction perfect／partial／zero-overlap／uncertain，以及 source/coverage fail-closed。
+
+完整 A3 suite（原 144 tests＋本階段 18 tests）：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run \
+  --with pytest --with 'pydantic>=2' --with pillow \
+  pytest -q -o addopts='' \
+  --confcutdir=tests/metagpt/ext/agentlayout \
+  tests/metagpt/ext/agentlayout/test_a3_run_manifest.py \
+  tests/metagpt/ext/agentlayout/test_pfull_preprocessor.py \
+  tests/metagpt/ext/agentlayout/test_text_bitmap_normalizer.py \
+  tests/metagpt/ext/agentlayout/test_analyst_vision.py \
+  tests/metagpt/ext/agentlayout/test_layout_tree_v3.py \
+  tests/metagpt/ext/agentlayout/test_judge_select_a3.py \
+  tests/metagpt/ext/agentlayout/test_judge_critic_a3.py \
+  tests/metagpt/ext/agentlayout/test_a3_l0_pipeline.py \
+  tests/metagpt/ext/agentlayout/test_a3_repair_gate.py \
+  tests/metagpt/ext/agentlayout/test_a3_l1_pipeline.py \
+  tests/metagpt/ext/agentlayout/test_a3_director_mapper.py \
+  tests/metagpt/ext/agentlayout/test_a3_issue_verifier.py \
+  tests/metagpt/ext/agentlayout/test_a3_stage_binding.py \
+  tests/metagpt/ext/agentlayout/test_a3_annotation.py \
+  tests/metagpt/ext/agentlayout/test_human_tree_metrics.py
+```
+
+結果：**162 passed in 3.94s**。新檔 Ruff `All checks passed`；conda `meta` 的 `py_compile` 與三個 staged phase files 的 scoped `git diff --cached --check` 均通過。
+
+### 18.4 Pilot annotation 條件驗收（read-only）
+
+`a3-gateab-pilot-n20-01` 已出現三位 annotator（`T`、`hui`、`neiji`）各 20 份 annotation。本階段唯讀執行指定驗收：
+
+- `HumanAnnotation.model_validate`＋`validate_annotation_coverage`：**60/60 valid，0 invalid**；sample ID、filename annotator suffix 亦一致；
+- 額外結構防線 `annotation_to_oracle_tree`：**60/60 可形成合法 A3 oracle tree**；
+- 每 sample 三組 annotator pair 均跑 `compute_agreement`：共 60 reports，**58/60 至少一項不完全一致**；
+- `sample_uncertain` 三位均為 0；uncertain nodes：T=18、hui=26、neiji=0。
+
+Pairwise mean（現有 `compute_agreement.role_type_agreement` 實際只比較 `semantic_type`；不等同本階段新增的 exact free-text role accuracy）：
+
+| Pair | N | same-group Jaccard | edge Jaccard | semantic-type agreement | 三項完全一致 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| T / hui | 20 | 0.3282 | 0.1911 | 0.9095 | 0 |
+| T / neiji | 20 | 0.7853 | 0.5083 | 0.9209 | 1（`58ab189395a7a863ddcc7847`） |
+| hui / neiji | 20 | 0.3507 | 0.2927 | 0.8862 | 1（`5952934395a7a863ddcdff21`） |
+
+分歧清單如下；asset 欄是三組 `compute_agreement.disagreeing_assets` 的聯集（只代表 semantic-type 分歧），pair 欄另涵蓋 grouping/edge/type 任一分歧。即使其中一組 pair 完全一致，只要第三位不同仍需 adjudication。
+
+| sample_id | semantic-type 分歧 assets（union） | 有分歧 pairs |
+| --- | --- | --- |
+| `5888bb2995a7a863ddcc1f74` | asset_0001,asset_0003,asset_0005,asset_0006,asset_0007,asset_0008,asset_0009,asset_0010,asset_0011,asset_0013,asset_0016 | T/hui, T/neiji, hui/neiji |
+| `5888c54095a7a863ddcc2082` | asset_0005 | T/hui, T/neiji, hui/neiji |
+| `5888dd7995a7a863ddcc2e86` | asset_0001,asset_0003,asset_0004,asset_0011,asset_0012,asset_0013,asset_0015,asset_0018 | T/hui, T/neiji, hui/neiji |
+| `5889bc5995a7a863ddcc3b97` | — | T/hui, T/neiji, hui/neiji |
+| `589b457b95a7a863ddcc5331` | asset_0004,asset_0005,asset_0010,asset_0011 | T/hui, T/neiji, hui/neiji |
+| `58ab17ba95a7a863ddcc77bf` | asset_0009 | T/hui, T/neiji, hui/neiji |
+| `58ab189395a7a863ddcc7847` | — | T/hui, hui/neiji |
+| `58cbc44595a7a863ddccc20b` | asset_0013,asset_0015 | T/hui, T/neiji, hui/neiji |
+| `5909cfb695a7a863ddcd37cb` | asset_0009 | T/hui, T/neiji, hui/neiji |
+| `5914233f95a7a863ddcd777c` | asset_0000,asset_0002,asset_0009 | T/hui, T/neiji, hui/neiji |
+| `592d1a2b95a7a863ddcd97aa` | asset_0004,asset_0008 | T/hui, T/neiji, hui/neiji |
+| `592fdd7e95a7a863ddcdbe67` | — | T/hui, T/neiji, hui/neiji |
+| `5930177f95a7a863ddcdc313` | asset_0004,asset_0009 | T/hui, T/neiji, hui/neiji |
+| `5931132c95a7a863ddcdc5d3` | — | T/hui, T/neiji, hui/neiji |
+| `59313e5495a7a863ddcdc9ac` | asset_0006,asset_0007,asset_0010,asset_0011,asset_0012,asset_0014 | T/hui, T/neiji, hui/neiji |
+| `5952704d95a7a863ddcdecb5` | asset_0005,asset_0006 | T/hui, T/neiji, hui/neiji |
+| `5952934395a7a863ddcdff21` | — | T/hui, T/neiji |
+| `59b2809c1350e8329300dbe4` | asset_0000 | T/hui, T/neiji, hui/neiji |
+| `59bb96701350e8329301120a` | — | T/hui, T/neiji, hui/neiji |
+| `5a21848dd8141396fe9a33eb` | asset_0016 | T/hui, T/neiji, hui/neiji |
+
+**結論：20/20 samples 都需使用者 adjudication。** 本階段沒有自行裁決、沒有產生 final oracle、沒有寫回 write-once run 目錄。
+
+### 18.5 成本與下一步
+
+- API calls：**0**；paid tokens / dollar cost：**0**；所有 metric、tests、annotation validation/agreement 都是 local deterministic Python。
+- A3-09M status：**complete**。
+- 下一入口：使用者 adjudication → `AdjudicationRecord`＋final `annotation_to_oracle_tree` → Gate A（vision vs text-only，各約 140 calls）與 Gate B（T0/T2/T3；L0）付費 runs。任何 paid run 仍須先逐 arm 報 budget 並取得明確授權；Gate C 的 L0 決策不重啟。
