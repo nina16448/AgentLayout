@@ -5,7 +5,7 @@ Repository: `/home/hui0705/MetaGPT`
 Branch: `feat/step76-89-sega-pipeline`
 
 Updated: 2026-07-12 (Asia/Taipei; General N=100 zero-cost preflight complete,
-paid generation not authorized)
+paid generation explicitly authorized, execution pending)
 
 ## Current objective
 
@@ -14,9 +14,8 @@ commit `6b4197f9`. The next `new_plam.md` Phase 3 task is the final
 Crello-General N=100 system run. Human preference experiments remain skipped by
 the user's decision in `A3_EXPERIMENT_LOG.md` §23.7.
 
-Only the zero-cost preflight is authorized now. Do not execute
-`run_a3.py run --allow-api-calls` until an exact call/token/cost cap has been
-reported and the user explicitly authorizes the paid generation run.
+The zero-cost preflight is complete. The user explicitly authorized the paid
+generation run within the exact boundary recorded below.
 
 ## Execution checkpoint 1 — General sample freeze complete
 
@@ -137,7 +136,7 @@ Result:
 - all three preparation summaries are 100 total / 0 failed;
 - total preflight API/LLM calls 0; paid cost `$0.00`.
 
-## Paid proposal — awaiting explicit authorization
+## Paid proposal — explicitly authorized
 
 - Frozen model: `gpt-5.4-mini-2026-03-17`.
 - Protocol: A3-MLLM, P-Full, R3, predicted tree (T2), L0, vision analyst,
@@ -155,15 +154,30 @@ Result:
 - Official pricing snapshot:
   `https://developers.openai.com/api/docs/models/gpt-5.4-mini`.
 
-No paid command may run until the user explicitly authorizes all of:
-`a3-general-n100-t2-l0-01`, up to 2,100 calls, 10M input tokens,
-2.25M output tokens, and US$20.
+Authorization received verbatim:
+
+> 授權執行 a3-general-n100-t2-l0-01，最多 2100 calls、10M input tokens、2.25M
+> output tokens、US$20。
+
+Authorized command:
+
+```bash
+conda run -n meta python layout_agent/run_a3.py run \
+  --run-dir layout_agent/runs/a3/a3-general-n100-t2-l0-01 \
+  --tree-arm T2 \
+  --analyst-arm vision \
+  --allow-api-calls
+```
+
+Do not broaden this authorization to another run ID, model, dataset, loop,
+evaluation judge, or follow-up paid task.
 
 ## Stop conditions
 
-- The zero-cost preflight is complete. Stop here pending explicit paid
-  authorization.
-- Never add `--allow-api-calls` based only on a generic "continue" or "OK".
+- The zero-cost preflight is complete and the exact paid run above is
+  authorized.
+- Stop and report if the run would exceed 2,100 calls, 10M input tokens,
+  2.25M output tokens, or US$20; do not substitute another model or run ID.
 - Preserve all unrelated dirty files and existing write-once runs.
 - Run scoped checks, commit only the General preflight files, and push the
   branch before asking for authorization.
