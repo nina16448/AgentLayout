@@ -4,8 +4,8 @@ Repository: `/home/hui0705/MetaGPT`
 
 Branch: `feat/step76-89-sega-pipeline`
 
-Updated: 2026-07-12 14:36 CST (Asia/Taipei; prior N=100 workflows complete;
-full-Crello scope/cost/storage preflight complete and paid execution stopped)
+Updated: 2026-07-12 15:25 CST (Asia/Taipei; official-test batching workflow
+and durable planning ledger validated; zero-cost implementation remains)
 
 ## Current objective
 
@@ -14,12 +14,13 @@ hardening, and their scoped pushes are complete. Human preference experiments
 remain skipped by the user's decision in `A3_EXPERIMENT_LOG.md` §23.7, and no
 completed write-once run may be reused or overwritten.
 
-The current request is a new expansion to the "entire Crello dataset."
+The current request is a new expansion across the official Crello test split.
 Checkpoint 21 records the zero-cost inventory: official test is 1,971 samples
-(1,902 cached locally), while all train/validation/test splits total 23,302.
-No full-dataset run is initialized or authorized. The next step requires the
-user to choose the dataset and evaluation scope, after which a revision-pinned,
-batched, no-API readiness plan and exact cumulative paid budget can be frozen.
+(1,902 cached locally). The user has now selected batches of 100 with immediate
+six-axis deterministic evaluation; the complete plain-language workflow is in
+`layout_agent/FULL_CRELLO_BATCH_PLAN.md`. No full-test run is initialized or
+authorized. The next step is zero-cost implementation/readiness validation,
+followed by a separate exact paid-budget proposal.
 
 ## Execution checkpoint 1 — General sample freeze complete
 
@@ -1570,16 +1571,184 @@ write-once plan, then re-run no-API readiness checks. Do not start generation
 until a new exact authorization names the final run/batch IDs, model, maximum
 calls, input tokens, output tokens, USD, and cumulative cross-batch ledger.
 
+## Execution checkpoint 22 — official-test batch workflow documented
+
+At `2026-07-12 15:17:26 CST (+0800)`, the user accepted the recommended scope
+and requested that Crello test be processed 100 samples at a time, with the
+six deterministic SEGA/PKU axes computed immediately after each batch. The
+workflow was frozen in the new human-readable document:
+
+```text
+layout_agent/FULL_CRELLO_BATCH_PLAN.md
+```
+
+The plan treats the completed General N=100 as immutable, partitions the
+remaining 1,871 samples into 18 batches of 100 plus a final 71, and excludes
+paid COLE evaluation. It defines revision/ID/cache readiness, per-batch
+generation and six-axis evaluation, atomic publication, cost/call/disk/error
+stop conditions, resumability, Git/handoff policy, and the final 1,971-row
+aggregation contract. Expected new-generation spend is `$75–85`; `$120` is a
+global hard stop, not expected cost. Exact token ceilings still require the
+zero-cost dry-run manifest before paid authorization.
+
+No data download, cache import, batch manifest, run directory, staging target,
+generation, evaluator, or OpenAI client was started while documenting the
+plan. API/model calls: `0`; paid tokens: `0`; paid cost: `$0.00`; artifacts:
+the plan and this handoff only.
+
+Safest resume: read `FULL_CRELLO_BATCH_PLAN.md`, then implement only the
+zero-cost revision-pinned cache/import and batch-manifest tooling with focused
+tests. Run the complete no-API readiness check for all 1,971 IDs and publish
+the exact run/batch IDs plus call/input/output/USD proposal. Do not start a
+model call until the user explicitly authorizes that final proposal.
+
+## Execution checkpoint 23 — planning-with-files durable ledger adopted
+
+At `2026-07-12 15:21:26 CST (+0800)`, the installed
+`planning-with-files-zht` skill version 3.4.0 and all three Traditional Chinese
+templates were read in full. The project had no pre-existing root planning
+files and no `.planning/.active_plan`, so a task-scoped ledger was initialized
+without overwriting user work. The exact directory command and result were:
+
+```bash
+mkdir -p .planning/crello-full-test
+# exit 0
+```
+
+The scoped documentation edit created:
+
+```text
+.planning/.active_plan
+.planning/crello-full-test/task_plan.md
+.planning/crello-full-test/findings.md
+.planning/crello-full-test/progress.md
+```
+
+`task_plan.md` is the phase/authorization gate, `findings.md` stores verified
+facts and decisions, and `progress.md` is the per-session/per-batch execution
+ledger. `FULL_CRELLO_BATCH_PLAN.md` now points new sessions to these files.
+This makes the 19-new-batch workflow recoverable after restart while keeping
+the detailed contract and canonical project handoff intact.
+
+No dataset data, cache, manifest, run/evaluation directory, OpenAI client, or
+model/evaluator was started. API/model calls: `0`; paid tokens: `0`; paid cost:
+`$0.00`. What remains is unchanged: implement and verify only the zero-cost
+revision-pinned cache/import/readiness/manifest tooling, then publish an exact
+paid proposal before any generation call.
+
+Safest resume: read `.planning/crello-full-test/task_plan.md`, `findings.md`,
+`progress.md`, `FULL_CRELLO_BATCH_PLAN.md`, and this handoff in that order.
+Continue only with phase 2 no-API work; do not enter phase 3 until explicit
+call/token/USD authorization is recorded.
+
+The first focused documentation validation passed whitespace, active-plan,
+arithmetic, non-empty/newline, and scoped-status checks, but its ignore probe
+used the invalid form `git check-ignore -q <path1> <path2>`. Git reported
+`fatal: --quiet is only valid with a single pathname`; therefore the ignore
+gate is not counted as passed. This one-attempt command error is recorded in
+the planning ledger and must be replaced by per-path probes. It did not touch
+data or invoke an API; paid cost remains `$0.00`.
+
+The replacement validation then exited nonzero without output because a
+`set -e` structural assertion was not labeled. It is not counted as a pass and
+did not mutate artifacts. The next validation must report each assertion by
+name so the exact failing condition can be isolated rather than repeating the
+same silent-stop command. API/model calls and paid cost remain zero.
+
+The labeled diagnostic isolated the assertion error: the five-question table
+correctly contains four rows beginning with `| 我` and one beginning with
+`| 目標是什麼`, while the failed predicate incorrectly required five `| 我`
+rows. All six paths were confirmed not ignored; whitespace, active-plan value,
+five phase headings, non-empty files, and terminal newlines passed. The ledger
+records the corrected predicate for the final validation. No execution or
+paid API state changed.
+
+At `2026-07-12 15:25:49 CST (+0800)`, the corrected focused validation used
+per-path ignore probes and the correct four-`我` plus one-`目標` restart-table
+predicate. Its material commands were:
+
+```bash
+git diff --check -- \
+  layout_agent/FULL_CRELLO_BATCH_PLAN.md layout_agent/next_step.md
+rg -n '[[:blank:]]+$' \
+  .planning/.active_plan .planning/crello-full-test/*.md \
+  layout_agent/FULL_CRELLO_BATCH_PLAN.md layout_agent/next_step.md
+git check-ignore -q -- <each-of-the-six-task-paths>
+rg -c '^### 階段 [1-5]：' \
+  .planning/crello-full-test/task_plan.md
+rg -c '^\| 我' .planning/crello-full-test/progress.md
+rg -c '^\| 目標是什麼' .planning/crello-full-test/progress.md
+```
+
+Result: `focused planning validation: PASS`; all six paths are non-ignored,
+non-empty, newline-terminated, and free of trailing whitespace, with the
+expected active-plan value, five phases, five restart answers, arithmetic,
+authorization gate, and checkpoint marker. Artifacts are the six task paths
+listed above. Paid/API cost remains `$0.00`. What remains for this checkpoint
+is scoped Git staging, cached-diff verification, commit, and push; after that,
+the safest project resume remains phase 2 no-API readiness implementation.
+
+The zero-cost Git/network preflight then ran:
+
+```bash
+branch=$(git branch --show-current)
+test "$branch" = 'feat/step76-89-sega-pipeline'
+test -w .git
+test ! -e .git/index.lock
+git rev-parse --abbrev-ref '@{u}'
+git ls-remote --heads nina \
+  refs/heads/feat/step76-89-sega-pipeline
+```
+
+Result: branch `feat/step76-89-sega-pipeline`, upstream
+`nina/feat/step76-89-sega-pipeline`, `.git` writable, index lock absent, and
+remote reachable at `a89d13d6d7b18579976bf422fcd755e521675d8b`. The six
+task paths were the only paths selected for the coming scoped stage; unrelated
+dirty/untracked work remains excluded. API/model calls and paid cost: zero.
+
+At `2026-07-12 15:27:02 CST (+0800)`, scoped staging and cached verification
+used:
+
+```bash
+git add -- \
+  .planning/.active_plan \
+  .planning/crello-full-test/task_plan.md \
+  .planning/crello-full-test/findings.md \
+  .planning/crello-full-test/progress.md \
+  layout_agent/FULL_CRELLO_BATCH_PLAN.md \
+  layout_agent/next_step.md
+git diff --cached --check
+git diff --cached --name-only
+git diff --cached --stat
+```
+
+Result: `cached path gate: PASS`; exactly those six paths were staged, with
+no unrelated path and no whitespace error. The first cached stat was 583
+insertions and 16 deletions; the small ledger/status update recording this
+gate is re-staged before the final cached check. API/model calls: `0`; paid
+tokens: `0`; paid cost: `$0.00`. Remaining handoff work: final cached gate,
+one scoped documentation commit, and push.
+
+The final cached gate at `2026-07-12 15:27:31 CST (+0800)` passed after the
+ledger/status refresh: exactly the same six task paths, no unstaged remainder
+on those paths, no cached whitespace errors, and a final pre-commit stat of
+606 insertions and 16 deletions. Full `git status --short --branch` confirmed
+all unrelated pre-existing modified/untracked paths remain outside the index.
+The next exact persistence command is the single scoped documentation commit;
+no paid or data execution is involved.
+
 ## Next task and stop conditions
 
 - COLE hardening and all previous N=100 artifacts remain complete; never rerun
   or overwrite them and never reuse their consumed paid authorizations.
-- The full-Crello request is stopped before data mutation and paid execution
-  because dataset scope and evaluation scope are ambiguous.
-- Recommended scope is the official test split (1,971), not train/validation,
-  because it preserves the evaluation protocol and fits current storage.
-- Train+validation+test (23,302) is additionally blocked by the current 98 GB
-  free-space margin and requires a new cache materializer plus storage plan.
-- No generation or paid judge may start until the user confirms the scope and
-  gives a new exact budget authorization after the batched dry-run proposal.
-- Preserve every unrelated dirty/untracked path listed above.
+- Scope is now official Crello test N=1,971: reuse the completed 100, then run
+  18 new batches of 100 and one final batch of 71.
+- Each new batch must complete generation, immediate six-axis evaluation,
+  validation, cost recording, handoff, and scoped persistence before the next.
+- Paid COLE evaluation, train, and validation are outside this plan.
+- The next authorized work is zero-cost tooling/readiness only. No generation
+  may start before a new exact call/token/USD budget receives explicit approval.
+- Keep `.planning/crello-full-test/{task_plan,findings,progress}.md` synchronized
+  after material work so a new session can resume without chat context.
+- Preserve every unrelated dirty/untracked path listed above, including the
+  newly observed pre-existing `.claude/` directory.
