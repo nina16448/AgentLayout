@@ -930,3 +930,79 @@ git push
 
 Do not rerun any General generation, SEGA, or COLE evaluation, and do not stage
 any unrelated dirty or untracked path.
+
+## Execution checkpoint 17 — General N=100 workflow pushed and handed off
+
+At `2026-07-12 09:24:09 CST (+0800)`, branch
+`feat/step76-89-sega-pipeline` was at task commit
+`76ee9870b1c96dd6b85f0ef8829c81c2cf2d43f3`, with an empty index and no
+changes in any of the eight task paths. The configured remote/upstream was
+`nina` / `nina/feat/step76-89-sega-pipeline`.
+
+The exact first sync command and result were:
+
+```bash
+git push
+# exit 0; c6340319..76ee9870, feat/step76-89-sega-pipeline ->
+# feat/step76-89-sega-pipeline
+```
+
+This pushed the completed General N=100 task commit. It contains the frozen
+SEGA sidecar (`a3-general-n100-sega-v1`, 100 evaluated rows), the matched COLE
+artifact (`a3-general-n100-cole-v1`, 200/200 rows `ok`), the dedicated runner,
+experiment log, and durable handoff. No generation, evaluator, judge, paid API,
+or LLM call was rerun during commit/sync; token use was 0 and paid cost was
+`$0.00`.
+
+The following unrelated pre-existing paths remained deliberately uncommitted:
+
+- `AGENTS.md`
+- `layout_agent/CODEX_HANDOFF.md`
+- `layout_agent/IMPLEMENTATION_LOG.md`
+- `layout_agent/output2/step91_o4mini_ab.py`
+- `metagpt/provider/constant.py`
+- `CLAUDE-FABLE-5.md`
+- `layout_agent/REFACTOR_PLAN.md`
+- `layout_agent/SEGA_METRICS_REMOTE_AGENT_TASK.md`
+- `layout_agent/demo/`
+- `layout_agent/demo_ids.json`
+- `layout_agent/demo_v2/`
+- `layout_agent/output.md`
+- `layout_agent/output2/step97_relation_subset.py`
+- `layout_agent/output2/step97_relation_subset/`
+- `layout_agent/run_demo.py`
+- `layout_agent/runs/`
+
+Because an earlier internal tool output exposed the configured credential,
+rotate/revoke it, update the appropriate secret store, and confirm the old
+credential is disabled. Never print or commit either credential. Optional
+future zero-cost hardening remains separate from these immutable artifacts:
+add a paid-run process lock, reserve in-flight token/USD budget, enforce final
+row completeness, close input TOCTOU windows, sanitize provider errors, and
+address the documented HTTPX/Numba runtime cleanup items.
+
+After committing this checkpoint alone with
+`docs(agentlayout): record General N100 handoff` and running the second exact
+`git push`, safe read-only verification commands are:
+
+```bash
+git status -sb
+git rev-parse HEAD
+git rev-parse '@{u}'
+git ls-remote --heads nina refs/heads/feat/step76-89-sega-pipeline
+jq -e '.evaluation_id == "a3-general-n100-sega-v1"' \
+  layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-general-n100-sega-v1/aggregate.json
+jq -e '.evaluation_id == "a3-general-n100-cole-v1" and \
+  .status_counts == {"ok": 200}' \
+  layout_agent/evaluations/a3-cole/a3.cole-judge.v1/a3-general-n100-cole-v1/aggregate.json
+```
+
+## Next task and stop conditions
+
+- The General N=100 generation, SEGA evaluation, COLE evaluation, scoped task
+  commit, handoff commit, and both pushes are complete.
+- Never rerun, overwrite, or broaden the completed paid evaluation or its
+  consumed authorization.
+- No required work remains for this workflow. Only optional zero-cost
+  hardening and credential rotation remain, each as a separate scoped task.
+- Preserve all unrelated dirty/untracked work listed above.
