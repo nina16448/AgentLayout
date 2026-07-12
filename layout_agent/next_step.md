@@ -4,8 +4,8 @@ Repository: `/home/hui0705/MetaGPT`
 
 Branch: `feat/step76-89-sega-pipeline`
 
-Updated: 2026-07-12 (Asia/Taipei; General N=100 zero-cost preflight complete,
-paid generation explicitly authorized, execution pending)
+Updated: 2026-07-12 (Asia/Taipei; General N=100 paid generation complete and
+postchecked)
 
 ## Current objective
 
@@ -14,8 +14,9 @@ commit `6b4197f9`. The next `new_plam.md` Phase 3 task is the final
 Crello-General N=100 system run. Human preference experiments remain skipped by
 the user's decision in `A3_EXPERIMENT_LOG.md` §23.7.
 
-The zero-cost preflight is complete. The user explicitly authorized the paid
-generation run within the exact boundary recorded below.
+The zero-cost preflight and the explicitly authorized paid generation are
+complete. The run finished 100/100 with no failures and passed a zero-cost
+full-run validation. No General evaluation judge has been authorized.
 
 ## Execution checkpoint 1 — General sample freeze complete
 
@@ -172,12 +173,46 @@ conda run -n meta python layout_agent/run_a3.py run \
 Do not broaden this authorization to another run ID, model, dataset, loop,
 evaluation judge, or follow-up paid task.
 
-## Stop conditions
+## Execution checkpoint 5 — paid generation complete
 
-- The zero-cost preflight is complete and the exact paid run above is
-  authorized.
-- Stop and report if the run would exceed 2,100 calls, 10M input tokens,
-  2.25M output tokens, or US$20; do not substitute another model or run ID.
+- command exit 0;
+- wall time: 07:10:10–08:02:33 CST, about 3,143 seconds (52m23s);
+- summary: 100 total, 100 completed, 0 failed;
+- successful stage records: 700; persisted model attempts: 714, below the
+  authorized 2,100-call limit;
+- request JSON bytes: 8,512,166; raw responses plus Analyst outputs:
+  1,845,357 bytes;
+- rough text-only estimate: about 2.13M input and 0.46M output tokens, with
+  image tokens additional; snapshot token telemetry remains unsupported, so
+  the real charge must be checked in the provider dashboard;
+- two non-fatal warning classes were observed: unsupported snapshot token
+  counting and HTTPX cleanup after repeated `asyncio.run`
+  (`RuntimeError: Event loop is closed`); neither caused a sample failure;
+- no evaluation judge or other paid task was run.
+
+Zero-cost postcheck:
+
+```bash
+conda run -n meta python layout_agent/evaluate_a3_sega.py \
+  --run-dir layout_agent/runs/a3/a3-general-n100-t2-l0-01 \
+  --evaluation-id a3-general-n100-postrun-validate-v1 \
+  --output-root /tmp/a3-general-postrun-20260712 \
+  --validate-only
+```
+
+Result: exit 0; 100 validated-only records, 0 source skipped, 0 API calls,
+`$0.00`, and 0 source artifacts modified.
+
+Results are documented in `A3_EXPERIMENT_LOG.md` §24.
+
+## Next task and stop conditions
+
+- The General N=100 generation is complete; do not rerun or overwrite it.
+- Next: zero-cost deterministic geometry, completion, failure, and latency
+  evaluation for this General run.
+- Treat the HTTPX event-loop cleanup warning as a separate zero-cost runtime
+  hygiene fix; it does not invalidate the completed artifacts.
+- Do not run General-vs-GT COLE or any other paid evaluation without a new,
+  exact budget and explicit authorization.
 - Preserve all unrelated dirty files and existing write-once runs.
-- Run scoped checks, commit only the General preflight files, and push the
-  branch before asking for authorization.
+- Commit only §24 and this handoff, then push before switching sessions.

@@ -2103,3 +2103,69 @@ Per-axis：三臂 vs GT 四軸全部極顯著落後（p ≤ 1.4e-12）。臂間�
 4. **協定警告**：本表為 A3-only、GT-referenced、gpt-5.4-mini judge；不可與 Step 70/92 舊架構 COLE 表（gpt-4o judge）同表或互相換算（2026-07-12 裁示：舊架構視為不存在）。
 
 **Status**：Phase 3 必跑項 7（matched judge evaluation）complete。SEGA/PKU＋COLE 兩條評測線至此全部結案。
+
+## 24. A3-11G：Crello-General N=100 final system（2026-07-12）
+
+### 24.1 Model-blind sample freeze 與零成本 preflight
+
+依 `new_plam.md` §5.1／§8 Phase 3，自 1,902 個本機可用 Crello test
+cache（官方 raw test split 1,971；69 筆未在本地，明列 availability
+limitation）以 seed 42 做固定 random N=100。抽樣在任何 A3 generation
+前完成，不使用 semantic richness、元素數、geometry、model output、
+candidate 或 score filter。正式 ID 檔
+`layout_agent/sample_ids/a3_general_n100.json` SHA-256 為
+`0e5401fb45cb83c573c82be458508e6ace003482b027b667556dfd876aed052c`；
+完整母體／meta snapshot／演算法 provenance 存於相鄰
+`a3_general_n100.provenance.json`。
+
+零成本準備結果：補齊 91 個 sample sidecar、369 張 text bitmap
+（100/100 ready、mismatch 0、missing 0，原始 `meta.json` aggregate
+hash 不變）；run `a3-general-n100-t2-l0-01` 的
+`prepare-pfull`、`normalize-r3`、`prepare-analyst-vision` 均
+100/100、failed 0。未授權 paid gate 正確 exit 2，印出 T2＋L0 nominal
+budget 7 calls/sample＝700 calls，且在 import/call LLM 前停止。
+
+### 24.2 使用者授權與正式生成
+
+使用者逐字授權：
+
+> 授權執行 a3-general-n100-t2-l0-01，最多 2100 calls、10M input
+> tokens、2.25M output tokens、US$20。
+
+凍結配置：A3-MLLM、P-Full、R3、vision Analyst、T2 predicted tree、
+L0、三個 spatial concepts/candidates、internal blind selection；所有
+stage 固定 `gpt-5.4-mini-2026-03-17`。正式命令：
+
+```bash
+conda run -n meta python layout_agent/run_a3.py run \
+  --run-dir layout_agent/runs/a3/a3-general-n100-t2-l0-01 \
+  --tree-arm T2 \
+  --analyst-arm vision \
+  --allow-api-calls
+```
+
+結果：**100/100 completed、failed 0、exit 0**。執行時間
+07:10:10–08:02:33 CST，約 **3,143 秒（52m23s）**；成功 stage records
+700，落盤的 model attempts 714（含 reliability retries），遠低於授權
+2,100 cap。request JSON 合計 8,512,166 bytes，raw response＋Analyst
+output 合計 1,845,357 bytes；以 chars/4 僅能粗估約 2.13M text input＋
+0.46M output tokens，image tokens 另計。MetaGPT 對此 snapshot 的
+tiktoken/usage conversion 不支援，runtime cost 仍不可採信，實際帳單
+須以 provider dashboard 為準；本 run 未啟動任何 evaluation judge。
+
+stdout 出現兩類非致命 warning：未知 snapshot 的 token-counter fallback，
+以及逐 sample `asyncio.run` 後 HTTPX client cleanup 報
+`RuntimeError: Event loop is closed`。兩者均未造成 sample failure，
+但後者應列為後續 runtime hygiene 修補，不能誤報成生成失敗。
+
+### 24.3 零成本 postcheck 與狀態
+
+以正式 hardened evaluator 對完整 run 做 `--validate-only`：100 筆
+`validated_only`、source skipped 0、LLM/API calls 0、source artifacts
+modified 0；sidecar 僅寫於
+`/tmp/a3-general-postrun-20260712/a3.sega-pku-protocol.v1/a3-general-n100-postrun-validate-v1`。
+
+**Status：Crello-General N=100 final generation complete。** 下一步是
+零成本 deterministic geometry/completion/failure/latency evaluation；
+General-vs-designer-GT 的任何 paid COLE judge 不在本次授權內，必須另提
+call/token/cost budget 並重新取得明確授權。
