@@ -2297,3 +2297,36 @@ COLE 表互換。
 **Status：General-vs-GT matched COLE judge complete。** General N=100 的
 generation、formal SEGA/PKU 與 separately authorized COLE 評測均已完成；
 不得重跑既有 write-once artifact。
+
+---
+
+## 25. A3-12S：Relation N=100 tree 直接準確度 + SGC/TLC/PCA 統計重分析（2026-07-12；zero-cost）
+
+兩項皆 read-only、0 LLM/API call、無版面重生成；全部輸入為凍結 run artifacts（`a3-rel100-t0/t2/t3-01` + `relation100_oracle_trees/`）。新程式：`metagpt/ext/agentlayout/evaluation/a3_tree_accuracy.py`、`a3_relation_stats.py`，CLI `layout_agent/evaluate_a3_tree_accuracy.py`、`layout_agent/analyze_a3_relation_stats.py`；測試 `tests/metagpt/ext/agentlayout/test_a3_tree_accuracy.py`（11）+ `test_a3_relation_stats.py`（13），agentlayout 全套 753 passed。
+
+### 25.1 T2 predicted Layout Tree vs human oracle（直接準確度）
+
+Bundle：`layout_agent/evaluations/a3-tree-accuracy/a3.tree-accuracy.v1/a3-relation-n100-t2-tree-accuracy-v1/`（write-once；manifest 記 input/程式/sample-ID hash 與 bootstrap 設定）。Denominators：**evaluated 99/100、planner failure 1/100（`5f644f40`，明列不靜默）、coverage mismatch 0**；certain nodes 1,284、uncertain（conf=0.5）27（14 個 samples），uncertain 全部從 primary 指標排除並另行分列。Bootstrap 95% CI = sample-level percentile、seed 20260712、10,000 次、每統計量獨立 fresh RNG。
+
+| 指標 | macro mean [95% CI] | pooled/micro |
+| --- | --- | --- |
+| **Same-group P** | 0.7495 [0.6953, 0.8022] | 0.7380 |
+| **Same-group R** | 0.5770 [0.5216, 0.6337] | 0.6243 |
+| **Same-group F1（primary）** | **0.6044 [0.5578, 0.6512]** | 0.6764 |
+| Parent-child P | 0.3199 [0.2800, 0.3605] | 0.3065 |
+| Parent-child R | 0.3810 [0.3340, 0.4289] | 0.3590 |
+| Parent-child F1 | 0.3394 [0.2980, 0.3820] | 0.3307 |
+| Semantic-type acc | 0.7437 [0.7113, 0.7762] | 0.7578 (1,284 nodes) |
+| Semantic-role exact acc（lower bound only） | 0.0000 | 0.0000 |
+
+判讀：Planner 的分組還原（same-group F1 0.60）與 semantic-type（0.74）有實質訊號；parent-child 邊還原顯著較弱（F1 0.34）——與 §23.3「T3 仍大幅優於 T2」一致。semantic-role exact 為 0 是預期中的 degenerate lower bound（oracle 角色為中文自由文字、predicted 為英文自由文字，exact case-sensitive 字串比對必然不匹配），僅作 lower bound 陳述、不得引為主要指標。
+
+### 25.2 SGC/TLC/PCA 統計重分析（Holm + Bonferroni + bootstrap CI）
+
+Bundle：`layout_agent/evaluations/a3-relation-stats/a3.relation-stats.v1/a3-relation-n100-sgc-tlc-pca-stats-v1/`（含 `results.md`/`results.tex` 論文可用表與保守 Results 段落）。Per-sample SGC/TLC/PCA 由凍結 artifacts 決定性重算（`evaluate_layout_realization`，final selected candidate + P-Full canvas + 同一棵 human oracle），三臂 means 與 §23.3 逐位吻合（T0 .6465/.6277/.6930、T2 .7037/.6711/.7614、T3 .7779/.7271/.8215）；W/L 計數亦逐格吻合。Generation failures 3/300 明列（T2 `5d67ed46`、`5f644f40`；T3 `5da04604`）；每檢定用兩臂皆成功之交集（paired N = 98/99/97）。
+
+9 檢定 Holm 校正後：**8/9 仍顯著**（T2vsT0 三軸、T3vsT0 三軸、T3vsT2 SGC/TLC）；唯一不顯著 = **T3vsT2 PCA**（46W/29L/22T，raw p=0.0639、Holm p=0.0639）——僅能寫「未偵測到差異」，不得解讀為 equivalence（未做 equivalence test）。Bonferroni sensitivity：T2vsT0 PCA（0.115）與 T3vsT2 TLC（0.120）在 Bonferroni 下越過 0.05，引用時如採最保守口徑須註記。精確 p 修正：§23.3 的 T3vsT0 SGC「p≈3e-6」實為 **8.5e-07**（74W/25L exact binomial），其餘 8 個 raw p 與 §23.3 一致；引用一律以本節 bundle 為準。
+
+Artifact SHA-256（前 12 碼）：tree-accuracy aggregate `ffb9fcbe8c0e` / per_sample `f60c4910ecd5`；stats aggregate `c71b8d708149` / per_sample `d4db77a05684` / results.md `a435ba7f7cb9` / results.tex `69e4269d2c95`。獨立驗證：artifact hash 對帳、arm means 與 macro F1 由 per-sample rows 重算吻合（rel_tol 1e-12）、JSONL 每 sample 恰一行（100/300 rows）。
+
+**Status：A3-12S complete。** 兩 bundle write-once、不得重跑覆蓋；後續引用 Relation N=100 tree ablation 統計一律以 §25.2 的 Holm-adjusted 表為準。
