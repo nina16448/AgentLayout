@@ -628,9 +628,24 @@ def _command_run(args: argparse.Namespace) -> int:
         )
         return 2
 
+    if args.authorization_receipt is None:
+        print(
+            "refusing paid calls without --authorization-receipt",
+            file=sys.stderr,
+        )
+        return 2
+
     # Paid path: import the LLM machinery only after explicit authorization.
     import asyncio
 
+    from metagpt.ext.agentlayout.a3_paid_budget import (  # noqa: E402
+        A3AuthorizationCapReached,
+        A3BudgetedLLM,
+        A3PaidBudget,
+        acquire_paid_run_lock,
+        load_authorization,
+        release_paid_run_lock,
+    )
     from metagpt.ext.agentlayout.a3_pipeline import A3L0Pipeline  # noqa: E402
     from metagpt.ext.agentlayout.a3_pipeline_l1 import A3L1GatedPipeline  # noqa: E402
     from metagpt.ext.agentlayout.a3_stage_binding import A3StageBinding  # noqa: E402
@@ -642,15 +657,45 @@ def _command_run(args: argparse.Namespace) -> int:
     from metagpt.ext.agentlayout.actions.judge_select_a3 import JudgeSelectA3  # noqa: E402
     from metagpt.ext.agentlayout.actions.plan_assets_a3 import PlanAssetsA3  # noqa: E402
 
+    expected_models = {entry.model for entry in config.models.values()}
+    if len(expected_models) != 1:
+        print("paid run requires one frozen model across all stages", file=sys.stderr)
+        return 2
+    expected_model = next(iter(expected_models))
+    try:
+        authorization = load_authorization(
+            args.authorization_receipt,
+            expected_run_id=manifest.run_id,
+            expected_model=expected_model,
+            expected_tree_arm=args.tree_arm,
+            expected_analyst_arm=args.analyst_arm,
+        )
+    except Exception as error:
+        print(f"authorization receipt rejected: {type(error).__name__}", file=sys.stderr)
+        return 2
+
+    lock_descriptor = acquire_paid_run_lock(store.run_dir / ".a3_paid_run.lock")
+    paid_budget = A3PaidBudget(
+        authorization,
+        store.run_dir / "a3_paid_budget_ledger.jsonl",
+        code_paths=[
+            Path(__file__),
+            REPO_ROOT / "metagpt/ext/agentlayout/a3_paid_budget.py",
+        ],
+    )
+
     def _expected(stage: str) -> str:
         return config.models[stage].model
 
     rows = []
     failed = 0
+    consecutive_failures = 0
+    stop_reason = None
     for sample_id in sample_ids:
         sample_dir = store.run_dir / "samples" / sample_id
         inputs = sample_dir / "inputs"
         binding = None
+        budgeted_llms = []
         try:
             r3 = R3AssetManifest.model_validate_json(
                 (inputs / "r3" / R3_MANIFEST_FILENAME).read_bytes()
@@ -658,24 +703,55 @@ def _command_run(args: argparse.Namespace) -> int:
             pfull = PFullAssetManifest.model_validate_json(
                 (inputs / "pfull" / ASSET_MANIFEST_FILENAME).read_bytes()
             )
+            def _paid(action, stage):
+                wrapped = A3BudgetedLLM(
+                    action.llm,
+                    budget=paid_budget,
+                    stage=stage,
+                    max_completion_tokens=authorization.stage_max_completion_tokens[
+                        stage
+                    ],
+                )
+                action.set_llm(wrapped, override=True)
+                budgeted_llms.append(wrapped)
+                return action
+
             binding = A3StageBinding(
                 r3_manifest=r3,
                 background_overview_path=inputs / "analyst_vision" / "background_overview.png",
                 renders_dir=sample_dir / "renders",
                 stages_dir=sample_dir / "stages",
                 analyst_action=(
-                    AnalyzeA3TextOnly(expected_model=_expected("analyst"))
+                    _paid(
+                        AnalyzeA3TextOnly(expected_model=_expected("analyst")),
+                        "analyst",
+                    )
                     if args.analyst_arm == "text-only"
-                    else AnalyzeA3Brief(expected_model=_expected("analyst"))
+                    else _paid(
+                        AnalyzeA3Brief(expected_model=_expected("analyst")),
+                        "analyst",
+                    )
                 ),
-                planner_action=PlanAssetsA3(expected_model=_expected("asset_planner")),
-                director_action=ComposeConceptA3(
-                    expected_model=_expected("composition_director")
+                planner_action=_paid(
+                    PlanAssetsA3(expected_model=_expected("asset_planner")),
+                    "asset_planner",
                 ),
-                mapper_action=GenerateLayoutA3(
-                    expected_model=_expected("coordinate_mapper")
+                director_action=_paid(
+                    ComposeConceptA3(
+                        expected_model=_expected("composition_director")
+                    ),
+                    "composition_director",
                 ),
-                judge_select_action=JudgeSelectA3(expected_model=_expected("judge_select")),
+                mapper_action=_paid(
+                    GenerateLayoutA3(
+                        expected_model=_expected("coordinate_mapper")
+                    ),
+                    "coordinate_mapper",
+                ),
+                judge_select_action=_paid(
+                    JudgeSelectA3(expected_model=_expected("judge_select")),
+                    "judge_select",
+                ),
                 judge_critic_action=JudgeCriticA3(expected_model=_expected("judge_critic"))
                 if config.loop == "L1-Gated"
                 else None,
@@ -700,13 +776,21 @@ def _command_run(args: argparse.Namespace) -> int:
                 )
             else:
                 pipeline = A3L0Pipeline(**common)
-            result = asyncio.run(
-                pipeline.run(
-                    user_brief=build_prepared_input(pfull).user_brief,
-                    tree_arm=args.tree_arm,
-                    oracle_tree=oracle_trees.get(sample_id),
-                )
-            )
+            async def _execute_and_close():
+                try:
+                    return await pipeline.run(
+                        user_brief=build_prepared_input(pfull).user_brief,
+                        tree_arm=args.tree_arm,
+                        oracle_tree=oracle_trees.get(sample_id),
+                    )
+                finally:
+                    await asyncio.gather(
+                        *(llm.aclose() for llm in budgeted_llms),
+                        return_exceptions=True,
+                    )
+
+            result = asyncio.run(_execute_and_close())
+            consecutive_failures = 0
             rows.append(
                 {
                     "sample_id": sample_id,
@@ -715,8 +799,21 @@ def _command_run(args: argparse.Namespace) -> int:
                     "stage_calls": len(binding.call_records),
                 }
             )
+        except A3AuthorizationCapReached:
+            failed += 1
+            stop_reason = "authorization_cap_reached"
+            rows.append(
+                {
+                    "sample_id": sample_id,
+                    "status": "failed",
+                    "error_type": "A3AuthorizationCapReached",
+                    "message": stop_reason,
+                }
+            )
+            break
         except Exception as error:  # noqa: BLE001 -- failure must be persisted
             failed += 1
+            consecutive_failures += 1
             rows.append(
                 {
                     "sample_id": sample_id,
@@ -733,6 +830,13 @@ def _command_run(args: argparse.Namespace) -> int:
                     details={"sample_id": sample_id, "tree_arm": args.tree_arm},
                 )
             )
+            if failed > 5 or consecutive_failures >= 3:
+                stop_reason = (
+                    "failed_sample_limit"
+                    if failed > 5
+                    else "consecutive_failure_limit"
+                )
+                break
         finally:
             # Paid calls happened even when the sample failed; the cost trail
             # must survive either way (A3-08 smoke finding).
@@ -752,13 +856,29 @@ def _command_run(args: argparse.Namespace) -> int:
                 else None
             ),
             "budget": budget,
+            "paid_authorization": authorization.public_dict(),
+            "paid_usage": paid_budget.snapshot(),
+            "stop_reason": stop_reason,
             "total": len(sample_ids),
+            "processed": len(rows),
             "failed": failed,
             "samples": rows,
         },
     )
-    print(json.dumps({"total": len(sample_ids), "failed": failed}, indent=2))
-    return 1 if failed else 0
+    release_paid_run_lock(lock_descriptor)
+    print(
+        json.dumps(
+            {
+                "total": len(sample_ids),
+                "processed": len(rows),
+                "failed": failed,
+                "stop_reason": stop_reason,
+                "paid_usage": paid_budget.snapshot(),
+            },
+            indent=2,
+        )
+    )
+    return 1 if failed or len(rows) != len(sample_ids) else 0
 
 
 def _common(parser: argparse.ArgumentParser) -> None:
@@ -818,6 +938,11 @@ def main() -> int:
         action="store_true",
         help="Explicitly authorize paid model calls. Without it, only the call "
         "budget is printed and the command exits with status 2.",
+    )
+    run.add_argument(
+        "--authorization-receipt",
+        type=Path,
+        help="Exact user authorization receipt; required with --allow-api-calls.",
     )
     tail = sub.add_parser(
         "run-l1-tail",

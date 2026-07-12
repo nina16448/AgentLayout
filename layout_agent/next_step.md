@@ -2598,6 +2598,72 @@ tokens, 800,000 output tokens, and US$7.00; then implement only the minimal
 four-cap runtime gate plus one focused verification before launch. Never
 rerun the completed N=100 or batch-001 readiness.
 
+## Execution checkpoint 48 — batch 001 paid generation paused by user
+
+At `2026-07-12 17:38:01 CST (+0800)`, the user asked to pause the paid run so
+they can change the implementation. The runner was immediately interrupted
+with `Ctrl-C`; it exited 1 with the expected `KeyboardInterrupt`. No runner,
+evaluator, or paid request remains active, and no deterministic SEGA
+evaluation was started.
+
+The paid launch had explicit authorization for run
+`a3-crello-test-batch-001-n100-t2-l0-v1`, frozen model
+`gpt-5.4-mini-2026-03-17`, and cumulative hard caps of 850 actual HTTP calls,
+4,500,000 input tokens, 800,000 output tokens, and US$7.00. It used exactly:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 timeout 4500s \
+  /home/hui0705/.conda/envs/meta/bin/python \
+  layout_agent/run_a3.py run \
+  --run-dir layout_agent/runs/a3/a3-crello-test-batch-001-n100-t2-l0-v1 \
+  --tree-arm T2 \
+  --analyst-arm vision \
+  --authorization-receipt layout_agent/authorizations/a3-crello-test-batch-001-n100-t2-l0-v1.json \
+  --allow-api-calls
+```
+
+Before launch, the minimal enforcement change added
+`metagpt/ext/agentlayout/a3_paid_budget.py`, the exact authorization receipt,
+budget/receipt integration in `layout_agent/run_a3.py`, and focused fake-client
+tests in `tests/metagpt/ext/agentlayout/test_a3_paid_budget.py`. The focused
+gate passed `4 passed, 11 warnings in 10.12s`; no existing General N=100 or
+batch-001 readiness work was rerun.
+
+The authoritative pause snapshot is the append-only ledger at
+`layout_agent/runs/a3/a3-crello-test-batch-001-n100-t2-l0-v1/a3_paid_budget_ledger.jsonl`:
+
+- 369 reservations and 369 settlements; zero in-flight reservations.
+- 1,341,756 input tokens and 251,389 output tokens charged conservatively.
+- Standard-rate accounting is US$2.1375675, rounded to US$2.14.
+- The final interrupted Judge request has no provider usage report and was
+  conservatively settled at its full 7,988-input / 512-output reservation.
+- Remaining cumulative envelope is at most 481 HTTP calls, 3,158,244 input
+  tokens, 548,611 output tokens, and US$4.8624325.
+
+Generation has 49 durable `pipeline/l0_result.json` successes. Fifty-one
+samples remain: 48 were never attempted, two exhausted validation retries,
+and one was interrupted. The non-success sample directories are:
+
+- `5d0cf30b8cba87f94359542b`: stopped after the composition director; the
+  coordinate mapper exhausted its three validation attempts on duplicate
+  asset placement.
+- `5e7c71244b3890eb071e6e40`: stopped after the analyst; the asset planner
+  exhausted three validation attempts on layout-tree cycles (observed through
+  assets `asset_0005`, `asset_0010`, and `asset_0016`).
+- `592d211c95a7a863ddcd9e61`: six stages completed; interruption occurred
+  during the Judge call and produced the conservative unreported settlement.
+
+Do not resume automatically. First wait for the user's edits and a new
+explicit instruction authorizing the paid continuation; that instruction must
+also decide whether the two validation-exhausted samples may be retried. Then
+inspect only the user's changed paths and run one focused zero-cost check. Do
+not rerun General N=100, batch-001 init, P-Full, R3, Analyst readiness, or any
+of the 49 completed L0 samples. If continuation is authorized, the safest
+cumulative-ledger resume command is the same command above. The runtime gate
+must reuse the existing ledger and enforce the remaining envelope rather than
+resetting any cap. Run six-axis evaluation only after generation reaches the
+agreed terminal state.
+
 ## Next task and stop conditions
 
 - COLE hardening and all previous N=100 artifacts remain complete; never rerun

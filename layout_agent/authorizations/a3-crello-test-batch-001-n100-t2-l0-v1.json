@@ -1,0 +1,29 @@
+{
+  "schema_version": "a3.paid-authorization.v1",
+  "authorized": true,
+  "authorized_by": "user",
+  "authorized_at": "2026-07-12 17:03:40 CST (+0800)",
+  "authorization_text": "授權執行 a3-crello-test-batch-001-n100-t2-l0-v1，model=gpt-5.4-mini-2026-03-17，最多 850 actual HTTP calls、4.5M input tokens、800k output tokens、US$7。",
+  "run_id": "a3-crello-test-batch-001-n100-t2-l0-v1",
+  "model": "gpt-5.4-mini-2026-03-17",
+  "tree_arm": "T2",
+  "analyst_arm": "vision",
+  "limits": {
+    "max_http_calls": 850,
+    "max_input_tokens": 4500000,
+    "max_output_tokens": 800000,
+    "max_usd": "7.00"
+  },
+  "input_usd_per_m": "0.75",
+  "output_usd_per_m": "4.50",
+  "stage_max_completion_tokens": {
+    "analyst": 4096,
+    "asset_planner": 4096,
+    "composition_director": 2048,
+    "coordinate_mapper": 2048,
+    "judge_select": 512
+  },
+  "image_detail": "high",
+  "reasoning_effort": "none",
+  "service_tier": "default"
+}
