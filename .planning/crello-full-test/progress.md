@@ -14,6 +14,8 @@
   - 確認專案沒有既有 root/scoped planning files，建立本任務專用目錄。
   - 修正兩個驗證指令假設後，完成逐檔 ignore、whitespace、結構與 file-shape 檢查。
   - 建立主要文件 commit `cf2b3889ca1e6af81ad4702ac254c13f4fa9464f`。
+  - 建立交接 commit `9f845cb1510359af2989f47b0372e3db5cf5b731` 並 push；
+    local、upstream、remote 三者相同。
 - 建立／修改的檔案：
   - `layout_agent/FULL_CRELLO_BATCH_PLAN.md`
   - `layout_agent/next_step.md`
@@ -44,6 +46,7 @@
 | 規劃檔結構 | 3 份 ledger＋active plan | 5 階段、完整五問、非空且 newline 結尾 | 5 階段；4 個「我」＋1 個「目標」；file shape 全通過 | 通過 |
 | 最終聚焦驗證 | 6 個本次文件 | 所有 planning/document gates 通過 | `focused planning validation: PASS` | 通過 |
 | 主要文件 commit | 6 個本次文件 | scoped commit，不含其他工作 | `cf2b3889ca1e6af81ad4702ac254c13f4fa9464f` | 通過 |
+| Commit/push 驗證 | local、upstream、remote | 三者 hash 相同 | `9f845cb1510359af2989f47b0372e3db5cf5b731` | 通過 |
 
 ## 錯誤日誌
 
