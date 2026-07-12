@@ -2454,3 +2454,15 @@ Bundles（write-once，manifest 含 input/code/artifact hash）：
 Run artifacts（raw five-turn outputs、renders、candidate/error per sample）在 `layout_agent/runs/external/elem2design-rel100-v1/`（不入 git）。
 
 **Status：A3-13E complete。**
+
+### 26.1 Selection-asymmetry sensitivity（zero-cost 重算；2026-07-12）
+
+移除 A3 的三候選 selection 優勢後重新配對（同 93 對、同統計機件；bundle
+`a3.external-baseline-sensitivity.v1/a3-t2-nosel-vs-elem2design-rel100-v1/`）：
+
+| 變體 | SGC | TLC | PCA | Ali↓ | Ove↓ |
+| --- | --- | --- | --- | --- | --- |
+| **first candidate**（單發、無 selection） | 77/16 +0.182 p=2.9e-10 | 75/18 +0.177 p=3.8e-09 | 49/21 +0.122 p=1.1e-03 | 8/3/82 +0.0005 p=0.23（ns） | 11/82 −0.128 p=2.8e-14 |
+| **mean over 3**（單發期望值） | 77/16 +0.172 p=1.9e-10 | 82/11 +0.161 p=4.3e-14 | 55/30 +0.112 p=8.8e-03 | 27/3/63 +0.0011 p=8.4e-06（E2D 較好） | 7/86 −0.124 p=4.2e-18 |
+
+**判讀**：語意三軸的優勢**完全不依賴 candidate selection**——單發 A3-T2 對單發 E2D 仍全軸 Holm 顯著，且效果量與 B0 版相當甚至略大（selection 並未挑高語意指標）。Ali 在 first-candidate 下不顯著、mean3 下顯著但幅度 +0.001 級。論文可直接寫「即使無 selection，A3-T2 仍在全部語意軸顯著優於 baseline」，原不對稱 caveat 降級為 minor note。
