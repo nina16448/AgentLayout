@@ -172,3 +172,48 @@ def test_receipt_rejects_wrong_run(tmp_path):
             expected_tree_arm="T2",
             expected_analyst_arm="vision",
         )
+
+
+def test_resume_replays_ledger_and_enforces_remaining_envelope(tmp_path):
+    auth = _receipt(tmp_path / "receipt.json", calls=3, input_tokens=10_000, output_tokens=5_000)
+    ledger = tmp_path / "ledger.jsonl"
+    first = A3PaidBudget(auth, ledger)
+    reservation = first.reserve(4_000, 2_000)
+    first.settle_failure(reservation)  # conservative full-reservation settle
+
+    resumed = A3PaidBudget(auth, ledger, resume=True)
+    assert resumed.calls == 1
+    assert resumed.input_tokens == 4_000
+    assert resumed.output_tokens == 2_000
+    # Remaining envelope: 2 calls, 6k in, 3k out. A fitting reserve passes...
+    second = resumed.reserve(6_000, 3_000)
+    assert second is not None
+    resumed.settle_failure(second)
+    # ...and the very next call exceeds the input cap cumulatively.
+    assert resumed.reserve(1, 1) is None
+    events = [json.loads(line) for line in ledger.read_text().splitlines()]
+    assert [e["event"] for e in events].count("resume") == 1
+
+
+def test_resume_refused_without_flag_and_on_unsettled_reservation(tmp_path):
+    from metagpt.ext.agentlayout.a3_paid_budget import A3AuthorizationError
+
+    auth = _receipt(tmp_path / "receipt.json")
+    ledger = tmp_path / "ledger.jsonl"
+    first = A3PaidBudget(auth, ledger)
+    with pytest.raises(A3AuthorizationError, match="already_exists"):
+        A3PaidBudget(auth, ledger)  # no resume flag -> refuse
+    first.reserve(100, 100)  # left unsettled on purpose
+    with pytest.raises(A3AuthorizationError, match="unsettled"):
+        A3PaidBudget(auth, ledger, resume=True)
+
+
+def test_resume_refuses_authorization_mismatch(tmp_path):
+    from metagpt.ext.agentlayout.a3_paid_budget import A3AuthorizationError
+
+    auth = _receipt(tmp_path / "receipt.json", calls=5)
+    ledger = tmp_path / "ledger.jsonl"
+    A3PaidBudget(auth, ledger)
+    other = _receipt(tmp_path / "receipt2.json", calls=9)  # different caps
+    with pytest.raises(A3AuthorizationError, match="authorization_mismatch"):
+        A3PaidBudget(other, ledger, resume=True)

@@ -2466,3 +2466,18 @@ Run artifacts（raw five-turn outputs、renders、candidate/error per sample）�
 | **mean over 3**（單發期望值） | 77/16 +0.172 p=1.9e-10 | 82/11 +0.161 p=4.3e-14 | 55/30 +0.112 p=8.8e-03 | 27/3/63 +0.0011 p=8.4e-06（E2D 較好） | 7/86 −0.124 p=4.2e-18 |
 
 **判讀**：語意三軸的優勢**完全不依賴 candidate selection**——單發 A3-T2 對單發 E2D 仍全軸 Holm 顯著，且效果量與 B0 版相當甚至略大（selection 並未挑高語意指標）。Ali 在 first-candidate 下不顯著、mean3 下顯著但幅度 +0.001 級。論文可直接寫「即使無 selection，A3-T2 仍在全部語意軸顯著優於 baseline」，原不對稱 caveat 降級為 minor note。
+
+---
+
+## 27. Full-Crello batch 001 續跑完成 + 六軸評測（2026-07-12）
+
+**續跑授權**（使用者逐項確認）：沿用原 envelope（850 calls／4.5M in／800k out／US$7.00）之**剩餘額度**、兩筆 validation 耗盡樣本（`5d0cf30b`、`5e7c7124`）**不重試**。
+
+**先補齊兩個未實作的 resume 機制**（checkpoint 48 只寫了規格）：(1) `run_a3.py` 新增 completed-skip（有 `l0_result.json` 直接列入、絕不重花錢）與 `--skip-sample`（operator 顯式跳過、記為 explicit failed row）；(2) `A3PaidBudget` 新增 `--resume-ledger` 模式——replay append-only ledger 還原累計消費、驗證授權 hash 一致、拒絕未結清 reservation，**上限永不重置**。新增 3 測試（`test_a3_paid_budget.py` 7/7 綠）。中斷樣本 `592d211c` 的 write-once 殘檔搬至 `*.interrupted-20260712` 保存後乾淨重跑。
+
+**結果**：100 processed＝**98 completed + 2 OperatorSkip**；stop_reason None；零 in-flight。累計 ledger：**720 calls／2,563,813 input／471,763 output／估 US$4.045793**（本次續跑增量 351 calls／≈US$1.91），全數在原授權 envelope 內。
+
+**六軸**（`a3-crello-test-batch-001-n100-sega-v1`，BASNet+ISNet、offline、0 API、$0）：
+Ali 0.000964、Ove 0.09106、Rea 0.002248、Occ 0.006894（98/98 applicable）；Und_l/Und_s N/A（P-Full v1 無合法 underlay）；2 筆 source_skipped 顯式列出。與 General N=100（Ali 0.00197／Ove 0.1002）同量級。
+
+**Status：batch 001 complete（98/100＋2 explicit failure）。** 下一批（002）開跑前仍須依協定提出新的精確付費授權。CODEX_HANDOFF.md 有使用者未提交的既有修改，本節即為 batch 001 的權威記錄。

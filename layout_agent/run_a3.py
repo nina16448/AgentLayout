@@ -682,6 +682,7 @@ def _command_run(args: argparse.Namespace) -> int:
             Path(__file__),
             REPO_ROOT / "metagpt/ext/agentlayout/a3_paid_budget.py",
         ],
+        resume=args.resume_ledger,
     )
 
     def _expected(stage: str) -> str:
@@ -693,6 +694,32 @@ def _command_run(args: argparse.Namespace) -> int:
     stop_reason = None
     for sample_id in sample_ids:
         sample_dir = store.run_dir / "samples" / sample_id
+        # Resume: a durable l0_result means this sample already completed in a
+        # previous authorized attempt; reuse it verbatim, never re-spend.
+        prior_result_path = sample_dir / "pipeline" / "l0_result.json"
+        if prior_result_path.exists():
+            prior = json.loads(prior_result_path.read_text())
+            rows.append(
+                {
+                    "sample_id": sample_id,
+                    "status": "completed",
+                    "final": prior.get("b0_slot_id"),
+                    "resumed_existing": True,
+                }
+            )
+            continue
+        if sample_id in args.skip_sample:
+            failed += 1
+            rows.append(
+                {
+                    "sample_id": sample_id,
+                    "status": "failed",
+                    "error_type": "OperatorSkip",
+                    "message": "operator-declared skip on resume; prior attempt "
+                    "exhausted validation retries and retry was not authorized",
+                }
+            )
+            continue
         inputs = sample_dir / "inputs"
         binding = None
         budgeted_llms = []
@@ -943,6 +970,22 @@ def main() -> int:
         "--authorization-receipt",
         type=Path,
         help="Exact user authorization receipt; required with --allow-api-calls.",
+    )
+    run.add_argument(
+        "--skip-sample",
+        action="append",
+        default=[],
+        metavar="SAMPLE_ID",
+        help="Operator-declared explicit skip on resume (e.g. a sample that "
+        "exhausted validation retries in a prior attempt and must not be "
+        "retried). Recorded as an explicit failed row, never silent.",
+    )
+    run.add_argument(
+        "--resume-ledger",
+        action="store_true",
+        help="Resume an interrupted paid run against its existing append-only "
+        "budget ledger. Prior spend keeps counting against the ORIGINAL "
+        "authorization envelope; caps are never reset.",
     )
     tail = sub.add_parser(
         "run-l1-tail",

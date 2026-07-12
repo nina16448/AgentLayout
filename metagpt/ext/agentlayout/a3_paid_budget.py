@@ -188,6 +188,7 @@ class A3PaidBudget:
         ledger_path: Path,
         *,
         code_paths: Iterable[Path] = (),
+        resume: bool = False,
     ) -> None:
         self.authorization = authorization
         self.ledger_path = ledger_path
@@ -201,6 +202,25 @@ class A3PaidBudget:
         self._reserved_output = 0
         self._lock = threading.RLock()
         ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        if ledger_path.exists():
+            # Cumulative resume: replay the append-only ledger so the original
+            # authorization envelope keeps binding across interrupted runs.
+            # Caps are NEVER reset; reserve() sees prior spend in the counters.
+            if not resume:
+                raise A3AuthorizationError("paid_budget_ledger_already_exists") from None
+            self._replay_ledger()
+            self._append(
+                {
+                    "schema_version": LEDGER_SCHEMA,
+                    "event": "resume",
+                    "authorization": authorization.public_dict(),
+                    "prior_calls": self.calls,
+                    "prior_input_tokens": self.input_tokens,
+                    "prior_output_tokens": self.output_tokens,
+                    "code_sha256": {str(path): _sha256(path) for path in code_paths},
+                }
+            )
+            return
         header = {
             "schema_version": LEDGER_SCHEMA,
             "event": "header",
@@ -222,6 +242,43 @@ class A3PaidBudget:
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
+
+    def _replay_ledger(self) -> None:
+        """Rebuild cumulative spend from the existing append-only ledger."""
+        header_authorization = None
+        open_reservations: Dict[int, dict] = {}
+        max_reservation_id = 0
+        for line in self.ledger_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            kind = event.get("event")
+            if kind == "header":
+                header_authorization = event.get("authorization")
+            elif kind == "resume":
+                if event.get("authorization") != self.authorization.public_dict():
+                    raise A3AuthorizationError("paid_budget_ledger_authorization_mismatch")
+            elif kind == "reserve":
+                reservation_id = int(event["reservation_id"])
+                open_reservations[reservation_id] = event
+                max_reservation_id = max(max_reservation_id, reservation_id)
+            elif kind == "settle":
+                if open_reservations.pop(int(event["reservation_id"]), None) is None:
+                    raise A3AuthorizationError("paid_budget_ledger_orphan_settlement")
+                self.calls += 1
+                self.input_tokens += int(event["input_tokens"])
+                self.output_tokens += int(event["output_tokens"])
+                if event.get("usage_reported"):
+                    self.usage_reported_calls += 1
+            else:
+                raise A3AuthorizationError("paid_budget_ledger_unknown_event")
+        if header_authorization != self.authorization.public_dict():
+            raise A3AuthorizationError("paid_budget_ledger_authorization_mismatch")
+        if open_reservations:
+            # An unsettled reservation means unknown in-flight spend; a human
+            # must reconcile the ledger before any further paid call.
+            raise A3AuthorizationError("paid_budget_ledger_unsettled_reservations")
+        self._next_id = max_reservation_id + 1
 
     @staticmethod
     def usd(input_tokens: int, output_tokens: int) -> Decimal:
