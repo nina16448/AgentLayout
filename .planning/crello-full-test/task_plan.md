@@ -8,7 +8,7 @@
 
 ## 目前階段
 
-階段 2：零成本準備與完整 dry-run（尚未開始實作）
+階段 2：零成本準備與完整 dry-run（進行中）
 
 ## 各階段
 
@@ -24,15 +24,15 @@
 
 ### 階段 2：零成本準備與完整 dry-run
 
-- [ ] 凍結 Hugging Face dataset revision 與官方有序 ID snapshot
-- [ ] 唯讀核對既有 N=100 的 sample ID、revision 與 input hashes
-- [ ] 實作 write-once cache import，補齊缺少的 69 筆 test samples
-- [ ] 補齊 text bitmap sidecars，不改寫原始 `meta.json`
+- [x] 凍結 Hugging Face dataset revision 與官方有序 ID snapshot
+- [x] 唯讀核對既有 N=100 的 sample ID、revision 與 input hashes
+- [x] 實作 write-once cache import，補齊 pinned revision 缺少的 74 筆 test samples
+- [x] 補齊 text bitmap sidecars，不改寫原始 `meta.json`
 - [ ] 對全部 1,971 筆執行 P-Full、R3 與 Analyst vision readiness
-- [ ] 產生全域 deterministic batch manifest 與每批 write-once 目標
+- [x] 產生全域 deterministic batch manifest 與每批 write-once 目標
 - [ ] 以 dry-run 算出精確 calls、input tokens、output tokens 與美元上限
 - [ ] 完成磁碟、網路、Git 可寫及無並行同批程序的檢查
-- **狀態：** pending
+- **狀態：** in_progress
 
 ### 階段 3：逐批生成與六軸評估
 
@@ -97,6 +97,15 @@ input/output tokens、單批美元與累計美元上限，並取得使用者明�
 | `git check-ignore -q` 同時傳入兩個 pathname，Git 拒絕執行 | 1 | 改成逐檔呼叫，不重複相同命令 |
 | 聚焦驗證錯把五問都假設為 `\| 我...`，實際是 4 個「我」加 1 個「目標」 | 1 | 改成分別驗證 4 個 `\| 我` 與 1 個 `\| 目標是什麼` |
 | Commit 後 Git 提示 `.git/gc.log` 記錄過多 unreachable loose objects | 1 | 不影響本任務；保留 log，不自行執行 destructive `git prune`，僅向使用者回報 |
+| 一次讀取 `next_step.md` 851–1900 行造成工具輸出截斷 | 1 | 改成每次最多 250 行，逐段讀到 EOF，不重複大型輸出命令 |
+| Repository inventory 未排除 `runs/full_result`，列出數萬 artifact 路徑並截斷 | 1 | 改用明確 glob exclusions，只搜尋核心 source/config/tests |
+| Web open 拒絕 Hugging Face API URL，回報 `URL ... is not safe to open` | 1 | 不重試 web open；改用已通過 HTTP gate 的 unauthenticated `curl`＋`jq` 只讀 metadata |
+| HF-cache findings patch 的 `next_step.md` context 錨點不精確，原子拒絕 | 1 | 先用 `rg` 定位實際文字，再以窄錨點套用；沒有部分寫入 |
+| `layout_agent/output/` 根目錄仍含大量結果檔，檔名/rg 輸出截斷 | 1 | 停止目錄列舉，只讀已定位的 `step13/22/26` 腳本 |
+| Implementation checkpoint patch 再次使用不精確 `next_step.md` 片語錨點 | 2 | 改用檔尾 checkpoint 24 與最後 `Next task` 的唯一相鄰區塊 |
+| 新工具 hardcode 的 text-sidecar version 與 canonical P-Full 常數不一致 | 1 | 改為直接 import canonical constant，新增一致性與 tamper tests |
+| 測試結果 checkpoint 再次以可變敘述句定位 `next_step.md` 而失配 | 3 | 永久改用檔尾固定 heading 區塊，並拆開 ledger/next_step patches |
+| Pinned membership 多檔修正 patch 使用過時 findings 錨點而原子拒絕 | 1 | 不再跨檔整批；每檔先讀實際鄰文再套用小 patch |
 
 ## 備註
 

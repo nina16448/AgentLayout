@@ -12,7 +12,8 @@
 
 - 官方 `cyberagent/crello` split counts：train 19,479、validation 1,852、
   test 1,971，總計 23,302。
-- 本機已有 1,902 筆 test cache，官方 test 尚缺 69 筆。
+- 本機有 1,902 筆有效 cache；其中 1,897 筆屬於 pinned official test，另有
+  5 筆 split-drift extras，因此 pinned test 真正缺 74 筆。
 - 正式 General N=100 已完成且視為 write-once；剩餘 1,871 筆。
 - 新工作為 18 批各 100 筆及最後一批 71 筆，共 19 個新批次。
 - 最終聚合包含既有 N=100，共 20 個批次、1,971 rows。
@@ -53,11 +54,225 @@
 
 ## 目前未完成
 
-- 尚未凍結 dataset revision 與完整 test ID hash。
-- 尚未補齊 69 筆本機 cache。
+- 已凍結 dataset revision 與完整 test ID hash。
+- 尚未補齊 pinned revision 的 74 筆 cache 與 1,706 份既有 cache text sidecar。
 - 尚未建立全域 batch manifest 或任何新 run/evaluation 目錄。
 - 尚未執行全量 readiness 或精確 token dry-run。
 - 尚未取得任何 full-test 付費執行授權。
+
+## 2026-07-12 階段 2 恢復發現
+
+- Codex `MEMORY.md` 對 Crello、AgentLayout、A3 SEGA 與 batch manifest 沒有
+  額外命中；本階段以 repository 的 plan、handoff 與 artifacts 為唯一準據。
+- `FULL_CRELLO_BATCH_PLAN.md` 與三份 scoped ledger 的範圍、1,971/1,871
+  算術、19 個新批次及付費授權邊界一致。
+- `next_step.md` 共 1,828 行；大型合併讀取被工具截斷，因此需改用最多
+  250 行的分段讀取後，才可宣稱完整恢復。
+- `session-catchup.py` exit 0 且無輸出，沒有偵測到需補寫的上一 session
+  內容；scoped ledger 已由本 session 明確讀回。
+- `next_step.md` 前 1,000 行已用兩個 250-line `sed` 區段一組讀完，沒有
+  再次截斷。
+- 既有 100 筆的 canonical ID 檔為
+  `layout_agent/sample_ids/a3_general_n100.json`，selected-ID SHA-256 為
+  `0e5401fb45cb83c573c82be458508e6ace003482b027b667556dfd876aed052c`；
+  新 manifest 必須唯讀重用這 100 個 ID，不能重新抽樣。
+- 既有正式 run `layout_agent/runs/a3/a3-general-n100-t2-l0-01`、SEGA
+  `a3-general-n100-sega-v1` 與 COLE `a3-general-n100-cole-v1` 都是
+  write-once，舊付費授權已消耗，不可重跑或覆寫。
+- 六軸 evaluator 已知需使用 meta environment 的 direct interpreter，並設
+  `TMPDIR=/tmp`、`NUMBA_CACHE_DIR=/tmp/a3-numba-cache`；`conda run` 曾因唯讀
+  wrapper/cache 失敗，不能直接沿用為正式長批次啟動方式。
+- `next_step.md` 1–1,828 行已全部以 bounded chunks 讀完；目前有效的最後
+  checkpoint 是 24，舊 checkpoint 中所有付費 command 都已消耗或被取代。
+- 先前量測的 1,902 cache 與約 98 GB 可用空間可能隨工作區變動，正式實作前
+  必須即時重測；不能把 checkpoint 21 的數字當成本 session 現況。
+- Credential rotation 已由使用者確認完成，但任何 connectivity probe 仍只用
+  無 Authorization 的 `/v1/models` HTTP 狀態，不載入或輸出 credential。
+
+## 2026-07-12 15:34 CST 即時 preflight
+
+- Branch/local/upstream/remote 均為 `feat/step76-89-sega-pipeline` /
+  `b1338441a224fa3802889a7ca6b24ca4b836c145`。
+- `.git` 與 index 可寫、`index.lock` 不存在、staged paths 為 0。
+- OpenAI `/v1/models` 在無 Authorization header 下 `curl rc=0`、HTTP 401；
+  只證明 DNS/TLS/routing，沒有模型呼叫、tokens 或費用。
+- Hugging Face dataset server `curl rc=0`、HTTP 200。
+- 本機 `crello_*` cache 仍為 1,902；目前沒有 A3 generation/evaluator/judge
+  Python 程序。
+- Workspace 可用 `101,291,616 KiB`（約 96.6 GiB），但 filesystem 已使用
+  98%；importer 在 pinned membership 與 transfer ceiling 凍結前不得啟動。
+- General SEGA 三檔與 COLE 兩檔的 checkpoint-15 SHA-256 全部 `OK`。
+
+## 初步 source/cache inventory
+
+- 適用的 repository instruction 只有 root `AGENTS.md`，沒有 nested override。
+- 現有 cache 目錄名為 `crello_<id>`；抽查 `meta.json` 頂層 keys 為
+  `canvas_height`、`canvas_width`、`elements`、`id`、`n_elements`、`title`，
+  並有 `ground_truth_preview.jpg` 與逐元素 assets。
+- `layout_agent/run_a3.py` 的 `snapshot-text-bitmaps` 使用
+  `load_dataset(..., streaming=True)`，但現有用途只替已存在 cache 補 text
+  sidecars；它不能建立缺少的 `meta.json` cache。
+- 另有舊腳本 `layout_agent/output2/step80_snapshot_text_assets.py` 可供理解
+  streaming schema，但不能直接假設符合新的 write-once importer 契約。
+- 第一次 `rg --files` 未排除大型 artifact 目錄而截斷；未完整顯示的路徑不作
+  決策依據，後續改成 core-only inventory。
+
+## Core source 邊界
+
+- `select_a3_general.py` 已提供 canonical JSON、SHA-256、deterministic
+  sorted-pool seed-42 shuffle，以及 O_EXCL write-once-or-verify 原語，可重用其
+  行為但不能重跑 N=100 selection。
+- 舊 `output2/step80_snapshot_text_assets.py` 會把 `asset_ref` 寫回
+  `meta.json`，違反本計畫的 immutable-meta 契約，明確禁止重用。
+- 現行 `run_a3.py snapshot-text-bitmaps` 使用 raw-size RGBA images 與
+  `write_json_once(a3_text_bitmaps.json)`，不修改 `meta.json`；這是 text
+  sidecar 的 canonical 實作。
+- `run_a3.py` 的 `plan` 不建立 run，`init` 建立 immutable skeleton；
+  `prepare-pfull`、`normalize-r3`、`prepare-analyst-vision` 都是零 API，但會
+  在已初始化 run 內寫入 write-once summaries/artifacts。
+- 正式 N=100 config 的 dataset label 是
+  `crello-general-random-n100-v1`；full-test batches 需要新的 frozen config
+  snapshot，不能假裝仍是 N=100 split。
+- 新 full-test 準備工具應獨立於付費 runner，預設 dry-run，只有明確
+  materialize 模式才建立缺失 cache；CLI 不提供 `--allow-api-calls`。
+
+## 官方 Hugging Face revision 與 schema（2026-07-12 查詢）
+
+- 官方 repository API 回報 `cyberagent/crello` SHA
+  `7997e2f434ee4aa73cf4cdf22c5954cb175872e1`，last modified
+  `2026-02-27T02:45:00Z`，public、ungated、enabled。
+- Repo 在該狀態有四個 raw test parquet：
+  `data/test-00000-of-00004.parquet` 至 `test-00003-of-00004.parquet`。
+- Dataset-server info：test 1,971 examples、1,634,779,960 uncompressed bytes；
+  train/validation/test 全部合計 20,099,416,197 bytes，download size
+  18,207,073,052 bytes。
+- Test 的 dataset-server converted parquet 共四檔，大小分別 384,078,313、
+  403,233,847、382,693,771、381,050,924 bytes，合計 1,551,056,855 bytes
+  （約 1.44 GiB）。
+- Dataset schema 含 `id`、`length`、`canvas_width/height`、`title`、
+  `preview`，以及等長的 `type/left/top/width/height/angle/opacity/color/image`
+  與 text/font 欄位，足以重建現有 cache。
+- Converted parquet URL 指向 `refs/convert/parquet`，不是上述 source repo SHA；
+  正式 identity 必須把 source SHA 傳入 `load_dataset(revision=...)` 並保存
+  ordered-ID snapshot/hash，不能只記 converted URL。
+
+## 本機 Hugging Face cache 與磁碟決策
+
+- `~/.cache/huggingface/hub/datasets--cyberagent--crello` 只有約 60 KiB 的
+  README/ref metadata；沒有 Crello parquet/Arrow。
+- `~/.cache/huggingface/datasets` 的 6.1 GiB 全屬
+  `creative-graphic-design/pku-poster_layout`，沒有 Crello download metadata。
+- 因此第一次 pinned test scan 最壞需傳輸四個 test shards，約 1.44 GiB；
+  不能把先前 streaming scan 當成可重用的本機 cache。
+- 凍結 materialization 磁碟 hard stop：開始前 available space 必須至少
+  80 GiB。目前約 96.6 GiB，約 16.6 GiB 緩衝；低於門檻立即停止且不建立
+  staging/final cache。
+
+## Pinned ordered-ID snapshot 完成
+
+- Artifact：`layout_agent/sample_ids/a3_crello_test_n1971_v1/`，包含
+  `ordered_ids.json` 與 `dataset_provenance.json`。
+- Revision `7997e2f434ee4aa73cf4cdf22c5954cb175872e1`，exact count 1,971，
+  unique count 1,971。
+- Ordered-ID file SHA-256：
+  `c3578fa5c8e0c181887a70f9e78b850b7d6adc52d3f367fe191b5f5292e0974c`。
+- Canonical ordered-ID SHA-256：
+  `b082ec96e38798de500c8d1c82961bf20912634142218996446f2284c8b2d815`。
+- `select_columns(["id"])` 約 3.5 分鐘完成；隔離 temp datasets cache 最後
+  只有 60 bytes lock，沒有保存 parquet/image。
+- Cache count 前後均 1,902；全體 `meta.json` aggregate SHA-256 前後均
+  `8dcfcdd882a3e598a687d4b11cae189434b1b54b7c957b2427d5136f6fece896`。
+
+## Pinned membership/cache inventory
+
+- 1,902 local valid caches 與 1,971 pinned IDs 的交集是 1,897；pinned missing
+  是 74，不是先前 count-only 推論的 69。
+- Missing-official ordered IDs SHA-256：
+  `7fb2a1ce97f2a06082ba5816b82b182b4e478c0c563ccefcfbc42f030d9c5d60`。
+- 五個 local extras（唯讀保留、不得刪除、不得加入 official manifest）：
+  `5954bda995a7a863ddce14a1`、`5c6c0cba85ea3c16f964a15d`、
+  `5d972ca9abc8ea6d1c54e002`、`5efdd2dd499b85dcc75ba0bc`、
+  `5f885a9ba637ee11e3498683`；集合 SHA-256
+  `34cbc42faa567cb4aee99ef5970c24ccd3a9a9cd848130eb1ca36810451b1b71`。
+
+## Materialization result and independent verification
+
+- 固定 revision 的 materialization 掃描 1,971 rows，新增 74 個
+  write-once cache trees 與 1,706 個 canonical text sidecars；remaining 0，
+  OpenAI/model calls 0、cost US$0.00。
+- 獨立 inventory：official valid 1,971、missing cache 0、missing sidecar 0；
+  本地總 cache 1,976（官方 1,971＋保留/excluded extras 5）。
+- 74 個新 provenance trees 全部逐檔 size/hash 驗證通過；full-official meta
+  snapshot SHA-256 是
+  `84ad5f01ad825b7fa2c8f9a1c0dc545737d998e6e0eb46e0c71bb25addffbdf3`。
+- 原有 1,897 個 official cache 的 meta snapshot 維持
+  `ccc538537b86a1504f1769a7db15f2a7d5c5b8866d96499ab71569ae4af33364`；
+  五個 extra 的個別 `meta.json` hash 亦全部不變。無 staging；驗證後可用
+  空間 103,610,744,832 bytes（約 96.5 GiB），仍高於 80 GiB hard stop。
+
+## Deterministic batch bundle
+
+- Bundle：`layout_agent/sample_ids/a3_crello_test_batches_v1/`；包含
+  `manifest.json`、`run_config.json` 與 19 個 write-once batch ID files。
+- Strict build＋reload verify 皆 exit 0：official 1,971、reused 100、new
+  1,871、new batches 19；前 18 批各 100，最後一批 71。
+- Manifest SHA-256：
+  `3b334f24bba80e7d76b7699e6df6409d9629038c7149e4df54d79587e3503b13`；
+  dataset/order hashes 與 pinned snapshot 相同，shuffle algorithm 是
+  sorted remaining IDs＋seed 42＋chunks 100。
+- `paid_generation_authorized=false`，bundle 自身 API/model calls 0、cost
+  US$0.00；19 個 run/evaluation targets 在 publication 時均不存在。
+
+## Readiness disk estimate
+
+- 實際既有完成 run 是 `layout_agent/runs/a3/a3-general-n100-t2-l0-01/`；
+  舊描述名 `a3-general-n100-cole-v1` 不存在，不得用作 resume path。
+- 完成 N=100 run 的 `du` 是 201,976 KiB（samples 201,864 KiB）；以整個
+  run 最保守線性外推 1,871 筆約 3.7 GiB。
+- 估算前可用 101,182,164 KiB（約 96.5 GiB）；完成全部 readiness 後仍
+  約 92.8 GiB，高於 80 GiB hard stop。仍須在每批開始前重查磁碟。
+- 1,897 個 overlapping caches 中 1,706 個缺 canonical text sidecar；集合
+  SHA-256 `5e10bc67d2d6a89fcf50916759ec9f711163a0668048dca47404ac3d3a57c611`。
+- 新 74 筆會同時建立 sidecar，因此 full materialization target union 為
+  1,780 個 dataset rows（74 missing cache＋1,706 existing sidecar）。
+- Existing N=100 的 100 IDs 全部仍在 pinned official test，file SHA-256
+  `0e5401fb45cb83c573c82be458508e6ace003482b027b667556dfd876aed052c`；
+  生成批次算術 1,871 = 18×100＋71 不變。
+- Pinned-overlap meta snapshot SHA-256：
+  `ccc538537b86a1504f1769a7db15f2a7d5c5b8866d96499ab71569ae4af33364`。
+
+## Cache materializer 線索
+
+- Git 歷史沒有保存最早的 bulk cache 建立器；目前 repository 只保留後續
+  streaming/sampling scripts。
+- 現有元素 metadata 除 raw `idx/type_code/left/top/width/height/content` 外，
+  還有 `classifier_label`、`classifier_signals`、`kind`、`asset_ref`。
+- 抽查分類例：full-canvas type 3 → `background_candidate`；photo type 2 →
+  `image`；低色數 shape type 0 → `underlay`。這些欄位不可省略。
+- 已定位 `layout_agent/output/step13_sota_winrate.py`、
+  `step22_sample_extra80.py`、`step26_pick_underlay_smoke.py` 的
+  `save_sample`/streaming 路徑；下一步只讀這三檔。
+- `output/` 根目錄本身也有大量結果檔，第二次 broad listing 截斷；後續禁止
+  列舉該目錄，僅使用精確檔名。
+
+## Canonical row→cache 映射
+
+- `layout_agent/output/run_iou_eval.py::save_sample` 是既有 cache producer，
+  但它 `mkdir(exist_ok=True)` 後直接覆寫 assets、preview、`meta.json`；正式
+  full-test importer 禁止直接呼叫。
+- Producer 對 type 1 保存 `content` 並設 `kind=text`；對 type 0/2/3/4 且
+  有 image 的元素呼叫 `step27_audit_underlay_assets._classify_underlay`。
+- 分類決策樹：area ratio ≥0.95 → `full_canvas`；unique colors >256 →
+  `photo`；≤16 → `shape`；≤64 且 alpha std>0.05 → `shape`；≤64 其餘 →
+  `ambiguous`；其他 → `photo`。
+- `shape` 存 `asset_NN_underlay.png`/`kind=underlay`；`full_canvas` 存
+  `asset_NN_background.png`/`kind=background_candidate`；photo/ambiguous 存
+  `asset_NN_image.png`/`kind=image`。Preview 存 `ground_truth_preview.jpg`。
+- 為保持與 1,897 筆 pinned-overlap cache 相容，新 importer 可唯讀重用同一 pure private
+  classifier，但必須自己實作 sibling staging、完整驗證與 atomic rename；
+  final 已存在時只允許 verify，不覆寫。
+- 現有 classifier 沒有直接單元測試；新 importer tests 必須覆蓋所有 label、
+  filename/kind mapping、meta immutability、staging cleanup 與 collision refusal。
 
 ## 資源
 

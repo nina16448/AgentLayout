@@ -46,8 +46,10 @@ deterministic 指標。
 1. 凍結 Hugging Face dataset revision、三個 split 的官方 count，以及 test
    split 的完整有序 ID 清單與 SHA-256。
 2. 唯讀核對既有 100 筆的 revision、ID、metadata 與素材 hash。
-3. 以 write-once 方式補齊目前缺少的 69 筆本機 test cache；不得使用 GT
-   座標、bbox 或字級作為 AgentLayout 輸入。
+3. 以 write-once 方式補齊 pinned revision 缺少的 74 筆本機 test cache；
+   1,902 個 local caches 中只有 1,897 筆屬於 pinned test，另 5 筆 split-drift
+   extras 必須唯讀保留但排除。不得使用 GT 座標、bbox 或字級作為
+   AgentLayout 輸入。
 4. 補齊每筆 text bitmap sidecar，並確認原始 `meta.json` 未被改寫。
 5. 對 1,971 筆逐筆跑 P-Full、R3 與 Analyst vision readiness check。
 6. 產生全域批次 manifest，記錄每批 ID、dataset revision、input hashes、
@@ -172,8 +174,11 @@ BASNet＋ISNet、offline/API-key-unset 模式計算：
 ## 9. 目前的授權邊界
 
 使用者目前只確認了流程方向。尚未授權任何 full-test model call、token 或美元
-支出。下一步是實作並驗證零成本的 revision-pinned cache/import、批次 manifest
-與 dry-run budget；完成後再提交精確付費授權文字。
+支出。Revision-pinned cache/import、19 批 manifest 與 batch 001 的 P-Full、R3、
+Analyst vision readiness 已零費用完成；正式 generation 仍是 0 calls / $0.00。
+下一步是完成 batch 001 精確 input/output token ceilings 與官方計價核對，先做
+session handoff，再提交精確付費授權文字；未取得同意不得加
+`--allow-api-calls`。
 
 ## 10. 不忘記進度的方法
 

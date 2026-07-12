@@ -4,8 +4,8 @@ Repository: `/home/hui0705/MetaGPT`
 
 Branch: `feat/step76-89-sega-pipeline`
 
-Updated: 2026-07-12 15:29 CST (Asia/Taipei; official-test batching workflow
-and durable planning ledger committed/pushed; zero-cost implementation next)
+Updated: 2026-07-12 16:28 CST (Asia/Taipei; batch 001 zero-cost readiness
+complete; paid generation has not started)
 
 ## Current objective
 
@@ -15,12 +15,13 @@ remain skipped by the user's decision in `A3_EXPERIMENT_LOG.md` §23.7, and no
 completed write-once run may be reused or overwritten.
 
 The current request is a new expansion across the official Crello test split.
-Checkpoint 21 records the zero-cost inventory: official test is 1,971 samples
-(1,902 cached locally). The user has now selected batches of 100 with immediate
-six-axis deterministic evaluation; the complete plain-language workflow is in
-`layout_agent/FULL_CRELLO_BATCH_PLAN.md`. No full-test run is initialized or
-authorized. The next step is zero-cost implementation/readiness validation,
-followed by a separate exact paid-budget proposal.
+The pinned official 1,971 caches and text sidecars are now complete and
+verified; five local split-drift extras remain preserved but excluded. The
+deterministic bundle freezes 18 new batches of 100 and a final batch of 71,
+reusing completed N=100 without rerunning it. Batch 001 has completed local
+init, P-Full, R3, and Analyst vision readiness at 100/100. The paid generation
+experiment has not started: calls/tokens/cost remain 0/0/$0.00. The next step
+is exact batch-001 token/USD accounting and a separate paid authorization.
 
 ## Execution checkpoint 1 — General sample freeze complete
 
@@ -1510,13 +1511,15 @@ du -sh layout_agent/output layout_agent/runs/a3 layout_agent/evaluations
 df -h /home/hui0705/MetaGPT
 ```
 
-Result: `1,902` cached test records, 69 fewer than the official test split;
-the cache is 3.6 GB, existing A3 runs are 1.3 GB, and only 98 GB remains on the
-workspace filesystem. `select_a3_general.py` selects only readable local test
-caches, and `snapshot-text-bitmaps` cannot create the missing `meta.json`
-caches. Therefore an official 1,971-sample test run first needs a frozen,
-write-once cache-import step for the missing 69. Running all three splits needs
-a new split-aware cache materializer and substantially more storage.
+Historical count-only result: `1,902` cached records, numerically 69 fewer than
+the official test split. Checkpoint 26 later froze actual pinned membership as
+1,897 overlap + 74 missing + 5 local extras; 69 must not be used as the active
+import count. The cache is 3.6 GB, existing A3 runs are 1.3 GB, and only 98 GB
+remained on the workspace filesystem. `select_a3_general.py` selects only
+readable local caches, and `snapshot-text-bitmaps` cannot create a missing
+`meta.json`. Therefore the official run needs a frozen write-once cache
+importer. Running all three splits needs a new split-aware cache materializer
+and substantially more storage.
 
 The frozen generation model remains `gpt-5.4-mini-2026-03-17`. The official
 model page was rechecked and currently lists `$0.75/M` input tokens and
@@ -1785,6 +1788,622 @@ it already exists. Verify its remote persistence with `git rev-parse HEAD`,
 safest resume is phase 2 zero-cost readiness implementation; paid generation
 remains locked behind a new exact authorization.
 
+## Execution checkpoint 24 — phase 2 zero-cost readiness resumed
+
+At `2026-07-12 15:31:42 CST (+0800)`, the user authorized the next documented
+step. This unlocks only phase 2 local/Hugging Face readiness work; it does not
+authorize an OpenAI model call, paid generation, or paid judge.
+
+The `planning-with-files-zht` 3.4.0 skill, active plan, all three scoped ledger
+files, and its 438-line catch-up script were read in full. The exact recovery
+command and result were:
+
+```bash
+python3 /home/hui0705/.agents/skills/planning-with-files-zht/scripts/session-catchup.py \
+  "$(pwd)"
+# exit 0; no unsynchronized-session output
+```
+
+`.planning/crello-full-test/task_plan.md` now marks phase 2 `in_progress`.
+No dataset/cache/run artifact or client was created by recovery. API/model
+calls: `0`; paid tokens: `0`; paid cost: `$0.00`.
+
+Safest next action: fully read the detailed batch plan and current handoff,
+then perform read-only Git/disk/network/process and repository-code inventory.
+Stop before implementation if HEAD/upstream/remote diverge, `.git` is not
+writable, the OpenAI endpoint is unreachable, a conflicting batch process is
+active, or existing write-once artifact identities differ from the handoff.
+
+The 186-line detailed plan and scoped ledgers were read successfully. A first
+combined attempt to read `next_step.md` lines 851–1900 produced a tool-output
+truncation, so it is not accepted as a complete read. This one-attempt issue
+is recorded in the ledger; the safe replacement is bounded chunks of at most
+250 lines through line 1,828. The Codex memory registry had no relevant
+Crello/AgentLayout/A3 batch-manifest hit, so no out-of-repository memory claim
+is used. API/model calls and paid cost remain zero.
+
+The replacement bounded read completed lines 1–1,000 without truncation via
+`sed -n '1,250p'`, `251,500p`, `501,750p`, and `751,1000p`. It reconfirmed
+that the canonical completed sample list is
+`layout_agent/sample_ids/a3_general_n100.json` with selected-ID SHA-256
+`0e5401fb45cb83c573c82be458508e6ace003482b027b667556dfd876aed052c`,
+and that the completed General run plus SEGA/COLE artifacts and consumed paid
+authorizations are immutable. It also reconfirmed the prior evaluator runtime
+constraint: use the direct meta interpreter with `/tmp` TMPDIR/Numba cache,
+not a `conda run` wrapper that previously failed on read-only cache paths.
+No artifact or API state changed; the bounded read must continue through line
+1,828 before repository implementation inventory begins.
+
+The bounded read then completed lines 1,001–1,828 with four more `sed`
+ranges of at most 250 lines. The complete handoff is now read with no hidden
+gap. The effective scope remains official test N=1,971 only, immutable reuse
+of the completed 100, 19 new batches, deterministic six-axis evaluation, and
+no COLE/human/train/validation work. Every historical paid command is consumed
+or superseded and must not be run. Checkpoint 21's cache/disk measurements are
+treated as historical until the current session remeasures them. No client,
+artifact, or paid/API state changed.
+
+At `2026-07-12 15:34:57 CST (+0800)`, the complete zero-cost environment gate
+passed. The exact command family used `git branch/rev-parse/ls-remote`,
+write/lock/index tests, unauthenticated `curl` to OpenAI `/v1/models`, `curl`
+to the Hugging Face dataset-server info endpoint, local cache/process/disk
+inventory, and `sha256sum -c` for the five checkpoint-15 artifacts.
+
+Results:
+
+- branch local/upstream/remote all
+  `b1338441a224fa3802889a7ca6b24ca4b836c145`;
+- `.git`/index writable, no index lock, staged count 0;
+- OpenAI route `curl rc=0`, HTTP 401 with no Authorization header and no model
+  call; Hugging Face route `curl rc=0`, HTTP 200;
+- local Crello cache count 1,902, no conflicting A3 process;
+- available disk `101,291,616 KiB` (~96.6 GiB), filesystem 98% used;
+- all three General SEGA and both General COLE immutable hashes `OK`.
+
+API/model calls: `0`; paid tokens: `0`; paid cost: `$0.00`. Because the
+filesystem is already 98% used, do not start materialization until code,
+dataset schema, pinned membership, and transfer bounds are frozen. Safest next
+action is read-only repository and schema inventory only.
+
+The first repository inventory command was too broad: its file listing did
+not exclude `runs/`, `full_result/`, and other artifact trees, so tens of
+thousands of paths caused tool-output truncation. The one failed inventory
+shape is recorded and must not be repeated. Reliable pre-truncation findings
+were limited to: root `AGENTS.md` is the only applicable instruction file;
+cache directories are `crello_<id>` with six-key `meta.json`, preview, and
+element assets; `run_a3.py snapshot-text-bitmaps` streams Hugging Face but only
+adds sidecars to existing caches and cannot create a missing `meta.json`.
+Next inventory must use explicit artifact-directory exclusions and read only
+core source/config/tests. No file, dataset, client, or API state changed.
+
+The corrected core-only inventory and source read completed without
+truncation. It established these implementation constraints: reuse the
+selector's canonical/hash/O_EXCL behavior without rerunning its frozen N=100
+selection; never use legacy `step80_snapshot_text_assets.py` because it
+mutates `meta.json`; use the current raw-size write-once
+`a3_text_bitmaps.json` sidecar contract; keep the new importer/manifest tool
+separate from `run_a3.py run` and expose no API-authorization flag. Existing
+`run_a3.py plan` is zero-write while `init` and the three readiness commands
+write immutable run artifacts. A new full-test dataset label/config snapshot
+is required instead of reusing `crello-general-random-n100-v1`. Next action:
+locate the original cache materializer and freeze the official row schema and
+dataset revision before editing code. API/model calls and paid cost: zero.
+
+The first official-metadata attempt through the browsing opener returned
+`URL ... is not safe to open` for the Hugging Face API and dataset-server
+URLs, yielding no metadata. This is a tool URL-safety rejection, not a dataset
+HTTP failure. It is recorded as one attempt and must not be repeated. The
+replacement is the already connectivity-gated unauthenticated `curl` path,
+with `jq` limiting output to repository SHA, schema, split counts, and parquet
+metadata only; no data file or image download is authorized by this fallback.
+
+The `curl`+`jq` metadata fallback exited 0 and froze the current official
+source repository SHA as
+`7997e2f434ee4aa73cf4cdf22c5954cb175872e1` (last modified
+`2026-02-27T02:45:00Z`). Test has 1,971 examples and 1,634,779,960
+uncompressed bytes. The four dataset-server converted test parquet files total
+1,551,056,855 bytes (~1.44 GiB), but their URLs point to
+`refs/convert/parquet`, not the source SHA. The schema includes ID/canvas/title,
+preview, aligned element geometry/type/image arrays, and text/font fields.
+Therefore formal import must pass the source SHA to
+`load_dataset(revision=...)` and freeze the ordered IDs/hash separately; a
+converted parquet URL alone is not sufficient provenance. This metadata query
+downloaded no parquet/image and made no paid/model call. Next: inspect local
+Hugging Face cache before authorizing any dataset-byte materialization.
+
+The local cache inventory found only ~60 KiB of Crello Hub metadata and no
+Crello parquet/Arrow/download record. The 6.1 GiB datasets cache belongs
+entirely to `creative-graphic-design/pku-poster_layout`. Therefore a first
+pinned test scan must budget up to the four-shard ~1.44 GiB transfer rather
+than assuming a cache hit. The phase-2 materialization hard stop is now frozen
+at 80 GiB available before launch; current availability is ~96.6 GiB. Falling
+below 80 GiB must abort before staging/final cache creation. This inventory
+was read-only and cost `$0.00`; next action remains source/history inspection,
+not a dataset download.
+
+A second inventory mistake listed the artifact-heavy `layout_agent/output/`
+root and again truncated output; that directory must not be broadly listed
+again. The reliable discovery before truncation is that cached element records
+carry derived `classifier_label`, `classifier_signals`, and `kind` in addition
+to raw row fields. Existing samples show full-canvas→background, photo→image,
+and low-color shape→underlay classifications. The exact surviving scripts
+that reference the original save path are `step13_sota_winrate.py`,
+`step22_sample_extra80.py`, and `step26_pick_underlay_smoke.py`. Read only
+those exact files next; do not materialize rows until the derived-field
+contract is reproduced and tested. No dataset/API state changed.
+
+The exact `step13/22/26`, `run_iou_eval.save_sample`, and Step-27 classifier
+reads are complete. `save_sample` is destructive (`exist_ok=True` plus direct
+asset/preview/meta writes) and must never be called by the formal importer.
+The compatible pure classification tree is frozen: ≥95% canvas is
+`full_canvas`; >256 colors is photo; ≤16 colors is shape; ≤64 colors with
+alpha std >0.05 is shape; remaining ≤64 is ambiguous; otherwise photo. The
+corresponding cache mapping is background/underlay/image PNG plus derived
+classifier fields. The new importer must write a sibling staging directory,
+validate every file/meta/ID, atomically rename only when final is absent, and
+verify/refuse an existing final without overwrite. Focused offline tests must
+cover every classifier mapping and collision/cleanup path before any pinned
+dataset scan. API/model calls and paid cost remain zero.
+
+## Execution checkpoint 25 — phase 2 preparation implementation drafted
+
+At `2026-07-12 15:52:53 CST (+0800)`, the first implementation pass added
+exactly three previously absent paths:
+
+```text
+layout_agent/prepare_full_crello.py
+layout_agent/configs/a3_crello_test_l0_v1.json
+tests/metagpt/ext/agentlayout/test_prepare_full_crello.py
+```
+
+The tool has local-only `plan`, `build-batches`, and `verify-batches`
+commands; pinned ID projection requires `snapshot-ids --allow-network`, and
+dataset-byte/cache work requires `materialize --allow-dataset-download`. It
+contains no `--allow-api-calls` path or OpenAI client. Snapshot and batch
+directories plus new cache directories use staged validation and
+`renameat2(RENAME_NOREPLACE)` publication. Existing cache sidecars use
+no-replace files and assert `meta.json` bytes stay unchanged. The frozen config
+keeps the completed N=100 model/loop/P-Full/R3 settings but names the official
+N=1,971 batched split. Focused tests use synthetic PIL rows, a fake streaming
+dataset, and socket prohibitions.
+
+No test has run yet, and no snapshot, batch bundle, cache, sidecar, run,
+evaluation, dataset shard, model client, or API call was created. API/model
+calls: `0`; paid tokens: `0`; paid cost: `$0.00`. Safest next command is the
+single focused pytest module with bytecode disabled. Stop and record any
+failure before changing implementation; do not run either network gate yet.
+
+At `2026-07-12 15:54:18 CST (+0800)`, the exact focused command completed:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 /home/hui0705/.conda/envs/meta/bin/python -m pytest -q \
+  tests/metagpt/ext/agentlayout/test_prepare_full_crello.py
+# exit 0: 7 passed, 11 warnings in 12.65s
+```
+
+Tests covered pinned revision and ID-only projection, atomic snapshot
+idempotence, duplicate rejection/cleanup, every cache classifier mapping,
+directory no-replace collision, invalid-row staging cleanup, text-sidecar
+meta immutability, deterministic batch union/disjointness, and absence of a
+paid API flag. The autouse fixture blocked socket connection; all dataset rows
+and images were local fakes. Warnings are existing Python 3.9/google-auth/
+pyparsing deprecations. Pytest produced no unignored task-adjacent coverage
+path. API/model calls: `0`; paid tokens: `0`; paid cost: `$0.00`.
+
+Safest next action is local source review, no-write compile, config validation,
+and CLI refusal-gate checks. Do not use `--allow-network` or
+`--allow-dataset-download` until those static checks pass.
+
+The static/refusal commands exited 0, and both gated commands refused without
+their flags at exit 2. Source review of the printed canonical value then found
+one implementation defect not covered by the first synthetic test pass: the
+new tool hardcoded `a3.text-bitmaps.v1`, while P-Full defines
+`a3.text-bitmap-sidecar.v1`. Before any network action, the tool was changed to
+import the canonical constant directly. Cache-provenance verification was also
+strengthened to compare every published file size/hash against the sidecar,
+with focused tests added for constant equality and post-publication tamper
+detection. No dataset/client/API state changed; rerun only the focused module.
+
+At `2026-07-12 15:56:21 CST (+0800)`, that focused rerun exited 0 with
+`8 passed, 11 warnings in 12.62s`. It directly proved the imported canonical
+sidecar version matches P-Full and that modifying a published cache file is
+rejected by the provenance snapshot. Socket access remained blocked; warnings
+were the same existing Python 3.9/third-party notices. API/model calls,
+dataset downloads, paid tokens, and paid cost all remained zero. Remaining
+pre-network work is formatting/static review and a repeat of the local CLI
+plan/refusal gates.
+
+Source hardening then made bundle publication conditional on all 1,971 cache
+directories and text sidecars being present/valid, rechecked the 80 GiB disk
+floor before each target write, and strengthened reload validation for exact
+batch sizing, ordered/completed ID hashes, unique run/evaluation IDs, frozen
+config/revision, and `paid_generation_authorized=false`. A new incomplete-
+cache rejection test was added. The focused command exited 0 with
+`9 passed, 11 warnings in 12.79s`; socket access stayed prohibited and no
+dataset/API/model call occurred. The implementation checklist item is complete
+in code/tests, but no real cache has been materialized yet.
+
+The next network action may only be the pinned ID-column projection:
+`snapshot-ids --allow-network`. It must not use the dataset-download flag,
+must publish exactly 1,971 unique ordered IDs under the frozen source SHA, and
+must stop before any cache/image materialization.
+
+At `2026-07-12 16:05:20 CST (+0800)`, that exact gated action completed under
+a 15-minute timeout and a dedicated temp datasets cache:
+
+```bash
+HF_DATASETS_CACHE=/tmp/a3-crello-id-cache-20260712-v1 \
+  /home/hui0705/.conda/envs/meta/bin/python \
+  layout_agent/prepare_full_crello.py snapshot-ids --allow-network
+# exit 0; status=created; count=1971
+```
+
+The atomic artifact is
+`layout_agent/sample_ids/a3_crello_test_n1971_v1/`. Ordered IDs are exactly
+1,971 and unique. File SHA-256 is
+`c3578fa5c8e0c181887a70f9e78b850b7d6adc52d3f367fe191b5f5292e0974c`;
+canonical ordered-ID SHA-256 is
+`b082ec96e38798de500c8d1c82961bf20912634142218996446f2284c8b2d815`.
+The isolated datasets cache ended at only 60 bytes (lock metadata), so no
+parquet/image cache was retained. Existing cache count stayed 1,902 and the
+global meta aggregate stayed
+`8dcfcdd882a3e598a687d4b11cae189434b1b54b7c957b2427d5136f6fece896`;
+no snapshot staging remains. API/model calls: `0`; paid tokens: `0`; paid
+cost: `$0.00`.
+
+Safest next action is a local-only inventory against the pinned IDs to report
+the exact missing-cache and missing-sidecar sets. Do not run `materialize`
+until that count, the 1.44 GiB transfer ceiling, 80 GiB disk floor, and stop
+conditions are restated.
+
+## Execution checkpoint 26 — pinned cache membership corrected
+
+At `2026-07-12 16:07:21 CST (+0800)`, local-only inventory joined the frozen
+1,971 ordered IDs with the 1,902 valid local cache IDs and canonical N=100 IDs.
+The count-only checkpoint-21 inference of 69 missing records was disproven by
+actual membership:
+
+- pinned/local overlap: 1,897;
+- pinned missing caches: 74, ordered-set SHA-256
+  `7fb2a1ce97f2a06082ba5816b82b182b4e478c0c563ccefcfbc42f030d9c5d60`;
+- local split-drift extras: 5, set SHA-256
+  `34cbc42faa567cb4aee99ef5970c24ccd3a9a9cd848130eb1ca36810451b1b71`;
+- existing pinned caches missing canonical text sidecars: 1,706, ordered-set
+  SHA-256
+  `5e10bc67d2d6a89fcf50916759ec9f711163a0668048dca47404ac3d3a57c611`;
+- materialization target union: 1,780 rows (74 new caches, which include their
+  sidecars, plus 1,706 sidecars on existing caches);
+- pinned-overlap meta snapshot SHA-256
+  `ccc538537b86a1504f1769a7db15f2a7d5c5b8866d96499ab71569ae4af33364`.
+
+The five extras are
+`5954bda995a7a863ddce14a1`, `5c6c0cba85ea3c16f964a15d`,
+`5d972ca9abc8ea6d1c54e002`, `5efdd2dd499b85dcc75ba0bc`, and
+`5f885a9ba637ee11e3498683`. Preserve them byte-for-byte but exclude them from
+the official manifest; never delete or repurpose them. The completed N=100 IDs
+are all members of the pinned test, and their file SHA-256 remains
+`0e5401fb45cb83c573c82be458508e6ace003482b027b667556dfd876aed052c`.
+Therefore generation arithmetic remains 1,871 = 18×100 + 71.
+
+The inventory command read JSON only and made no writes or network/model call.
+API/model calls: `0`; paid tokens: `0`; paid cost: `$0.00`. The detailed plan,
+task plan, findings, and progress ledger now use 74 for pinned cache import.
+Safest next action is the explicitly gated pinned `materialize` command, with
+the 1.44 GiB transfer upper bound, 80 GiB per-target disk stop, 15-minute
+initial watchdog, immutable-extra rule, and pre/post meta/hash checks stated
+to the user before launch.
+
+## Execution checkpoint 27 — materialization preflight invocation corrected
+
+At `2026-07-12 16:12:00 CST (+0800)`, the first local-only materialization
+preflight stopped before any dataset/network action because it invoked the
+system `python`, which lacks Pillow (`ModuleNotFoundError: No module named
+'PIL'`). The accompanying five-extra hash probe also omitted the canonical
+`crello_` directory prefix and therefore found no paths. Exact failed command
+shape: `python layout_agent/prepare_full_crello.py plan`, followed by
+`sha256sum layout_agent/output/<id>/meta.json` for the five extras. No files
+were materialized and no source data was downloaded. API/model calls: `0`;
+paid tokens: `0`; paid cost: `$0.00`.
+
+Source inspection confirmed the canonical interpreter is
+`/home/hui0705/.conda/envs/meta/bin/python`, the configured cache root is
+`layout_agent/output`, and cache directories are named `crello_<id>`. Safest
+resume command is a *different*, corrected local preflight using that
+interpreter and the prefixed paths. It must report 1,902 local cache
+directories and preserve all five extras before the gated `materialize`
+command is allowed.
+
+## Execution checkpoint 28 — corrected materialization preflight passed
+
+At `2026-07-12 16:12:38 CST (+0800)`, the corrected no-network command
+`/home/hui0705/.conda/envs/meta/bin/python layout_agent/prepare_full_crello.py plan`
+exited 0. It reported source revision `7997e2f434ee4aa73cf4cdf22c5954cb175872e1`,
+test count 1,971, completed IDs 100, local cache directories 1,902, snapshot
+present, bundle absent, 103,717,437,440 available bytes (96.6 GiB), the 80 GiB
+hard floor, and a 1,551,056,855-byte transfer ceiling. API/model calls: `0`;
+paid tokens: `0`; paid cost: `$0.00`.
+
+The five preserved extra `meta.json` hashes were frozen as
+`87fe650b...`, `960ab4c4...`, `a806abbb...`, `1c712d80...`, and
+`1a370497...` in the ID order listed in checkpoint 26. No staging directory
+exists. The authorized next command is:
+
+```bash
+HF_DATASETS_CACHE=/tmp/a3-crello-materialize-cache-20260712-v1 \
+PYTHONDONTWRITEBYTECODE=1 timeout 2700s \
+  /home/hui0705/.conda/envs/meta/bin/python \
+  layout_agent/prepare_full_crello.py materialize --allow-dataset-download
+```
+
+This permits Hugging Face dataset bytes only, never OpenAI or a paid model.
+Stop on a pinned source/ID mismatch, an existing-file collision, network
+failure, free space below 80 GiB, or timeout. Success requires 74 new caches,
+1,706 new sidecars, zero unresolved official IDs, and unchanged prior metadata
+and extras.
+
+## Execution checkpoint 29 — pinned cache materialization completed
+
+At `2026-07-12 16:17:59 CST (+0800)`, the checkpoint-28 command exited 0 well
+inside its 45-minute timeout. It scanned all 1,971 rows from pinned revision
+`7997e2f434ee4aa73cf4cdf22c5954cb175872e1`, atomically created exactly 74
+missing cache directories, published exactly 1,706 missing canonical text
+sidecars, and returned `remaining=[]`. The resulting full-official metadata
+snapshot reported by the tool is
+`84ad5f01ad825b7fa2c8f9a1c0dc545737d998e6e0eb46e0c71bb25addffbdf3`.
+Artifacts are the write-once `layout_agent/output/crello_<id>/` trees and
+sidecars; no batch manifest has been published yet. API/model calls: `0`;
+paid tokens: `0`; paid cost: `$0.00`.
+
+Safest resume action is a local-only independent inventory/hash verification:
+require all 1,971 official caches and sidecars, exactly 1,976 local cache
+directories including the five preserved/excluded extras, no staging, the
+pre-existing 1,897 metadata snapshot and five extra hashes unchanged, and
+free disk still at least 80 GiB. Only after those checks pass may
+`build-batches` publish the deterministic 19-batch bundle.
+
+## Execution checkpoint 30 — materialization independently verified
+
+At `2026-07-12 16:19:56 CST (+0800)`, a local-only independent verification
+exited 0. It found exactly 1,971 valid official caches, zero missing caches,
+zero missing canonical sidecars, exactly 1,976 local cache directories, and
+exactly the five known preserved/excluded extras. All 74 new provenance trees
+passed per-file size/hash verification. The full-official metadata snapshot is
+`84ad5f01ad825b7fa2c8f9a1c0dc545737d998e6e0eb46e0c71bb25addffbdf3`.
+
+The pre-existing 1,897 official metadata snapshot remained exactly
+`ccc538537b86a1504f1769a7db15f2a7d5c5b8866d96499ab71569ae4af33364`,
+and all five extra `meta.json` hashes matched checkpoint 28. No staging path
+exists. Available space was 103,610,744,832 bytes (about 96.5 GiB), above the
+80 GiB hard stop. The verification used no network/model call and made no
+cache writes. API/model calls: `0`; paid tokens: `0`; paid cost: `$0.00`.
+
+Safest resume command is
+`/home/hui0705/.conda/envs/meta/bin/python layout_agent/prepare_full_crello.py build-batches`,
+followed immediately by `verify-batches`. This may publish only the locked,
+paid-unauthorized 19-batch ID/manifest bundle; it must stop on overlap,
+coverage, hash, immutable-target, or completed-N=100 artifact failure.
+
+## Execution checkpoint 31 — deterministic 19-batch bundle published
+
+At `2026-07-12 16:20:47 CST (+0800)`, the local-only `build-batches` command
+atomically published
+`layout_agent/sample_ids/a3_crello_test_batches_v1/`, and an immediate
+independent `verify-batches` reload exited 0. The bundle contains
+`manifest.json`, `run_config.json`, and 19 batch ID files: batches 1–18 have
+100 IDs each and batch 19 has 71. Coverage is official 1,971 = reused 100 +
+new 1,871, with no overlap. Manifest SHA-256 is
+`3b334f24bba80e7d76b7699e6df6409d9629038c7149e4df54d79587e3503b13`.
+
+The bundle freezes the dataset revision/order hashes, seed-42 partition,
+unique write-once run/evaluation targets, T2/vision arms, and per-batch stop
+figures. It explicitly records `paid_generation_authorized=false`; no run or
+evaluation directory was created. API/model calls: `0`; paid tokens: `0`;
+paid cost: `$0.00`.
+
+Safest resume action is source/CLI contract review for the zero-cost per-batch
+`run_a3.py` init, P-Full, R3 normalization, and Analyst vision readiness
+steps. Do not invoke `run` or any OpenAI client. Before creating any of the 19
+run directories, prove the init/preparation commands can use each manifest ID
+file and the frozen full-test config without touching completed N=100.
+
+## Execution checkpoint 32 — readiness contract and disk estimate passed
+
+At `2026-07-12 16:22:30 CST (+0800)`, CLI/source review confirmed `plan`,
+`init`, `prepare-pfull`, `normalize-r3`, and `prepare-analyst-vision` are local
+preparation paths. The paid pipeline is a separate `run` command gated by
+`--allow-api-calls`; it remains forbidden. The real completed N=100 run path
+is `layout_agent/runs/a3/a3-general-n100-t2-l0-01/`, not the obsolete
+descriptive name `a3-general-n100-cole-v1`.
+
+The completed N=100 run occupies 201,976 KiB. A conservative whole-run linear
+projection for 1,871 new samples is about 3.7 GiB. Current free space is
+101,182,164 KiB (about 96.5 GiB), projecting about 92.8 GiB after readiness,
+still above the 80 GiB hard floor. No file or API state changed during this
+estimate; API/model calls: `0`; paid tokens: `0`; paid cost: `$0.00`.
+
+Safest resume action is a zero-cost smoke on batch 001 only: initialize its
+write-once run, then run P-Full, R3, and Analyst vision preparation with
+`OPENAI_API_KEY` unset. Stop on any failed sample, target collision, or disk
+below 80 GiB. Only a verified 100/100 smoke may unlock batches 002–019.
+
+## Execution checkpoint 33 — batch 001 run initialized
+
+The zero-cost batch-001 init command exited 0 and created the write-once run
+`layout_agent/runs/a3/a3-crello-test-batch-001-n100-t2-l0-v1/`. Exact command:
+
+```bash
+env -u OPENAI_API_KEY -u OPENAI_BASE_URL -u OPENAI_API_BASE \
+  PYTHONDONTWRITEBYTECODE=1 timeout 120s \
+  /home/hui0705/.conda/envs/meta/bin/python layout_agent/run_a3.py init \
+  --config layout_agent/sample_ids/a3_crello_test_batches_v1/run_config.json \
+  --sample-ids layout_agent/sample_ids/a3_crello_test_batches_v1/batch_001_n100.json \
+  --run-id a3-crello-test-batch-001-n100-t2-l0-v1
+```
+
+The run contains snapshots for exactly the batch-001 IDs and frozen full-test
+config. No P-Full/R3/vision preparation has run yet. API/model calls: `0`;
+paid tokens: `0`; paid cost: `$0.00`. Safest resume command is
+`run_a3.py prepare-pfull --run-dir layout_agent/runs/a3/a3-crello-test-batch-001-n100-t2-l0-v1 --crello-root layout_agent/output`
+with OpenAI variables unset; stop before R3 unless it reports total 100 and
+failed 0.
+
+## Execution checkpoint 34 — batch 001 P-Full passed
+
+Batch 001 `prepare-pfull` exited 0 in about 5.5 seconds with `total=100` and
+`failed=0`. It published the write-once per-sample P-Full inputs and
+`pfull_preparation.json` under
+`layout_agent/runs/a3/a3-crello-test-batch-001-n100-t2-l0-v1/`. The source was
+the verified `layout_agent/output` cache. OpenAI environment variables were
+unset. API/model calls: `0`; paid tokens: `0`; paid cost: `$0.00`.
+
+Safest resume command is the local-only
+`run_a3.py normalize-r3 --run-dir layout_agent/runs/a3/a3-crello-test-batch-001-n100-t2-l0-v1`.
+Stop before Analyst vision unless it reports total 100 and failed 0.
+
+## Execution checkpoint 35 — batch 001 R3 passed
+
+Batch 001 `normalize-r3` exited 0 in about 36 seconds with `total=100` and
+`failed=0`. It published normalized per-sample R3 inputs and
+`r3_normalization.json` inside the batch-001 run. OpenAI environment variables
+were unset. API/model calls: `0`; paid tokens: `0`; paid cost: `$0.00`.
+
+Safest resume command is the local-only
+`run_a3.py prepare-analyst-vision --run-dir layout_agent/runs/a3/a3-crello-test-batch-001-n100-t2-l0-v1`.
+This creates overview/contact-sheet inputs only; it must report total 100 and
+failed 0 and does not invoke a vision model.
+
+## Execution checkpoint 36 — batch 001 zero-cost readiness complete
+
+Batch 001 `prepare-analyst-vision` exited 0 with `total=100` and `failed=0`.
+All four local steps—init, P-Full, R3, and Analyst vision packet preparation—
+are now complete for
+`layout_agent/runs/a3/a3-crello-test-batch-001-n100-t2-l0-v1/`. No vision
+model was invoked. API/model calls: `0`; paid tokens: `0`; paid cost: `$0.00`.
+
+After the user's status question, do not pre-prepare batches 002–019. The
+paid COLE generation experiment has **not** started. Safest resume action is
+the deliberate refusal-mode batch-001 `run` command with OpenAI variables
+unset and without `--allow-api-calls`. It may only print the exact call budget
+and must exit 2 without a model call. Record the token/USD ceilings, then ask
+the user for explicit batch-001 paid authorization before adding the flag.
+
+## Execution checkpoint 37 — batch 001 paid gate refused as designed
+
+The exact refusal-mode command exited 2 and printed
+`authorized=false`; stderr said it refused paid model calls without
+`--allow-api-calls`. The frozen L0/T2 call budget is 100 samples, at most 7
+nominal model calls per sample, and at most 700 nominal calls total. The note
+excludes schema retries; the batch manifest's defensive code ceiling remains
+2,100 calls (up to 3 attempts per stage). No model request was sent.
+API/model calls: `0`; paid tokens: `0`; paid cost: `$0.00`.
+
+Safest resume action is local token accounting over the already prepared
+batch-001 prompts/images plus current official model pricing. Freeze exact
+input/output token ceilings and the `$7.00` batch stop in the manifest or a
+write-once authorization proposal. Do not add `--allow-api-calls` until the
+user explicitly approves those exact limits.
+
+## Execution checkpoint 38 — user requested pre-experiment session handoff
+
+At `2026-07-12 16:28:31 CST (+0800)`, the user required an explicit handoff
+before any paid experiment. Therefore stop at the paid boundary: do not start
+`run_a3.py run --allow-api-calls`. First finish scoped verification,
+`next_step.md`, commit, and push. API/model calls: `0`; paid tokens: `0`; paid
+cost: `$0.00`.
+
+For the same conversation context, wait until the current turn completes,
+exit Codex, then run `codex resume --last`. For a clean new session, use:
+
+```text
+請完整閱讀 /home/hui0705/MetaGPT/layout_agent/next_step.md，從最後一個
+checkpoint 繼續；不要重跑既有 N=100 或 batch 001 readiness；任何付費
+run 前先列出精確 calls/token/USD 並等我授權。
+```
+
+The new session must verify the reported commit/remote hash, run the local
+batch-bundle and batch-001 readiness checks, finish current official pricing
+and token ceilings, then ask for explicit paid authorization. The first paid
+command remains forbidden until that approval.
+
+## Execution checkpoint 39 — handoff composite check needs narrow diagnosis
+
+The zero-cost composite handoff command ran focused pytest, strict bundle
+reload, no-write compile, three readiness-summary predicates, paid-output
+absence, snapshot comparisons, disk/process gates, and `git diff --check`.
+It returned exit 1 only after these visible successes: `9 passed, 11 warnings
+in 13.15s`; bundle official/reused/new/batches = 1971/100/1871/19 with manifest
+`3b334f24...`; P-Full, R3, and Analyst vision JSON predicates each returned
+`true` for total 100/failed 0. The failure is therefore in an unprinted later
+predicate, not the tests or readiness summaries. API/model calls: `0`; paid
+tokens: `0`; paid cost: `$0.00`. Nothing was staged.
+
+Safest resume action is a non-repeating narrow diagnostic that prints only:
+absence/count of `a3_run_summary.json` and `stage_calls.json`; SHA-256 pairs
+for batch IDs/config versus run snapshots; available KiB; matching process
+list; and `git diff --check` exit. Do not rerun pytest until the predicate is
+identified.
+
+## Execution checkpoint 40 — snapshot predicate corrected, config still gated
+
+The narrow diagnostic proved no `a3_run_summary.json`, zero
+`stage_calls.json`, 101,089,836 KiB free, and `git diff --check` exit 0. The
+only failing composite predicate was raw-byte `cmp`: the initializer
+normalizes JSON snapshots, so source/stored hashes intentionally differ. A
+JSON semantic check then proved the 100 IDs are identical. Raw config semantic
+equality was false because the stored model includes validated defaults.
+
+No experiment or model call occurred; API/model calls: `0`; paid tokens: `0`;
+paid cost: `$0.00`. Safest resume action is to validate the source config with
+the canonical `A3RunConfig`, compare its normalized dump to the stored run
+config, and verify the run manifest hashes the stored bytes. Do not stage if
+that canonical comparison differs.
+
+## Execution checkpoint 41 — canonical run snapshots verified
+
+Canonical verification exited 0. The batch source and run snapshot contain
+the same 100 IDs. Validating the bundle config through `A3RunConfig` and
+comparing its normalized JSON dump to the stored run config returned equal.
+The manifest hashes match the stored bytes: IDs
+`1b9c7401e5b28ad863d26b6100aeba98c32fc1253ff6b7e5fa92d3fbd1a8c70a`
+and config
+`b9a62461b19471bdb968bfa6535a500c4c786a5d49c5f367cdde57cf7d3530c9`.
+
+This resolves checkpoints 39–40 as verification-method errors, not artifact
+errors. `a3_run_summary.json` is absent and stage-call count is zero. API/model
+calls: `0`; paid tokens: `0`; paid cost: `$0.00`. Safest resume action is a
+scoped Git inventory, then stage only the Crello planning/tool/config/test/ID
+snapshot/batch-bundle files and this handoff. Never stage the operational
+cache or `layout_agent/runs/` tree.
+
+## Execution checkpoint 42 — exact scoped staging passed
+
+The scoped `git add -- ...` staged exactly 31 task files: three planning
+ledgers, the full-batch plan and this handoff, the preparation tool/config/test,
+the two-file pinned-ID snapshot, and the 21-file batch bundle. Cached diff
+statistics before this checkpoint were 6,923 insertions and 31 deletions;
+`git diff --cached --check` exited 0. No unrelated modified/untracked path and
+no `layout_agent/runs/` operational artifact was staged.
+
+API/model calls: `0`; paid tokens: `0`; paid cost: `$0.00`. Safest resume
+action is to re-add only this checkpoint and `progress.md`, re-check the exact
+cached name list/count and whitespace, then commit with a Crello-readiness
+message. Stop if staged count differs from 31 or any excluded path appears.
+
+## Execution checkpoint 43 — pre-commit and remote gates passed
+
+The final pre-commit gate confirmed branch
+`feat/step76-89-sega-pipeline`, local HEAD and upstream both
+`b1338441a224fa3802889a7ca6b24ca4b836c145`, writable `.git`, no index lock,
+and exactly 31 allowlisted staged files with cached whitespace clean. Tracking
+remote `nina` is reachable and its branch also reports `b1338441...`.
+
+No unrelated path or operational `layout_agent/runs/` artifact is staged.
+API/model calls: `0`; paid tokens: `0`; paid cost: `$0.00`. Safest resume
+command is a scoped commit with message
+`feat(layout-agent): prepare full Crello batching`, followed by a normal push
+to the existing tracking branch. Stop and record the exact error if either
+command fails.
+
 ## Next task and stop conditions
 
 - COLE hardening and all previous N=100 artifacts remain complete; never rerun
@@ -1796,6 +2415,8 @@ remains locked behind a new exact authorization.
 - Paid COLE evaluation, train, and validation are outside this plan.
 - The next authorized work is zero-cost tooling/readiness only. No generation
   may start before a new exact call/token/USD budget receives explicit approval.
+- Pinned cache work is 74 missing caches plus 1,706 existing text sidecars;
+  preserve and exclude the five local split-drift extras.
 - Keep `.planning/crello-full-test/{task_plan,findings,progress}.md` synchronized
   after material work so a new session can resume without chat context.
 - Preserve every unrelated dirty/untracked path listed above, including the
