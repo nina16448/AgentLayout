@@ -2330,3 +2330,24 @@ Bundle：`layout_agent/evaluations/a3-relation-stats/a3.relation-stats.v1/a3-rel
 Artifact SHA-256（前 12 碼）：tree-accuracy aggregate `ffb9fcbe8c0e` / per_sample `f60c4910ecd5`；stats aggregate `c71b8d708149` / per_sample `d4db77a05684` / results.md `a435ba7f7cb9` / results.tex `69e4269d2c95`。獨立驗證：artifact hash 對帳、arm means 與 macro F1 由 per-sample rows 重算吻合（rel_tol 1e-12）、JSONL 每 sample 恰一行（100/300 rows）。
 
 **Status：A3-12S complete。** 兩 bundle write-once、不得重跑覆蓋；後續引用 Relation N=100 tree ablation 統計一律以 §25.2 的 Holm-adjusted 表為準。
+
+---
+
+## 26. A3-13P：AI annotation replacement protocol 凍結提案（2026-07-12；zero-cost）
+
+依 `CODEX_HANDOFF.md` §5／§6 第 1 列（研究設計／評估方法角色）產出
+`layout_agent/AI_REFERENCE_PROTOCOL.md`：三個獨立 MLLM annotators（輸入嚴格
+等於 human annotation packet、黑名單 fail-loud）、deterministic consensus＋blind
+第四模型 escalation、`ai_reference.v1` provenance 與全新 artifact namespace
+（human 100/100 oracle 與 raw annotations 位元組不動作 calibration set）、
+Alternative Annotator Test（same-group／edge Jaccard 為 primary、ε=0.2 主值＋
+0.1/0 敏感度、ρ≥0.5）、downstream stability gate（`T0<T2<T3` 方向＋§25.2
+Holm 8/9 顯著結論穩定）、MLLM-panel preference protocol（blind A/B＋位置交換、
+不得稱 human preference）、§8 檔案清單、§9 離線測試、§10 分 stage 預算
+（S1+S2 cap 455 calls／3.95M input／1.15M output／≤US$10；S6 panel 另案
+≤US$5）與 §11 六項待批事項（providers、跨供應商影像上傳、frozen prompt、ε、
+預算、啟動順序）。
+
+- 本階段 **0 code 變更、0 API call、$0**；不動任何 write-once artifact。
+- Status：**proposed**。下一步＝使用者逐項批准 §11 後才進實作角色；
+  未批准前不得呼叫模型或修改 pipeline code。
