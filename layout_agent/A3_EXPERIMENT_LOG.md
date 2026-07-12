@@ -2481,3 +2481,15 @@ Run artifacts（raw five-turn outputs、renders、candidate/error per sample）�
 Ali 0.000964、Ove 0.09106、Rea 0.002248、Occ 0.006894（98/98 applicable）；Und_l/Und_s N/A（P-Full v1 無合法 underlay）；2 筆 source_skipped 顯式列出。與 General N=100（Ali 0.00197／Ove 0.1002）同量級。
 
 **Status：batch 001 complete（98/100＋2 explicit failure）。** 下一批（002）開跑前仍須依協定提出新的精確付費授權。CODEX_HANDOFF.md 有使用者未提交的既有修改，本節即為 batch 001 的權威記錄。
+
+### 26.2 Rea/Occ 補齊（zero-cost；2026-07-13）
+
+原 deferred 的兩軸以「同一 per-sample 背景＋凍結 BASNet+ISNet stack、A3-T2 值逐字取自凍結 formal bundle、E2D 只換框」補齊（PKU 協定的 Rea/Occ 是背景＋框的函數，無需渲染 candidate）。Bundle：
+`a3.external-baseline-supplement.v1/e2d-rea-occ-rel100-v1/`（含 93 對）。
+
+| 軸 | A3-T2 | E2D | W/L/T | mean diff | Holm(4) p |
+| --- | ---: | ---: | --- | --- | ---: |
+| Rea↓ | 0.0 (98) | 0.0 (93) | 0/0/93 全平手 | 0 | 無資訊軸（本協定平坦背景、Sobel 零訊號，與三臂內部比較一致） |
+| Occ↓ | 0.005629 | 0.007339 | 16/75/2 | −0.00166 [−0.00216, −0.00114] | **5.3e-10**（A3 較好） |
+
+同 bundle 重算**完整幾何家族 Holm(4)**（取代主 bundle 的暫行 Holm(2)）：Ove 6.5e-16（A3）、Occ 5.3e-10（A3）、Ali 0.0213（E2D、幅度 +0.001 級）、Rea 無資訊。**六軸至此全數交代：語意三軸＋Ove＋Occ 顯著利 A3、Ali 微幅利 E2D、Rea 無訊號、Und 依協定 N/A。**
