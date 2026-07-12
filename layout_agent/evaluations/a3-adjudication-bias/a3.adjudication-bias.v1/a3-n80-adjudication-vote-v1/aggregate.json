@@ -1,0 +1,149 @@
+{
+  "analysis_id": "a3-n80-adjudication-vote-v1",
+  "adjudicator_model": "gpt-5.6-sol",
+  "n80": {
+    "n_samples": 80,
+    "annotator_models": {
+      "hui": "gpt-5.6-sol",
+      "neiji": "claude-fable-5",
+      "nina": "gemini-3.5-flash"
+    },
+    "axes": {
+      "semantic_type": {
+        "contested": 485,
+        "adj_matches": {
+          "hui": 480,
+          "neiji": 145,
+          "nina": 151
+        },
+        "adj_matches_none": 1,
+        "splits_2_1": 407,
+        "splits_1_1_1": 78,
+        "minority_cases": {
+          "hui": 118,
+          "nina": 142,
+          "neiji": 147
+        },
+        "adj_sides_with_minority": {
+          "hui": 115
+        },
+        "side_with_minority_rate": {
+          "hui": 0.9745762711864406,
+          "nina": 0.0,
+          "neiji": 0.0
+        }
+      },
+      "parent_id": {
+        "contested": 710,
+        "adj_matches": {
+          "hui": 708,
+          "nina": 96,
+          "neiji": 216
+        },
+        "adj_matches_none": 1,
+        "splits_2_1": 551,
+        "splits_1_1_1": 159,
+        "minority_cases": {
+          "hui": 238,
+          "neiji": 98,
+          "nina": 215
+        },
+        "adj_sides_with_minority": {
+          "hui": 238,
+          "neiji": 1
+        },
+        "side_with_minority_rate": {
+          "hui": 1.0,
+          "neiji": 0.01020408163265306,
+          "nina": 0.0
+        }
+      },
+      "same_group": {
+        "contested": 2130,
+        "adj_matches": {
+          "hui": 2126,
+          "nina": 372,
+          "neiji": 624
+        },
+        "adj_matches_none": 0,
+        "splits_2_1": 2130,
+        "splits_1_1_1": 0,
+        "minority_cases": {
+          "hui": 1142,
+          "neiji": 368,
+          "nina": 620
+        },
+        "adj_sides_with_minority": {
+          "hui": 1138
+        },
+        "side_with_minority_rate": {
+          "hui": 0.9964973730297724,
+          "neiji": 0.0,
+          "nina": 0.0
+        }
+      }
+    }
+  },
+  "pilot_secondary": {
+    "n_samples": 20,
+    "annotator_models": {
+      "T": "gpt-5.6-sol",
+      "hui": "gpt-5.6-sol",
+      "neiji": "claude-fable-5"
+    },
+    "oracle_model": "gpt-5.6-sol",
+    "alignment": {
+      "semantic_type": {
+        "T": {
+          "agree": 212,
+          "total": 298,
+          "rate": 0.7114093959731543
+        },
+        "hui": {
+          "agree": 213,
+          "total": 298,
+          "rate": 0.714765100671141
+        },
+        "neiji": {
+          "agree": 208,
+          "total": 298,
+          "rate": 0.697986577181208
+        }
+      },
+      "parent_id": {
+        "T": {
+          "agree": 114,
+          "total": 298,
+          "rate": 0.3825503355704698
+        },
+        "hui": {
+          "agree": 136,
+          "total": 298,
+          "rate": 0.4563758389261745
+        },
+        "neiji": {
+          "agree": 95,
+          "total": 298,
+          "rate": 0.3187919463087248
+        }
+      },
+      "same_group": {
+        "T": {
+          "agree": 1728,
+          "total": 2340,
+          "rate": 0.7384615384615385
+        },
+        "hui": {
+          "agree": 2168,
+          "total": 2340,
+          "rate": 0.9264957264957265
+        },
+        "neiji": {
+          "agree": 1797,
+          "total": 2340,
+          "rate": 0.767948717948718
+        }
+      }
+    }
+  }
+}

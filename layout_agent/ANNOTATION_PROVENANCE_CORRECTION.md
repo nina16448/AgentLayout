@@ -18,18 +18,21 @@ annotation packet（brief、asset IDs、文字內容）與 asset contact sheets
 （依 guide 設計，無設計師成品圖、無座標、無背景圖；此點為操作者自述，
 無機器層級 log 可稽核）。
 
-### 代號 → 實際模型對照表
+### 代號 → 實際模型對照表（2026-07-12 使用者二次確認後定稿）
 
 | 代號 | n80（`a3-relation-annot-n80-01`） | pilot（`a3-gateab-pilot-n20-01`） |
 | --- | --- | --- |
-| `hui` | GPT-5.6 sol | GPT-5.6 sol（待使用者確認） |
-| `neiji` | Claude Fable 5 | Claude Fable 5（待使用者確認） |
-| `nina` | Gemini（版本待確認） | —（raw 標註者為 T/hui/neiji） |
-| `T` | — | GPT（確切 snapshot 待確認） |
-| 裁決（pilot `annotation_nina.json` 全量重標；n80 逐分歧裁決） | GPT（確切 snapshot 待確認） | 同左 |
+| `hui` | GPT-5.6 sol | GPT-5.6 sol |
+| `neiji` | Claude Fable 5 | Claude Fable 5 |
+| `nina` | Gemini 3.5 Flash | —（raw 標註者為 T/hui/neiji） |
+| `T` | — | GPT-5.6 sol |
+| 裁決（pilot `annotation_nina.json` 全量重標；n80 逐分歧裁決） | GPT-5.6 sol | GPT-5.6 sol |
 
-待確認欄位由使用者補充後更新本表；在此之前引用一律註明「exact snapshot
-not recorded」。
+**pilot 組成警告**：pilot 三個 raw 標註者中兩個（T、hui）為**同一模型**
+GPT-5.6 sol，第三個為 Fable 5，且 oracle＝GPT-5.6 sol 全量重標——pilot 20 棵
+oracle trees 實質上是 **GPT-5.6 sol 單模型 reference**（雙 GPT 票＋GPT 裁決）。
+「跨三家族多模型 consensus」的描述**只適用 n80 的 80 棵**；引用 pilot 20 或
+合併後的 100 棵時必須分開陳述兩批組成。各 session 的 sampling 參數仍未記錄。
 
 ### 既有紀錄中因此失效的陳述
 
@@ -40,7 +43,8 @@ not recorded」。
 2. 120 棵 oracle trees（pilot 20＋n80 80，合併於 `relation100_oracle_trees/`
    100 棵）檔內 `source="human_oracle"` 字串——為歷史誤標。本檔定義正確語意：
    `human_oracle`（legacy 字串）實際 ≡ **`ai_reference.multi-model.v0`**
-   （跨家族三模型標註＋GPT 裁決、人類操作）。
+   （組成依上表：n80＝跨三家族＋GPT 裁決；pilot＝GPT-5.6 sol 主導雙家族；
+   均為人類操作）。
 3. `CODEX_HANDOFF.md` §3.2「human reference trees 100/100」與
    `AI_REFERENCE_PROTOCOL.md` §1「封存 human calibration set」的前提。
 
@@ -92,8 +96,35 @@ not recorded」。
 ## 5. 後續動作
 
 - [x] 本 sidecar 建立；log §27 更正條目；handoff §3.2/§3.4/§5 改寫。
-- [ ] 使用者補充對照表待確認欄位（pilot hui/neiji 對映、T 與裁決的確切模型、
-      Gemini 版本）。
-- [ ] （建議、zero-cost）裁決一致性統計：n80 485 個分歧中，裁決採 GPT-5.6 sol
-      票的比率 vs 採 Fable/Gemini 票的比率，量化 self-preference bias。
-- [ ] 論文寫作角色依 §3 措辭規則全面替換 human 字眼。
+- [x] 使用者補充對照表（見 §1 定稿表；Gemini＝3.5 Flash、T／裁決＝GPT-5.6 sol）。
+- [x] 裁決採票統計已執行（log §28／A3-15B），結果見 §6——結論比預期嚴重。
+- [ ] 論文寫作角色依 §3（經 §6 修正後）措辭規則全面替換 human 字眼。
+
+## 6. 裁決採票分析結果（2026-07-12，A3-15B；覆蓋 §3 的部分解讀）
+
+`analyze_a3_adjudication_bias.py`（read-only、$0）對 n80 全部 contested
+decision units（semantic_type 485、parent_id 710、same-group pairs 2,130）
+的結果：裁決值與 hui（GPT-5.6 sol）一致率 **99.0%／99.7%／99.8%**；
+hui 落單時裁決採 hui **97.5%／100%／99.7%**，neiji/nina 落單被採 **≈0%**。
+結構比對：**75/80 份 `annotation_adjudicated.json` 與 `annotation_hui.json`
+全欄位相同**，餘 5 份各差 1–2 assets。
+
+**因此**：
+
+1. 「多模型 consensus reference」的解讀（§3 第 1 點原文）**不成立**。
+   全部 100 棵 reference trees 的有效來源＝**GPT-5.6 sol 單模型**
+   （pilot oracle＝GPT-5.6 sol 全量重標；n80 裁決≈逐字採用 GPT-5.6 sol 標註）。
+2. 論文措辭改為：*"reference layout trees were annotated by GPT-5.6 sol;
+   annotations from two additional models (Claude Fable 5, Gemini 3.5 Flash)
+   were collected and used for inter-model agreement analysis
+   (same-group Jaccard 0.571 / edge Jaccard 0.357 / type 0.658), but the
+   final reference adopted the GPT-5.6 sol annotations nearly verbatim
+   (99.0–99.8% of contested decisions)."* 不得使用 consensus／multi-model
+   reference／human 任一說法描述最終 oracle。
+3. T3 敘事＝「**較強模型（GPT-5.6 sol）離線標註的 tree** 注入」vs T2＝
+   gpt-5.4-mini 即時預測；`T0<T2<T3` 數值與顯著性不變。
+4. §4 limitation 1 升級：不是 self-preference「風險」，而是裁決近乎未發生
+   （empirically verbatim adoption）；審稿回應以 log §28 數字為準。
+5. 次要觀察：pilot oracle 與同模型另一 session（T）same-group 一致率僅
+   0.738——GPT-5.6 sol 跨 session 自我一致性有限，單模型 reference 的
+   不穩定性須列入 limitation。

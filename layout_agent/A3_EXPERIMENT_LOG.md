@@ -2383,3 +2383,45 @@ annotation packet＋contact sheets（操作者自述）。**專案不存在任�
 
 本條目不改寫 §16–§22 原文（append-only 原則）；引用該範圍一律以本條目＋
 correction sidecar 的重新解讀為準。
+
+---
+
+## 28. A3-15B：裁決採票分析——oracle 實為 GPT-5.6 sol 單模型（2026-07-12；zero-cost）
+
+使用者授權後執行 `layout_agent/analyze_a3_adjudication_bias.py`（read-only、
+0 API call）；bundle：`layout_agent/evaluations/a3-adjudication-bias/
+a3.adjudication-bias.v1/a3-n80-adjudication-vote-v1/aggregate.json`。
+決策單元＝per-asset semantic_type、per-asset parent_id、per-pair same-group。
+
+**n80 主結果（80 samples；contested units 485/710/2,130）**：
+
+| 軸 | 裁決=hui | hui 落單時裁決採 hui | neiji 落單被採 | nina 落單被採 |
+| --- | ---: | ---: | ---: | ---: |
+| semantic_type | 480/485（99.0%） | 115/118（97.5%） | 0/147 | 0/142 |
+| parent_id | 708/710（99.7%） | 238/238（100%） | 1/98 | 0/215 |
+| same_group | 2,126/2,130（99.8%） | 1,138/1,142（99.7%） | 0/368 | 0/620 |
+
+**結構比對**：75/80 個 `annotation_adjudicated.json` 與 `annotation_hui.json`
+全欄位 structurally identical；其餘 5 個各差 1–2 assets（計 7 個 asset 差異）。
+
+**判讀（覆蓋 §27 的部分解讀）**：
+
+1. n80「逐分歧裁決」實質上是**近乎逐字採用 hui（GPT-5.6 sol）的標註**；
+   Fable 5 與 Gemini 3.5 Flash 的標註對最終 oracle 影響趨近零。
+2. 合併 pilot（oracle＝GPT-5.6 sol 全量重標）：**全部 100 棵 reference trees
+   有效來源＝GPT-5.6 sol 單模型**。§27 的「跨家族多模型 consensus reference」
+   解讀不成立；論文措辭改為「GPT-5.6 sol single-model reference；另收集
+   Fable 5／Gemini 標註作 inter-model agreement 分析（0.571/0.357/0.658），
+   但未實質進入最終 reference」。
+3. T3 敘事再修正：T3＝**GPT-5.6 sol reference tree 注入** vs T2＝gpt-5.4-mini
+   即時預測 tree——「較強模型離線標註的 tree 顯著優於較小模型即時預測」，
+   `T0<T2<T3` 數值與顯著性不變。
+4. pilot 次要分析：oracle 與 hui same-group 一致率 0.926、與 T（同為
+   GPT-5.6 sol）僅 0.738、與 neiji 0.768——同模型跨 session 變異可觀，
+   單模型 reference 的 self-consistency 亦非完美。
+5. Limitation 升級：不是「裁決者與標註者同家族的 bias 風險」，而是
+   「裁決近乎未發生」；相關揭露已寫入
+   `ANNOTATION_PROVENANCE_CORRECTION.md` §6。
+
+**Status：A3-15B complete。** 引用 reference 組成一律以本節＋correction
+sidecar 為準。
