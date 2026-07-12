@@ -2167,5 +2167,133 @@ modified 0；sidecar 僅寫於
 
 **Status：Crello-General N=100 final generation complete。** 下一步是
 零成本 deterministic geometry/completion/failure/latency evaluation；
-General-vs-designer-GT 的任何 paid COLE judge 不在本次授權內，必須另提
-call/token/cost budget 並重新取得明確授權。
+General-vs-designer-GT 的 paid COLE judge 當時不在 generation 授權內；
+其後另提精確 call/token/cost budget 並取得明確授權，結果見 §24.5。
+
+### 24.4 Formal SEGA/PKU 六軸與 failure/latency 診斷（zero-cost）
+
+以 hardened evaluator、frozen BASNet＋ISNet 對 General N=100 正式重評；
+evaluation ID `a3-general-n100-sega-v1`，原子發布於
+`layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-general-n100-sega-v1/`。
+為保證零外連，執行時 unset API keys、啟用 HF/Transformers offline flags
+並將 proxy 指向 loopback；**LLM/API calls 0、paid cost $0.00、source
+artifacts modified 0**。managed filesystem 下 `conda run` 無法建立環境內
+暫存檔，direct interpreter 第一次又因 Numba 嘗試寫 read-only
+site-packages cache 而在 inference 前停止；最終以 `TMPDIR=/tmp` 與
+`NUMBA_CACHE_DIR=/tmp/a3-numba-cache` 成功完成：
+
+```bash
+env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u GEMINI_API_KEY \
+  -u GOOGLE_API_KEY -u AZURE_OPENAI_API_KEY \
+  TMPDIR=/tmp NUMBA_CACHE_DIR=/tmp/a3-numba-cache \
+  HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+  WANDB_MODE=offline http_proxy=http://127.0.0.1:9 \
+  https_proxy=http://127.0.0.1:9 ALL_PROXY=socks5://127.0.0.1:9 \
+  NO_PROXY=localhost,127.0.0.1 OMP_NUM_THREADS=1 \
+  /home/hui0705/.conda/envs/meta/bin/python \
+  layout_agent/evaluate_a3_sega.py \
+  --run-dir layout_agent/runs/a3/a3-general-n100-t2-l0-01 \
+  --evaluation-id a3-general-n100-sega-v1 \
+  --output-root layout_agent/evaluations/a3-sega \
+  --saliency-mode basnet-isnet
+```
+
+結果：100 selected、100 source-valid、100 evaluated、source/metric skipped
+皆 0。Und_l/Und_s 因 P-Full v1 無合法 underlay 欄位，維持 N/A：
+
+| Ali↓ | Ove↓ | Und_l | Und_s | Rea↓ | Occ↓ |
+| ---: | ---: | --- | --- | ---: | ---: |
+| 0.0019674 | 0.1001687 | N/A (0/100 applicable) | N/A (0/100 applicable) | 0.0003544 | 0.0055606 |
+
+生成完成率 100%、failed 0；700 個成功 stage records、714 persisted model
+attempts，generation wall 3,143s（約 31.43s/sample）。per-call latency
+mean/median：Analyst 8.80/8.21s、Asset Planner 4.95/4.44s、Composition
+Director 6.18/5.94s、Coordinate Mapper 2.88/2.48s（300 calls）、blind
+Judge Select 2.26/1.93s。
+
+既有 selected-B0 QC 診斷為 31/100 passed、completeness mean 1.0；67 筆
+帶 `all_qc_failed` degradation。主要 violation sample counts：
+low_text_contrast 44、title_undersized 31、out_of_bounds 20、
+missing_element 17、text_obscured_by_overlay 9、decorative_image_oversized 8。
+其中 17 個 `missing_element` 全部只指向 `asset_0000`，且各 R3 manifest
+均將它標為 `background_asset_id`；這是 QC 對「刻意排除於 foreground
+coverage 的背景」之 false positive，不是實際前景遺漏。formal evaluator
+的 exact foreground coverage 100/100 全過，因此不得把這 17 筆誤報為
+completion failure。
+
+部分空白 canvas 觸發 rembg divide/cast runtime warning，但 finite/range
+contracts 與 bundle publication gate 均通過。獨立 read-only reload 亦通過
+`validate_evaluation_bundle()`；100 筆 per-sample rows 的適用軸平均值以
+rel_tol 1e-12 重算吻合。artifact SHA-256：manifest `ee6f4d3284c9…`、
+aggregate `dc5dfe244693…`、per_sample `a72c699ff4ea…`。
+
+**Status：General deterministic geometry、completion、failure、latency
+evaluation complete。** Generation 授權未涵蓋 General-vs-GT paid COLE；
+該 judge 後來以獨立授權完成（§24.5）。可選下一個零成本工程任務是修復
+HTTPX event-loop cleanup 與 Numba cache/runtime hygiene。
+
+### 24.5 General-vs-designer-GT matched COLE judge（付費項；2026-07-12）
+
+使用者另行逐字授權：
+
+> 授權執行 a3-general-n100-cole-v1，judge=gpt-5.4-mini-2026-03-17，最多
+> 220 calls（含 probe/retry）、3M input tokens、150k output tokens、US$4。
+
+專用 runner `layout_agent/judge_a3_general_cole.py` 僅讀取 §24.4 正式
+SEGA sidecar 所 pin 的 100 張 General B0 render，並配對同 100 個 sample ID
+的 designer GT preview。付費前後均重驗 200 張影像與順序；input snapshot
+SHA-256 固定為
+`aa7c5b236bc8655bf182cfe8fc898266fbb8e136b30c3f8ae2e7e89bbcb5fa72`。
+COLE prompt/parser 沿用 `step21_phaseb_eval.py`；judge 固定
+`gpt-5.4-mini-2026-03-17`，每圖絕對評分，prompt 無 arm label，blind by
+construction。
+
+checkpoint 11 的 network-isolated 首次 probe 無回應後已中止，未建立 staging
+或 final；為不超出跨 session 的原始授權，本次 runner 預先保留該 1 call、
+1,000 input 與 600 output tokens，只允許最多 219 個新 attempts。確認 OpenAI
+網路可達、Git 可寫、無 concurrent runner、write-once targets 皆不存在後，
+僅執行一次：
+
+```bash
+TMPDIR=/tmp /home/hui0705/.conda/envs/meta/bin/python \
+  layout_agent/judge_a3_general_cole.py --allow-api-calls
+```
+
+結果：**exit 0、200/200 `ok`、無 scoring retry、wall 61.59s**
+（約 09:00:13–09:01:14 CST）。參數 probe 選用
+`max_completion_tokens=600`；累計 ledger 202 calls（先前保留 1＋本次 probe
+1＋200 scores），312,795 input、41,653 output、估算 `$0.422035`，全部低於
+授權上限。200 個成功 scoring calls 有 provider usage telemetry；扣除先前
+保守 reserve 後為 311,795 input、41,053 output。實際帳單仍以 provider
+dashboard 為準。
+
+結果原子發布於
+`layout_agent/evaluations/a3-cole/a3.cole-judge.v1/a3-general-n100-cole-v1/`；
+staging 不存在。artifact SHA-256：aggregate
+`f4ea72902a598996687240074be255d13c188304342169470084b56dda42fcb8`、
+per_sample
+`56671d43916762c85c7ae30aa11dd91ed1151a12741a0f2e2fa376edb45706b7`。
+
+**Arm means（S_mean4 = SDL/SQL/STV/SIO 平均；SGI 另列）**：
+
+| Arm | n | SDL | SQL | STV | SIO | SGI | S_mean4 | % of GT |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Designer GT | 100 | 6.98 | 7.35 | 6.77 | 5.59 | 7.43 | **6.6725** | — |
+| General B0 | 100 | 5.63 | 6.01 | 5.38 | 4.85 | 6.08 | **5.4675** | 81.94% |
+
+**Paired General-vs-GT（S_mean4；two-sided sign test＋bootstrap 95% CI，
+seed 20260712、10k）**：100 pairs，10W/85L/5T，`p=5.7623e-16`，
+mean delta `-1.205`，95% CI `[-1.420, -0.9925]`。四個報告軸亦全顯著
+落後 GT：SDL 6W/75L/19T（`p=2.91e-16`）、SQL 2W/75L/23T
+（`p=3.98e-20`）、STV 10W/72L/18T（`p=1.02e-12`）、SIO
+8W/59L/33T（`p=1.02e-10`）。
+
+**判讀**：General final system 的 COLE 四軸平均為 designer GT 的 81.94%，
+且 paired deficit 的 bootstrap CI 完全低於 0；本結果量化的是同一批 sample
+上的美學差距，不改變 §24.4 deterministic geometry/completion 已完成的結論。
+協定為 A3-only、GT-referenced、gpt-5.4-mini judge，不可與舊架構 gpt-4o
+COLE 表互換。
+
+**Status：General-vs-GT matched COLE judge complete。** General N=100 的
+generation、formal SEGA/PKU 與 separately authorized COLE 評測均已完成；
+不得重跑既有 write-once artifact。
