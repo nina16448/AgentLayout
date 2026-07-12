@@ -1442,23 +1442,50 @@ must not be staged, reset, cleaned, overwritten, or included in this handoff:
 - `layout_agent/run_demo.py`
 - `layout_agent/runs/`
 
-The only remaining persistence step for this checkpoint is to commit and push
-`layout_agent/next_step.md` alone. The safest exact commands are:
+The checkpoint-only handoff was then persisted as:
+
+```text
+759ea055e5029500eae8d2184df0eed42359cdde
+docs(agentlayout): record COLE hardening handoff
+```
+
+The exact second sync command and result were:
 
 ```bash
-git add -- layout_agent/next_step.md
-git diff --cached --name-only
-git diff --cached --check
-git commit -m "docs(agentlayout): record COLE hardening handoff"
 git push
+# exit 0; 3fc6be17..759ea055, feat/step76-89-sega-pipeline ->
+# feat/step76-89-sega-pipeline on github.com:nina16448/AgentLayout.git
+```
+
+The immediate read-only verification found local HEAD, upstream, and
+`ls-remote` all equal to
+`759ea055e5029500eae8d2184df0eed42359cdde`; the index was empty, all three
+hardening task paths were clean, and every unrelated path above was preserved
+exactly. No COLE hardening persistence remains.
+
+This terminal text is self-validating: if it is visible from
+`git show HEAD:layout_agent/next_step.md`, the state-only commit containing the
+text has already been persisted locally. Current local/upstream/remote state
+can be checked without mutation using only:
+
+```bash
+git branch --show-current
+git rev-parse HEAD
+git rev-parse '@{u}'
+git ls-remote --heads nina refs/heads/feat/step76-89-sega-pipeline
+git status --short -- \
+  layout_agent/judge_a3_general_cole.py \
+  tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py \
+  layout_agent/next_step.md
 ```
 
 ## Next task and stop conditions
 
-- Once this checkpoint-only handoff commit is pushed, no COLE hardening work
-  remains and no completed evaluation may be rerun or overwritten.
-- The current optional next engineering task is HTTPX event-loop cleanup and
-  Numba read-only-cache robustness. It must remain zero-cost and must not run
-  General generation, SEGA, COLE, an LLM judge, or any paid API.
-- Preserve every unrelated path listed above and start that optional work only
-  as a separately scoped task.
+- COLE hardening, its focused verification, and all hardening/handoff commits
+  and pushes are complete. No COLE hardening persistence remains.
+- The only optional next engineering work is a separate zero-cost task for
+  HTTPX event-loop cleanup and Numba read-only-cache robustness.
+- Never rerun or overwrite General generation, SEGA, COLE, or any completed
+  evaluation; never reuse the consumed paid authorization or make an API call
+  as part of this completed workflow.
+- Preserve every unrelated dirty/untracked path listed above.
