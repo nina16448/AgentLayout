@@ -274,6 +274,49 @@
 - 現有 classifier 沒有直接單元測試；新 importer tests 必須覆蓋所有 label、
   filename/kind mapping、meta immutability、staging cleanup 與 collision refusal。
 
+## 2026-07-12 batch-001 官方 OpenAI 計價／vision 規則
+
+- 官方模型頁確認 frozen snapshot 是 `gpt-5.4-mini-2026-03-17`，屬 reasoning
+  model；context window 400,000、max input 272,000、max output 128,000 tokens，
+  支援 Chat Completions 與 text/image input。
+- 官方 Standard token pricing（每 1M tokens）：input US$0.75、cached input
+  US$0.075、output US$4.50。Batch/Flex/Priority 是不同 tier，本 runner 沒有
+  指定它們，因此授權核算只採 Standard，且不預先假設 prompt-cache 折扣。
+- Images & vision 文件說明：省略 `detail` 會使用 `auto`；`gpt-5.4-mini` 支援
+  low/high/auto。High 以 32×32 patches 計算，受 1,536-patch 與 2048px 最長
+  邊限制，最後乘以 1.62 得 billed image-token units。官方公式為
+  `ceil(width/32) × ceil(height/32)`，超過 budget 時按文件公式等比例縮小。
+- 現有 MetaGPT message 沒有送 `detail`，所以實際是 `auto`；官方文件沒有為
+  每張圖片預先承諾 auto 的選擇，不能把逐圖 high 計算冒充目前 request 的
+  精確值。正式 run 必須顯式送 high，或把 runtime provider usage 作為唯一
+  結算值並以保守 high 上限做 reservation。
+- 官方來源：
+  - `https://developers.openai.com/api/docs/models/gpt-5.4-mini`
+  - `https://developers.openai.com/api/docs/pricing`
+  - `https://developers.openai.com/api/docs/guides/images-vision`
+
+## Batch 001 離線 accounting 證據與候選 ceilings
+
+- 100 份已備妥 Analyst prompts 合計 559,587 UTF-8 bytes、147,826 個
+  `o200k_base` proxy tokens；每 sample 有 9–10 個 nominal image inputs。
+- 依官方 `gpt-5.4-mini` high-detail patch 公式，batch 001 nominal image input
+  合計 774,360 billed token units；若七個 stages 全部各走三次 schema attempts，
+  image-only 上界為 2,323,080。最大已備妥 image 960×1100，最大 raw patch
+  count 1,050，均低於 1,536-patch budget。
+- 完成 General N=100 的 700 base prompts 合計 1,869,562 個 o200k proxy
+  tokens；其 Analyst prompt 合計 146,899，與 batch 001 的 147,826 高度接近。
+- General N=100 可見 attempts 為 Planner 106、Director 100、Mapper 308、
+  Judge 100，再加 100 份 Analyst output proxy，共 714。output proxy 合計
+  445,497；stage maxima 為 Analyst 2,575、Planner 2,785、Director 1,156、
+  Mapper 1,486、Judge 44。
+- 候選 per-call `max_completion_tokens`：Analyst 4,096、Planner 4,096、
+  Director 2,048、Mapper 2,048、Judge 512。它們對既有可見 maxima 留有
+  headroom，且官方說該參數同時限制 visible、non-visible 與 reasoning tokens。
+- 候選 batch hard ceilings：850 actual HTTP calls、4,500,000 input tokens、
+  800,000 output tokens、US$7.00。以不採 cached discount 的 Standard rates，
+  token ceilings 的代數成本是 US$6.975，低於美元 cap。這些數字在 runner
+  完成 lock/reserve/settle/disable-hidden-retry enforcement 前不構成授權提案。
+
 ## 資源
 
 - 詳細流程：`layout_agent/FULL_CRELLO_BATCH_PLAN.md`

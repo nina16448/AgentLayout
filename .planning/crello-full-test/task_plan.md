@@ -28,7 +28,8 @@
 - [x] 唯讀核對既有 N=100 的 sample ID、revision 與 input hashes
 - [x] 實作 write-once cache import，補齊 pinned revision 缺少的 74 筆 test samples
 - [x] 補齊 text bitmap sidecars，不改寫原始 `meta.json`
-- [ ] 對全部 1,971 筆執行 P-Full、R3 與 Analyst vision readiness
+- [x] 完成 batch 001 的 P-Full、R3 與 Analyst vision readiness（100/100）
+- [ ] batches 002–019 依使用者決定不預先準備；前一批驗收後才做下一批 readiness
 - [x] 產生全域 deterministic batch manifest 與每批 write-once 目標
 - [ ] 以 dry-run 算出精確 calls、input tokens、output tokens 與美元上限
 - [ ] 完成磁碟、網路、Git 可寫及無並行同批程序的檢查
@@ -75,9 +76,9 @@ input/output tokens、單批美元與累計美元上限，並取得使用者明�
 
 ## 關鍵問題
 
-1. 階段 2 尚需凍結哪一個 dataset revision？
-2. 既有 N=100 的精確 ID snapshot 與 input hash 是否完全屬於該 revision？
-3. 完整 dry-run 算出的單批與全域精確 token ceilings 是多少？
+1. 如何在不載入付費 client 的 preflight 中重建每 stage request 並量測上限？
+2. 如何關閉 SDK/provider 隱含 retries，讓 calls hard cap 可被準確強制？
+3. Batch 001 的精確 input/output token、USD ceilings 與單 call completion cap 是多少？
 
 ## 已做決策
 

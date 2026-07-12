@@ -113,6 +113,39 @@
   - `git push nina feat/step76-89-sega-pipeline` exit 0：remote
     `b1338441...`→`de5fc0cf...`。準備兩檔 handoff-only commit；正式實驗仍
     0 calls／0 tokens／US$0.00。
+  - 新 session 以不超過 250 行的窗口完整讀回 2,465 行 handoff、三份 scoped
+    ledger、batch plan 與 catch-up source；catch-up exit 0，無未同步輸出。
+  - 驗證 checkpoint 45 的兩檔收尾已由 `f8ef25aa` 完成並 push；local、
+    upstream、remote 三者一致，index 為空，不能重複提交舊 handoff。
+  - Batch-001 本機 budget inventory 確認 700 nominal／2,100 code-retry
+    calls、850 operational stop、US$7 plan stop；manifest 的 input/output
+    token ceilings 仍為 null，尚未具備付費授權條件。
+  - 完整讀取 `run_a3.py` paid path、`A3StageBinding` 與五個 L0 actions；確認
+    目前只有 `--allow-api-calls` 布林閘門與事後 best-effort usage，沒有
+    call/input/output/USD 的執行前 reservation 或 runtime hard stop；action
+    內部最多 3 次 retry 也不受 `stage_calls=7` 計數約束。
+  - 完整讀取 MetaGPT OpenAI provider：`gpt-5*` 會移除 `max_tokens`，故預設
+    4096 不是 frozen model 的 output hard cap；provider 另有 6 次 connection
+    retry，且 image message 未送 config 宣稱的 `detail=high`。這三項在補強前
+    都阻止精確、可執行的付費授權。
+  - 安全白名單配置檢查確認 OpenAI Python 1.64.0、SDK default retries=2；與
+    provider connection retry 組合後，每個 action schema attempt 最多可展開
+    18 次 HTTP attempts，因此原 2,100 不是網路 hard cap。
+  - 透過官方 OpenAI Docs MCP 核對 frozen snapshot、模型 input/output limits、
+    Standard pricing 與 patch-based vision 公式；三頁合併輸出曾截斷，改從
+    session-stored fetch 結果抽取具名行段，不重抓網路。外部事實只寫入
+    `findings.md`；本步 API/model calls 0、paid cost US$0.00。
+  - 純離線聚合 batch 001 prepared Analyst prompts/images 與完成 N=100 的具名
+    request/response artifacts：nominal high image units 774,360；prior 700 base
+    prompts 1,869,562 proxy tokens；714 attempts output proxy 445,497。建立
+    850 calls／4.5M input／800k output／US$7 與 stage-specific completion caps
+    的候選值；尚未授權，必須先由 runtime gate 強制。
+  - 使用者要求停止過多檢查並盡快開始；立即停止額外 audit。下一步只做最小
+    四 cap enforcement＋一次 focused verification，且仍須先收到明確 batch-001
+    付費授權；不重跑 N=100 或 batch-001 readiness。
+  - 2026-07-12 16:52:39 CST (+0800) expedited pre-commit gate 通過：checkpoint chronology 正確、
+    staged set 恰為 4 個 planning/handoff files、cached whitespace clean；
+    沒有執行測試/readiness/API。
 - 本次新增／修改的實作檔：
   - `layout_agent/prepare_full_crello.py`
   - `layout_agent/configs/a3_crello_test_l0_v1.json`
@@ -165,16 +198,20 @@
 | 2026-07-12 16:27 CST | Token-budget `rg` 誤納既有 run 逐樣本大型 prompt，輸出截斷 | 1 | 停止 broad run search；只查固定 config、精確 model slug、top-level aggregate/usage 檔與指定 source |
 | 2026-07-12 16:30 CST | Composite handoff verification 在 9 tests、bundle reload、三個 100/0 summary 通過後仍 exit 1 | 1 | 不重跑已通過測試；分別檢查 paid-output absence、stage calls、ID/config snapshot hashes、disk/process/diff，定位後再修正 gate |
 | 2026-07-12 16:31 CST | Raw byte `cmp` 錯誤要求 run snapshots 與 source JSON 編碼相同；直接 JSON compare 又因 config 預設欄位為 false | 1 | IDs 改驗 JSON semantic equality；config 改用正式 `A3RunConfig` 正規化 source 後對 stored snapshot，並核對 manifest stored hashes |
+| 2026-07-12 16:40:57 CST (+0800) | 通用 `jq` projection 把陣列型 `sample_ids.json` 當成物件，命令尾端 exit 5 | 1 | 保留先前成功的 source/manifest 讀取；不重跑該 loop，後續只對具名 object summaries 使用 object projection |
+| 2026-07-12 16:44 CST | Pricing、vision、parameter 三份 Docs MCP 輸出合併後遭工具截斷 | 1 | 不重抓；從已保存的 fetch result 依具名公式關鍵字抽取小段，定價表另以完整 Standard row 為準 |
+| 2026-07-12 16:45 CST | 多檔 patch 的 `next_step.md` 換行錨點失配，原子拒絕 | 1 | 先用 `rg -n -C` 取實際鄰文，再拆成逐檔窄 patch；沒有部分寫入 |
+| 2026-07-12 16:46 CST | checkpoint 46 初次以不唯一的 `Next task` heading 插入到較早位置 | 1 | 依 checkpoint 45 唯一尾句用 `apply_patch` 搬到檔尾，並驗證 45→46→final stop chronology |
 
 ## 五問重啟檢查
 
 | 問題 | 答案 |
 |------|------|
-| 我在哪裡？ | 階段 1 已完成；階段 2 尚未開始 |
-| 我要去哪裡？ | 先做零成本 readiness/dry-run，再取得付費授權逐批執行 |
+| 我在哪裡？ | 階段 2 進行中；batch 001 readiness 已完成，正在補付費 budget enforcement 與 token accounting |
+| 我要去哪裡？ | 先完成可執行的 calls/input/output/USD hard gates，再提出 batch 001 精確授權文字 |
 | 目標是什麼？ | 完成官方 test 1,971 筆 generation＋六軸，且不重跑既有 N=100 |
 | 我學到了什麼？ | 見 `findings.md` |
-| 我做了什麼？ | 已凍結並持久化完整流程；尚未下載、生成或評估新資料 |
+| 我做了什麼？ | 已補齊官方 caches/sidecars、凍結 19 批 bundle、完成 batch 001 readiness；generation 仍為 0 calls |
 
 ---
 *每個階段完成後、每一批驗收後或遇到錯誤時更新此檔。*

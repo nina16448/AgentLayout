@@ -2446,6 +2446,130 @@ Safest resume action is a two-file handoff-only commit for
 push it. A next session must start at the last checkpoint, verify remote HEAD,
 and finish token/pricing accounting before requesting paid authorization.
 
+## Execution checkpoint 46 — resumed handoff verified; token accounting started
+
+At `2026-07-12 16:40:57 CST (+0800)`, the new session completed the required bounded read of all
+2,465 lines of this handoff, the active scoped planning ledgers, the full
+Crello batch plan, and the planning skill/catch-up source. The initial
+1,233-line combined read was rejected after tool-output truncation; bounded
+windows of at most 250 lines then covered lines 1–2,465 without gaps. The
+catch-up command was:
+
+```bash
+python3 /home/hui0705/.agents/skills/planning-with-files-zht/scripts/session-catchup.py "$(pwd)"
+```
+
+It exited 0 with no unsynchronized-session output. No model/client/evaluator
+was loaded; API/model calls, paid tokens, and paid cost remained
+`0 / 0 / $0.00`.
+
+Read-only Git verification showed that checkpoint 45's pending handoff had
+already been completed by commit
+`f8ef25aae683c8dc12d50c89814ab1c42a4b34ba`
+(`docs(layout-agent): checkpoint Crello handoff`). Its exact path set is:
+
+```text
+.planning/crello-full-test/progress.md
+layout_agent/next_step.md
+```
+
+Local HEAD, upstream, and `git ls-remote` all equal `f8ef25aa...`; the
+index is empty. Therefore the old two-file commit instruction must not be
+repeated. All unrelated dirty/untracked paths remain preserved.
+
+The first local-only budget inventory read `run_a3.py`, the frozen batch
+manifest/config, and batch-001 top-level summaries. It confirmed batch 001 is
+100 samples, 700 nominal calls, 2,100 code-retry maximum calls, an operational
+850-attempt stop, and a $7 plan stop, while both
+`input_token_ceiling` and `output_token_ceiling` remain null. The run is
+still `initialized` with completion 0/0/100; all three readiness summaries
+remain total 100 / failed 0.
+
+The command's final generic `jq` projection incorrectly treated
+`sample_ids.json` as an object instead of an array and exited 5 after all
+earlier reads. This is a diagnostic-shape error only; it changed no artifact
+and sent no request. Do not repeat that loop. The safest resume is a bounded
+source read of `run_a3.py` lines 380–770 plus its imported request-binding
+modules, then offline measurement of the already-prepared prompts/images.
+Never invoke `run` or pass `--allow-api-calls` during accounting.
+
+That bounded source read then completed with:
+
+```bash
+sed -n '380,770p' layout_agent/run_a3.py
+sed -n '1,360p' metagpt/ext/agentlayout/a3_stage_binding.py
+sed -n '1,360p' metagpt/ext/agentlayout/actions/{analyze_a3,plan_assets_a3,compose_concept_a3,generate_layout_a3,judge_select_a3}.py
+```
+
+It confirmed there is currently no pre-call call/token/USD reservation or
+runtime ceiling enforcement anywhere in `run_a3.py`, `A3StageBinding`, or the
+five L0 paid actions. Each action can issue up to three provider attempts on
+schema/validation failure, but the binding appends only one post-return stage
+record with a best-effort cost-manager delta. Thus `stage_calls=7` is not an
+attempt cap, and the existing `--allow-api-calls` command cannot enforce the
+proposed 2,100-call, token, or dollar boundaries. No action sets an explicit
+completion-token limit. This must be resolved before requesting paid
+authorization; a planning-only ceiling must not be represented as a hard
+runtime stop.
+
+The subsequent full provider read established that MetaGPT uses OpenAI Chat
+Completions here. `OpenAILLM._cons_kwargs` removes both `max_tokens` and the
+configured temperature for every `gpt-5*` model, so the generic
+`LLMConfig.max_token=4096` is not an output ceiling for the frozen snapshot.
+`OpenAILLM.acompletion_text` also has a six-attempt `APIConnectionError`
+retry, outside the action's three schema attempts. Finally,
+`BaseLLM._user_msg_with_imgs` emits only an image URL and does not emit the
+frozen config's `detail: high`; the actual request therefore leaves image
+detail to the provider default. These are blocking accounting/contract gaps,
+not paid-run results. The OpenAI SDK's own transport retry default and the
+active non-secret config fields still need local-only verification.
+
+The safe config/SDK check then confirmed OpenAI Python 1.64.0 with
+`DEFAULT_MAX_RETRIES=2`; the active non-secret model is the frozen snapshot
+and all relevant limits otherwise inherit defaults. Combined with the
+provider's six-attempt connection retry, one action schema attempt can fan out
+to as many as 18 HTTP attempts. Official Docs MCP lookup completed without a
+model call; current pricing/model/vision facts and source URLs are recorded in
+the scoped `findings.md`. A combined three-page tool output was truncated, so
+the session-stored vision result was parsed locally by exact formula keywords
+instead of repeating the fetch. API/model calls and paid cost remained zero.
+
+Official token-counting documentation and the installed SDK both confirm
+`max_completion_tokens` is available and caps visible, non-visible, and
+reasoning tokens. A local-only aggregation of the 100 prepared batch-001
+Analyst packets/images plus the immutable completed N=100 request/response
+artifacts then produced the detailed evidence in `findings.md`: batch-001
+nominal high-detail image units 774,360; prior 700 base prompt proxy tokens
+1,869,562; prior 714-attempt output proxy tokens 445,497. Candidate hard caps
+are 850 actual HTTP calls, 4,500,000 input, 800,000 output, and US$7.00, with
+per-stage completion caps 4096/4096/2048/2048/512. At Standard prices the two
+token ceilings algebraically cost US$6.975. They remain unauthorized and must
+first be enforced by a paid-run lock plus pre-call reserve/post-call settle
+logic with all hidden SDK/provider retries disabled.
+
+The user then requested that further checking stop and the experiment begin as
+soon as possible. Honor that request: perform no more broad audits, no N=100
+rerun, and no batch-001 readiness rerun. The only remaining zero-cost work is
+the minimal runtime enforcement needed to make the four caps real. Before that
+implementation or any paid launch can be treated as permission to spend, wait
+for an explicit authorization naming this run ID, frozen model, 850 actual HTTP
+calls, 4.5M input tokens, 800k output tokens, and US$7.00. Once received, use
+one focused implementation pass and one focused verification pass, then launch
+exactly batch 001; do not expand scope.
+
+At `2026-07-12 16:52:39 CST (+0800)`, the expedited documentation pre-commit gate ran only:
+
+```bash
+git diff --check -- <the-four-scoped-planning/handoff-files>
+git add -- <the-four-scoped-planning/handoff-files>
+git diff --cached --check
+```
+
+It passed on branch `feat/step76-89-sega-pipeline`: checkpoint 45 precedes
+the single checkpoint 46, the index contains exactly four allowlisted files,
+and cached whitespace is clean. No test, readiness step, client, evaluator, or
+model call ran; API/model calls and paid cost remained zero.
+
 ## Next task and stop conditions
 
 - COLE hardening and all previous N=100 artifacts remain complete; never rerun
