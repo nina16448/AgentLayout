@@ -4,7 +4,7 @@ Repository: `/home/hui0705/MetaGPT`
 
 Branch: `feat/step76-89-sega-pipeline`
 
-Updated: 2026-07-12 16:28 CST (Asia/Taipei; batch 001 zero-cost readiness
+Updated: 2026-07-12 16:34 CST (Asia/Taipei; batch 001 zero-cost readiness
 complete; paid generation has not started)
 
 ## Current objective
@@ -2403,6 +2403,48 @@ command is a scoped commit with message
 `feat(layout-agent): prepare full Crello batching`, followed by a normal push
 to the existing tracking branch. Stop and record the exact error if either
 command fails.
+
+## Execution checkpoint 44 — scoped Crello readiness commit created
+
+The allowlisted commit succeeded as `de5fc0cf` with message
+`feat(layout-agent): prepare full Crello batching`. It contains exactly 31
+files and reports 6,958 insertions / 31 deletions. The recurring repository
+auto-GC warning says `.git/gc.log` contains too many unreachable loose
+objects; it did not block the commit. Do not run destructive `git prune` as
+part of this task.
+
+The commit contains no operational run/cache artifact and no unrelated user
+work. API/model calls: `0`; paid tokens: `0`; paid cost: `$0.00`. Safest resume
+command is `git push nina feat/step76-89-sega-pipeline`. If it succeeds,
+record the remote hash in this handoff and make one small handoff-only commit;
+if it fails, stop with the exact remote error.
+
+## Execution checkpoint 45 — readiness commit pushed; final handoff pending
+
+At `2026-07-12 16:34:53 CST (+0800)`,
+`git push nina feat/step76-89-sega-pipeline` exited 0 and advanced the remote
+from `b1338441` to `de5fc0cf`. The pushed commit is the exact 31-file scoped
+Crello readiness implementation from checkpoint 44. API/model calls: `0`;
+paid tokens: `0`; paid cost: `$0.00`.
+
+The user reported an account balance of `$87.00`, but that is neither a token
+budget nor paid authorization. Batch 001 is prepared but generation has not
+started. Its refusal gate froze 700 nominal calls / 2,100 schema-retry code
+ceiling; exact input/output token ceilings and current official USD pricing
+are still incomplete. The `$7.00` batch stop remains a plan guardrail only.
+
+Intentionally uncommitted operational data includes the local Crello cache
+under `layout_agent/output/` and the pre-existing untracked
+`layout_agent/runs/` tree, which now also contains batch-001 readiness inputs.
+Do not bulk-add either tree. Unrelated user work remains dirty/untracked,
+including `AGENTS.md`, `layout_agent/CODEX_HANDOFF.md`,
+`layout_agent/IMPLEMENTATION_LOG.md`, `layout_agent/output2/`,
+`metagpt/provider/constant.py`, demos, and other paths shown by `git status`.
+
+Safest resume action is a two-file handoff-only commit for
+`layout_agent/next_step.md` and `.planning/crello-full-test/progress.md`, then
+push it. A next session must start at the last checkpoint, verify remote HEAD,
+and finish token/pricing accounting before requesting paid authorization.
 
 ## Next task and stop conditions
 

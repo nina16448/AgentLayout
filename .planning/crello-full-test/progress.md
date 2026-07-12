@@ -107,6 +107,12 @@
   - Pre-commit gate：branch/upstream/remote `nina` 均從 `b1338441...` 出發，
     `.git` writable、無 index lock、remote 可連線；31-file allowlist 與
     cached whitespace 全通過。
+  - Scoped implementation/readiness commit 成功：`de5fc0cf`，31 files、
+    6,958 insertions／31 deletions；Git 重複既有 gc.log/unreachable warning，
+    不執行 destructive prune。等待 push。
+  - `git push nina feat/step76-89-sega-pipeline` exit 0：remote
+    `b1338441...`→`de5fc0cf...`。準備兩檔 handoff-only commit；正式實驗仍
+    0 calls／0 tokens／US$0.00。
 - 本次新增／修改的實作檔：
   - `layout_agent/prepare_full_crello.py`
   - `layout_agent/configs/a3_crello_test_l0_v1.json`
