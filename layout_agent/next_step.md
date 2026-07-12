@@ -1,26 +1,25 @@
-# A3 Crello-General N=100 — Session Handoff
+# A3 Full-Crello Expansion — Session Handoff
 
 Repository: `/home/hui0705/MetaGPT`
 
 Branch: `feat/step76-89-sega-pipeline`
 
-Updated: 2026-07-12 09:14 CST (Asia/Taipei; General generation, SEGA, and COLE
-complete and independently verified; scoped commit/push remain)
+Updated: 2026-07-12 14:36 CST (Asia/Taipei; prior N=100 workflows complete;
+full-Crello scope/cost/storage preflight complete and paid execution stopped)
 
 ## Current objective
 
-The Relation N=100 SEGA and matched COLE lines are complete and pushed through
-commit `6b4197f9`. The Crello-General N=100 generation, formal SEGA/PKU
-evaluation, and separately authorized General-vs-GT COLE judge are also
-complete: generation finished 100/100 with no failures, the deterministic
-sidecar evaluated 100/100, and the COLE judge published 200/200 successful
-blind scores. Human preference experiments remain skipped by the user's
-decision in `A3_EXPERIMENT_LOG.md` §23.7.
+The Relation and General N=100 generation/evaluation workflows, COLE runner
+hardening, and their scoped pushes are complete. Human preference experiments
+remain skipped by the user's decision in `A3_EXPERIMENT_LOG.md` §23.7, and no
+completed write-once run may be reused or overwritten.
 
-The only remaining task for these General N=100 changes is zero-cost scoped
-verification followed by a commit and push containing exactly the eight paths
-listed in checkpoint 15. No completed generation or evaluation may be rerun;
-the COLE authorization has been consumed.
+The current request is a new expansion to the "entire Crello dataset."
+Checkpoint 21 records the zero-cost inventory: official test is 1,971 samples
+(1,902 cached locally), while all train/validation/test splits total 23,302.
+No full-dataset run is initialized or authorized. The next step requires the
+user to choose the dataset and evaluation scope, after which a revision-pinned,
+batched, no-API readiness plan and exact cumulative paid budget can be frozen.
 
 ## Execution checkpoint 1 — General sample freeze complete
 
@@ -1479,13 +1478,108 @@ git status --short -- \
   layout_agent/next_step.md
 ```
 
+## Execution checkpoint 21 — full-Crello expansion preflight; paid run stopped
+
+At `2026-07-12 14:36:42 CST (+0800)`, the user requested an expansion from the
+completed N=100 experiments to the "entire Crello dataset." This phrase has
+two materially different scopes, so only a zero-cost inventory and budget
+preflight was performed. No run ID, sample snapshot, cache import, generation,
+evaluator, OpenAI client, staging directory, or final artifact was created.
+
+The official `cyberagent/crello` dataset-server inventory was queried with:
+
+```bash
+curl --silent --show-error --max-time 30 \
+  'https://datasets-server.huggingface.co/info?dataset=cyberagent%2Fcrello' \
+  | jq '.dataset_info.default.splits'
+```
+
+Result: train `19,479`, validation `1,852`, test `1,971`, total `23,302`.
+The dataset server reports 20,099,416,197 uncompressed bytes across the three
+splits; the Hugging Face dataset page reports about 18.3 GB of files. The
+dataset card warns that split membership can change between revisions, so any
+formal expansion must freeze the dataset revision as well as ordered IDs.
+
+The local test-cache inventory was checked with:
+
+```bash
+find layout_agent/output -mindepth 1 -maxdepth 1 -type d \
+  -name 'crello_*' -printf '.' | wc -c
+du -sh layout_agent/output layout_agent/runs/a3 layout_agent/evaluations
+df -h /home/hui0705/MetaGPT
+```
+
+Result: `1,902` cached test records, 69 fewer than the official test split;
+the cache is 3.6 GB, existing A3 runs are 1.3 GB, and only 98 GB remains on the
+workspace filesystem. `select_a3_general.py` selects only readable local test
+caches, and `snapshot-text-bitmaps` cannot create the missing `meta.json`
+caches. Therefore an official 1,971-sample test run first needs a frozen,
+write-once cache-import step for the missing 69. Running all three splits needs
+a new split-aware cache materializer and substantially more storage.
+
+The frozen generation model remains `gpt-5.4-mini-2026-03-17`. The official
+model page was rechecked and currently lists `$0.75/M` input tokens and
+`$4.50/M` output tokens; input includes text and image. The OpenAI Developer
+Docs MCP entry was missing, so this zero-cost setup command was run once:
+
+```bash
+codex mcp add openaiDeveloperDocs --url https://developers.openai.com/mcp
+# Added global MCP server 'openaiDeveloperDocs'.
+```
+
+It requires a future Codex restart before the MCP tools appear in the current
+process; pricing was therefore read from the official
+`https://developers.openai.com/api/docs/models/gpt-5.4-mini` page. No OpenAI
+API/model call was made.
+
+Budget projections use the completed General N=100 evidence: 7 nominal
+calls/sample, at most 21 attempts/sample, 714 persisted attempts, about 2.13M
+text-input and 0.46M output tokens, 3,143 seconds, and a 198 MB run directory.
+They are planning estimates, not billing telemetry; image tokens are additional.
+
+| Scope | Nominal / retry-max calls | Measured-scale text tokens | Text-only price estimate | Scaled prior authorization | Generation wall estimate | Run-dir estimate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Local cached test, N=1,902 | 13,314 / 39,942 | 40.51M in / 8.75M out | `$69.76` | 190.2M in / 42.795M out = `$335.23` | 16.6 h | 3.68 GiB |
+| Official full test, N=1,971 | 13,797 / 41,391 | 41.98M in / 9.07M out | `$72.29` | 197.1M in / 44.3475M out = `$347.39` | 17.2 h | 3.81 GiB |
+| Train+validation+test, N=23,302 | 163,114 / 489,342 | 496.33M in / 107.19M out | `$854.60` | 2.3302B in / 524.295M out = `$4,106.98` | 203.4 h | 45.06 GiB |
+
+The scaled authorization column conservatively scales the earlier N=100
+ceiling (10M input, 2.25M output, `$20`) and includes headroom for image input
+and retries. It is not permission to spend. The all-splits option would also
+need roughly 18.3 GB of dataset files plus an estimated ~44 GB split-aware
+cache and ~45 GB run directory, exceeding the current 98 GB free-space safety
+margin before temporary files and evaluation artifacts; it is blocked until
+storage is expanded or caches/runs are placed on another volume.
+
+Neither estimate includes a paid COLE evaluation. A full-test COLE-vs-GT run
+would require its own frozen runner, call/token/USD proposal, and explicit
+authorization after generation; it must not be inferred from a generation
+authorization. Deterministic SEGA/PKU evaluation is zero-LLM but would add
+several hours of detector inference at test-split scale.
+
+All checkpoint-15 write-once artifacts remain unchanged. API/model calls for
+checkpoint 21: `0`; paid tokens: `0`; paid cost: `$0.00`. The provider
+dashboard value of about `$87` remains an account-level observation from
+before this preflight, not a cost caused by it.
+
+Safest resume: first obtain an explicit scope decision—official test split
+only versus all three splits, and generation-only versus generation plus
+deterministic/paid evaluation. For the recommended official-test option, next
+implement a zero-cost, revision-pinned 1,971-ID cache/import and batched
+write-once plan, then re-run no-API readiness checks. Do not start generation
+until a new exact authorization names the final run/batch IDs, model, maximum
+calls, input tokens, output tokens, USD, and cumulative cross-batch ledger.
+
 ## Next task and stop conditions
 
-- COLE hardening, its focused verification, and all hardening/handoff commits
-  and pushes are complete. No COLE hardening persistence remains.
-- The only optional next engineering work is a separate zero-cost task for
-  HTTPX event-loop cleanup and Numba read-only-cache robustness.
-- Never rerun or overwrite General generation, SEGA, COLE, or any completed
-  evaluation; never reuse the consumed paid authorization or make an API call
-  as part of this completed workflow.
+- COLE hardening and all previous N=100 artifacts remain complete; never rerun
+  or overwrite them and never reuse their consumed paid authorizations.
+- The full-Crello request is stopped before data mutation and paid execution
+  because dataset scope and evaluation scope are ambiguous.
+- Recommended scope is the official test split (1,971), not train/validation,
+  because it preserves the evaluation protocol and fits current storage.
+- Train+validation+test (23,302) is additionally blocked by the current 98 GB
+  free-space margin and requires a new cache materializer plus storage plan.
+- No generation or paid judge may start until the user confirms the scope and
+  gives a new exact budget authorization after the batched dry-run proposal.
 - Preserve every unrelated dirty/untracked path listed above.
