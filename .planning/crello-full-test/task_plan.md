@@ -8,7 +8,8 @@
 
 ## 目前階段
 
-階段 2：零成本準備與完整 dry-run（進行中）
+階段 3：batch 001 generation 已部分完成，暫停在 paid continuation 授權邊界；
+後續批次的階段 2 readiness 仍依序與階段 3 交錯執行。
 
 ## 各階段
 
@@ -31,19 +32,20 @@
 - [x] 完成 batch 001 的 P-Full、R3 與 Analyst vision readiness（100/100）
 - [ ] batches 002–019 依使用者決定不預先準備；前一批驗收後才做下一批 readiness
 - [x] 產生全域 deterministic batch manifest 與每批 write-once 目標
-- [ ] 以 dry-run 算出精確 calls、input tokens、output tokens 與美元上限
-- [ ] 完成磁碟、網路、Git 可寫及無並行同批程序的檢查
+- [x] 以 dry-run 算出並以 runtime gate 強制 calls、input tokens、output tokens 與美元上限
+- [x] 完成 batch 001 的磁碟、網路、Git 可寫及無並行同批程序檢查
 - **狀態：** in_progress
 
 ### 階段 3：逐批生成與六軸評估
 
-- [ ] 先向使用者提出精確的第一批及全域付費預算
-- [ ] 取得明確付費執行授權後才啟動模型呼叫
+- [x] 向使用者提出 batch 001 精確付費預算並取得首次啟動授權
+- [x] 以 cumulative ledger 與四項 runtime hard cap 啟動 batch 001
+- [ ] 取得新的明確續跑授權，並決定是否重試兩個 validation-exhausted 樣本
 - [ ] 依序完成 18 批 100 筆與最後 71 筆
 - [ ] 每批生成停止後，以 offline/API-key-unset 模式計算六軸
 - [ ] 每批通過 hash reload、成本、staging 與完整性檢查後才解鎖下一批
 - [ ] 每批更新進度、`next_step.md`，做 scoped commit 並 push
-- **狀態：** pending（付費部分受授權閘門阻擋）
+- **狀態：** in_progress（49/100 durable success；付費續跑受新授權閘門阻擋）
 
 ### 階段 4：全域合併與驗證
 
@@ -62,9 +64,12 @@
 
 ## 付費授權閘門
 
-目前沒有任何 full-test 付費模型呼叫授權。階段 2 可以執行，但不得呼叫
-OpenAI 模型。階段 3 必須等 dry-run 產生精確的批次 ID、模型、最大 calls、
-input/output tokens、單批美元與累計美元上限，並取得使用者明確同意。
+Batch 001 的首次授權上限為累積 850 actual HTTP calls、4,500,000 input、
+800,000 output、US$7.00；執行已由使用者暫停。Ledger 已結算 369 calls、
+1,341,756 input、251,389 output、US$2.1375675，剩餘最多 481 calls、
+3,158,244 input、548,611 output、US$4.8624325。再次呼叫 OpenAI 前，必須
+取得使用者對這個 run/model/剩餘 envelope 的新明確授權，並決定兩個
+validation-exhausted 樣本是否可以重試；累積 cap 與 ledger 不得重設。
 
 ## 重啟時的讀取順序
 
@@ -96,6 +101,7 @@ input/output tokens、單批美元與累計美元上限，並取得使用者明�
 | 錯誤 | 嘗試次數 | 解決方案 |
 |------|---------|---------|
 | `git check-ignore -q` 同時傳入兩個 pathname，Git 拒絕執行 | 1 | 改成逐檔呼叫，不重複相同命令 |
+| Final handoff patch 命中較早的同名 `Next task` heading，checkpoint 49 順序驗證失敗 | 1 | 未 stage/commit；以 checkpoint 48 唯一尾句為錨點搬到檔尾，改用跨行安全的具名驗證 |
 | 聚焦驗證錯把五問都假設為 `\| 我...`，實際是 4 個「我」加 1 個「目標」 | 1 | 改成分別驗證 4 個 `\| 我` 與 1 個 `\| 目標是什麼` |
 | Commit 後 Git 提示 `.git/gc.log` 記錄過多 unreachable loose objects | 1 | 不影響本任務；保留 log，不自行執行 destructive `git prune`，僅向使用者回報 |
 | 一次讀取 `next_step.md` 851–1900 行造成工具輸出截斷 | 1 | 改成每次最多 250 行，逐段讀到 EOF，不重複大型輸出命令 |

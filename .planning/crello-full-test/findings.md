@@ -317,6 +317,36 @@
   token ceilings 的代數成本是 US$6.975，低於美元 cap。這些數字在 runner
   完成 lock/reserve/settle/disable-hidden-retry enforcement 前不構成授權提案。
 
+## 2026-07-12 checkpoint 48 恢復
+
+- `next_step.md` 現有 2,683 行；最新有效狀態是 checkpoint 48，而 scoped
+  ledger 先前只同步到付費啟動前。
+- Batch 001 已在使用者要求下暫停，現在沒有 runner、evaluator 或 paid
+  request 在執行。49 個 `pipeline/l0_result.json` 已 durable 成功，51 個樣本
+  尚未完成。
+- Append-only ledger 有 369 reservations 與 369 settlements，zero in-flight；
+  已保守計入 1,341,756 input、251,389 output、US$2.1375675。
+- 累積剩餘 envelope 是最多 481 actual HTTP calls、3,158,244 input、
+  548,611 output、US$4.8624325。後續不得重設 cap 或重跑 49 個成功樣本。
+- 本次恢復先只檢查使用者改動並做一次 focused zero-cost verification；未有
+  新的精確付費續跑授權前，不自動恢復 generation。
+- 目前 tracked dirty code 只有 `layout_agent/output2/step91_o4mini_ab.py` 與
+  `metagpt/provider/constant.py`；它們的 filesystem mtime 都是 2026-07-10，
+  早於 checkpoint 48，屬需保留的既有使用者變更，不能視為暫停後的新修正。
+- 這兩個 dirty diff 只放寬 Step 91 model CLI 並把 `gpt-5.4-mini` 加入 multimodal
+  substring 清單；尚未看到它們直接修改 batch-001 budget/resume 邏輯。
+- Paid guard/pause implementation 已在 commit `7f8e1343` 保存；其後 HEAD
+  `81909ed0` 只加入 Relation N=100 tree/statistics artifacts，沒有再修改
+  `run_a3.py`、`a3_paid_budget.py` 或其 focused tests。
+- 因此目前沒有可辨識的 checkpoint-48 後 batch-resume 實作修正可供驗證；
+  下一步只重跑既有 fake-client budget-gate focused test，然後停在付費授權邊界。
+- Focused zero-cost verification：以 unset `OPENAI_API_KEY` 執行
+  `tests/metagpt/ext/agentlayout/test_a3_paid_budget.py`，結果 `4 passed,
+  11 warnings in 11.40s`。Warnings 為既有 Python 3.9／第三方 deprecation；
+  本次沒有 API/model call、paid tokens 或新增費用。
+- `next_step.md` 有多個歷史 `Next task and stop conditions` heading；final
+  checkpoint 插入必須錨定最新 checkpoint 的唯一尾句，不能只匹配 heading。
+
 ## 資源
 
 - 詳細流程：`layout_agent/FULL_CRELLO_BATCH_PLAN.md`

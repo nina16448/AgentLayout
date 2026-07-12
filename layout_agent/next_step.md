@@ -2664,6 +2664,59 @@ must reuse the existing ledger and enforce the remaining envelope rather than
 resetting any cap. Run six-axis evaluation only after generation reaches the
 agreed terminal state.
 
+## Execution checkpoint 49 — continuation recovery reaches paid boundary
+
+At `2026-07-12 17:56:13 CST (+0800)`, the user asked to read this handoff from
+line 2560 onward and continue. The latest checkpoint 48, active scoped plan,
+findings, progress, and final-only repository protocol were recovered. The
+post-pause history and current dirty paths were inspected without modifying or
+staging any pre-existing user work. Commit `81909ed0` after the pause only adds
+the separate Relation N=100 tree/statistics work; there is no newer batch-001
+resume implementation change after `7f8e1343`. The two tracked dirty code diffs
+in `layout_agent/output2/step91_o4mini_ab.py` and
+`metagpt/provider/constant.py` predate checkpoint 48 and remain untouched.
+
+The single focused zero-cost verification was:
+
+```bash
+env -u OPENAI_API_KEY PYTHONDONTWRITEBYTECODE=1 \
+  /home/hui0705/.conda/envs/meta/bin/python -m pytest -q \
+  tests/metagpt/ext/agentlayout/test_a3_paid_budget.py
+```
+
+It passed `4 passed, 11 warnings in 11.40s`. The warnings are the existing
+Python 3.9 and third-party deprecations. No runner, evaluator, readiness job,
+OpenAI client, or paid model call was launched in this continuation; added
+calls/tokens/cost are `0 / 0 / US$0.00`.
+
+Generation therefore remains paused at the exact checkpoint-48 ledger state:
+49 durable successes, 51 non-success samples, 369 settled calls, 1,341,756
+input tokens, 251,389 output tokens, and US$2.1375675 conservatively charged.
+Before any paid continuation, obtain a new explicit authorization naming run
+`a3-crello-test-batch-001-n100-t2-l0-v1`, frozen model
+`gpt-5.4-mini-2026-03-17`, and the remaining cumulative envelope of at most 481
+actual HTTP calls, 3,158,244 input tokens, 548,611 output tokens, and
+US$4.8624325. The authorization must also explicitly say whether the two
+validation-exhausted samples may be retried. Do not infer either permission
+from a general request to continue.
+
+Only after that authorization, the safest cumulative-ledger resume command is:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 timeout 4500s \
+  /home/hui0705/.conda/envs/meta/bin/python \
+  layout_agent/run_a3.py run \
+  --run-dir layout_agent/runs/a3/a3-crello-test-batch-001-n100-t2-l0-v1 \
+  --tree-arm T2 \
+  --analyst-arm vision \
+  --authorization-receipt layout_agent/authorizations/a3-crello-test-batch-001-n100-t2-l0-v1.json \
+  --allow-api-calls
+```
+
+It must reuse the append-only ledger and skip the 49 completed L0 samples. Run
+six-axis evaluation only after generation reaches the explicitly agreed
+terminal state.
+
 ## Next task and stop conditions
 
 - COLE hardening and all previous N=100 artifacts remain complete; never rerun
@@ -2673,8 +2726,9 @@ agreed terminal state.
 - Each new batch must complete generation, immediate six-axis evaluation,
   validation, cost recording, handoff, and scoped persistence before the next.
 - Paid COLE evaluation, train, and validation are outside this plan.
-- The next authorized work is zero-cost tooling/readiness only. No generation
-  may start before a new exact call/token/USD budget receives explicit approval.
+- Batch 001 is partially generated and paused. No paid continuation may start
+  before the exact remaining call/token/USD envelope and retry policy receive
+  new explicit approval.
 - Pinned cache work is 74 missing caches plus 1,706 existing text sidecars;
   preserve and exclude the five local split-drift extras.
 - Keep `.planning/crello-full-test/{task_plan,findings,progress}.md` synchronized

@@ -2,6 +2,24 @@
 
 ## 會話：2026-07-12
 
+### Checkpoint 48 恢復
+
+- **狀態：** in_progress
+- 依使用者指示讀取 `layout_agent/next_step.md` 第 2560 行至檔尾。
+- 確認 paid batch 001 已暫停，49 筆完成、51 筆未完成，且目前沒有執行中
+  paid process。
+- 讀回 active scoped plan、完整 findings/progress 與 root execution protocol；
+  後續先做使用者變更的 focused zero-cost inspection/verification。
+- 本次恢復尚未發出 API/model call，新增 cost US$0.00。
+- 檢查 pause commit 後的歷史與 dirty paths：HEAD 後續變更不涉及 batch 001
+  resume；兩個 dirty code files 的 mtime 早於 pause，視為既有使用者工作保留。
+- Focused fake-client budget test 通過：`4 passed, 11 warnings in 11.40s`；
+  `OPENAI_API_KEY` unset，新增 calls/tokens/cost 為 `0 / 0 / US$0.00`。
+- 到達新的 paid continuation 授權邊界；尚未恢復 generation 或 evaluator。
+- 第一次 final document gate 在 staging 前失敗：checkpoint 49 被同名舊 heading
+  錨到第 861 行，且 budget grep 不容許換行。沒有 staged/commit/push；已改以
+  checkpoint 48 唯一尾句搬到最新 checkpoint 後並採跨行安全驗證。
+
 ### 階段 1：範圍、流程與護欄凍結
 
 - **狀態：** complete
