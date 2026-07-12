@@ -13,6 +13,7 @@
   - 完整讀取 `planning-with-files-zht` 3.4.0 與三份繁中範本。
   - 確認專案沒有既有 root/scoped planning files，建立本任務專用目錄。
   - 修正兩個驗證指令假設後，完成逐檔 ignore、whitespace、結構與 file-shape 檢查。
+  - 建立主要文件 commit `cf2b3889ca1e6af81ad4702ac254c13f4fa9464f`。
 - 建立／修改的檔案：
   - `layout_agent/FULL_CRELLO_BATCH_PLAN.md`
   - `layout_agent/next_step.md`
@@ -42,6 +43,7 @@
 | scoped Git 檢查 | 本任務文件 | 不包含既有 dirty/untracked 工作 | cached diff 恰為 6 個預期路徑；whitespace 通過 | 通過 |
 | 規劃檔結構 | 3 份 ledger＋active plan | 5 階段、完整五問、非空且 newline 結尾 | 5 階段；4 個「我」＋1 個「目標」；file shape 全通過 | 通過 |
 | 最終聚焦驗證 | 6 個本次文件 | 所有 planning/document gates 通過 | `focused planning validation: PASS` | 通過 |
+| 主要文件 commit | 6 個本次文件 | scoped commit，不含其他工作 | `cf2b3889ca1e6af81ad4702ac254c13f4fa9464f` | 通過 |
 
 ## 錯誤日誌
 
@@ -49,6 +51,7 @@
 |----------|------|---------|---------|
 | 2026-07-12 15:22 CST | `git check-ignore -q` 不接受兩個 pathname | 1 | 改為迴圈逐檔檢查，其他已通過結果不受影響 |
 | 2026-07-12 15:23 CST | 五問 assertion 錯把 5 列都預期成 `\| 我...` | 1 | 具名診斷確認實際為 4 個「我」加 1 個「目標」，改用正確 predicate |
+| 2026-07-12 15:28 CST | Git auto-GC 警告 unreachable loose objects 過多 | 1 | 不影響 commit/push；保留 `.git/gc.log`，不在本任務執行 `git prune` |
 
 ## 五問重啟檢查
 

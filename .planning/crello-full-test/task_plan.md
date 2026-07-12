@@ -96,6 +96,7 @@ input/output tokens、單批美元與累計美元上限，並取得使用者明�
 |------|---------|---------|
 | `git check-ignore -q` 同時傳入兩個 pathname，Git 拒絕執行 | 1 | 改成逐檔呼叫，不重複相同命令 |
 | 聚焦驗證錯把五問都假設為 `\| 我...`，實際是 4 個「我」加 1 個「目標」 | 1 | 改成分別驗證 4 個 `\| 我` 與 1 個 `\| 目標是什麼` |
+| Commit 後 Git 提示 `.git/gc.log` 記錄過多 unreachable loose objects | 1 | 不影響本任務；保留 log，不自行執行 destructive `git prune`，僅向使用者回報 |
 
 ## 備註
 
