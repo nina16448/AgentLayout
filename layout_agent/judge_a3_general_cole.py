@@ -14,14 +14,22 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import fcntl
 import hashlib
+import io
 import json
+import math
 import os
 import statistics
 import sys
+import threading
 import time
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Iterator, List, Optional, Sequence, Tuple
+
+from PIL import Image
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "layout_agent"))
@@ -40,6 +48,7 @@ RUNS_ROOT = REPO / "layout_agent/runs/a3"
 GT_ROOT = REPO / "layout_agent/output"
 OUT_ROOT = REPO / "layout_agent/evaluations/a3-cole/a3.cole-judge.v1"
 EVALUATION_ID = "a3-general-n100-cole-v1"
+PAID_RUN_LOCK = OUT_ROOT / f".{EVALUATION_ID}.paid-run.lock"
 
 HARD_CALL_CAP = 220
 INPUT_TOKEN_CAP = 3_000_000
@@ -62,6 +71,68 @@ EXPECTED_INPUT_SNAPSHOT_SHA256 = (
     "aa7c5b236bc8655bf182cfe8fc898266fbb8e136b30c3f8ae2e7e89bbcb5fa72"
 )
 
+# OpenAI vision inputs are transported as base64 data URLs but accounted as
+# image tokens rather than tokenized base64 text. For high-detail accounting,
+# normalize within 2048px and, when still larger, to a 768px short edge, then
+# count 512px tiles. The 1,024-token base and per-tile bounds are deliberately
+# much larger than the published high-detail accounting constants. The exact
+# non-image request JSON is separately bounded at one token per UTF-8 byte plus
+# 1,024 framing tokens. This stays conservative without pretending every
+# transport byte is a text token (which would make the authorized 3M cap
+# impossible for the already-pinned 31.7MB input set).
+VISION_MAX_EDGE = 2048
+VISION_SHORT_EDGE = 768
+VISION_TILE_SIZE = 512
+VISION_BASE_TOKEN_BOUND = 1_024
+VISION_TILE_TOKEN_BOUND = 1_024
+REQUEST_TEXT_TOKEN_MARGIN = 1_024
+PINNED_BYTES_KEY = "_verified_input_bytes"
+PINNED_SIZE_KEY = "_verified_image_size"
+
+_SAFE_PROVIDER_ERROR_TYPES = {
+    "APIConnectionError": "provider_connection_error",
+    "APIError": "provider_api_error",
+    "APITimeoutError": "provider_timeout",
+    "AuthenticationError": "provider_authentication_error",
+    "BadRequestError": "provider_bad_request",
+    "ConnectionError": "provider_connection_error",
+    "InternalServerError": "provider_internal_error",
+    "PermissionDeniedError": "provider_permission_error",
+    "RateLimitError": "provider_rate_limit",
+    "TimeoutError": "provider_timeout",
+}
+_UNSUPPORTED_PARAMETER_NAMES = {"temperature", "max_tokens"}
+_UNSUPPORTED_PARAMETER_CODES = {"unsupported_parameter"}
+
+
+class PaidRunLockError(RuntimeError):
+    """Raised when another paid instance already owns the stable lock."""
+
+
+@contextmanager
+def _paid_run_lock() -> Iterator[None]:
+    """Acquire the stable paid-run lock without waiting and never unlink it."""
+
+    PAID_RUN_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(PAID_RUN_LOCK, flags, 0o600)
+    except OSError:
+        raise PaidRunLockError("paid_run_lock_open_failed") from None
+    try:
+        os.fchmod(descriptor, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise PaidRunLockError("paid_run_lock_contended") from None
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -69,6 +140,141 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def _pin_verified_inputs(tasks: Sequence[dict]) -> None:
+    """Verify each path once and retain those exact bytes for paid requests."""
+
+    for task in tasks:
+        path = task["path"]
+        if not path.is_file():
+            raise RuntimeError(f"missing judge input: {path}")
+        value = path.read_bytes()
+        if _sha256_bytes(value) != task["sha256"]:
+            raise RuntimeError(f"judge input SHA-256 mismatch: {path}")
+        try:
+            with Image.open(io.BytesIO(value)) as image:
+                size = image.size
+                image.verify()
+        except Exception:
+            raise RuntimeError(f"invalid judge input image: {path}") from None
+        if size[0] <= 0 or size[1] <= 0:
+            raise RuntimeError(f"invalid judge input dimensions: {path}")
+        task[PINNED_BYTES_KEY] = value
+        task[PINNED_SIZE_KEY] = size
+
+
+def _verify_inputs_unchanged(tasks: Sequence[dict]) -> None:
+    """Postflight check that disk still equals the exact preflight bytes."""
+
+    for task in tasks:
+        pinned = task.get(PINNED_BYTES_KEY)
+        if not isinstance(pinned, bytes):
+            raise RuntimeError("judge input was not pinned during preflight")
+        path = task["path"]
+        try:
+            current = path.read_bytes()
+        except OSError:
+            raise RuntimeError(f"judge input disappeared during run: {path}") from None
+        if current != pinned or _sha256_bytes(current) != task["sha256"]:
+            raise RuntimeError(f"judge input changed during paid execution: {path}")
+
+
+def _normalized_vision_tiles(size: Tuple[int, int]) -> int:
+    """Return a conservative high-detail 512px tile count."""
+
+    width, height = size
+    scale = min(1.0, VISION_MAX_EDGE / max(width, height))
+    width = max(1, math.ceil(width * scale))
+    height = max(1, math.ceil(height * scale))
+    if min(width, height) > VISION_SHORT_EDGE:
+        scale = VISION_SHORT_EDGE / min(width, height)
+        width = max(1, math.ceil(width * scale))
+        height = max(1, math.ceil(height * scale))
+    return math.ceil(width / VISION_TILE_SIZE) * math.ceil(
+        height / VISION_TILE_SIZE
+    )
+
+
+def _without_image_payload(value):
+    """Copy request data while replacing only base64 image payload bytes."""
+
+    if isinstance(value, list):
+        return [_without_image_payload(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _without_image_payload(item) for key, item in value.items()}
+    if isinstance(value, str) and value.startswith("data:") and ";base64," in value:
+        prefix, _separator, _payload = value.partition(",")
+        return f"{prefix},<verified-image-bytes>"
+    return value
+
+
+def _request_input_token_bound(
+    messages: Sequence[dict],
+    kwargs: dict,
+    image_size: Optional[Tuple[int, int]] = None,
+) -> int:
+    """Bound input tokens from exact non-image JSON and verified image size."""
+
+    request = {
+        "model": MODEL,
+        "messages": _without_image_payload(list(messages)),
+        **kwargs,
+    }
+    text_bytes = len(
+        json.dumps(
+            request,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+    image_bound = 0
+    if image_size is not None:
+        image_bound = VISION_BASE_TOKEN_BOUND + (
+            VISION_TILE_TOKEN_BOUND * _normalized_vision_tiles(image_size)
+        )
+    return text_bytes + REQUEST_TEXT_TOKEN_MARGIN + image_bound
+
+
+def _structured_error_value(error: Exception, field: str):
+    """Read structured provider metadata without ever stringifying it."""
+
+    try:
+        direct = getattr(error, field, None)
+        body = getattr(error, "body", None)
+    except Exception:
+        return None
+    if direct is not None:
+        return direct
+    if isinstance(body, dict):
+        value = body.get(field)
+        nested = body.get("error")
+        if value is None and isinstance(nested, dict):
+            value = nested.get(field)
+        return value
+    return None
+
+
+def _is_unsupported_parameter(error: Exception) -> bool:
+    param = _structured_error_value(error, "param")
+    code = _structured_error_value(error, "code")
+    return (
+        isinstance(param, str)
+        and isinstance(code, str)
+        and param in _UNSUPPORTED_PARAMETER_NAMES
+        and code in _UNSUPPORTED_PARAMETER_CODES
+    )
+
+
+def _safe_provider_error_code(error: Exception) -> str:
+    if _is_unsupported_parameter(error):
+        return "provider_unsupported_parameter"
+    return _SAFE_PROVIDER_ERROR_TYPES.get(type(error).__name__, "provider_error")
 
 
 def _load_tasks() -> Tuple[List[dict], List[str], str]:
@@ -142,12 +348,7 @@ def _preflight(tasks: Sequence[dict], snapshot_sha256: str) -> None:
     final, staging = _target_paths()
     if final.exists() or staging.exists():
         raise RuntimeError(f"write-once target already exists: {final} or {staging}")
-    for task in tasks:
-        path = task["path"]
-        if not path.is_file():
-            raise RuntimeError(f"missing judge input: {path}")
-        if _sha256(path) != task["sha256"]:
-            raise RuntimeError(f"judge input SHA-256 mismatch: {path}")
+    _pin_verified_inputs(tasks)
     if snapshot_sha256 != EXPECTED_INPUT_SNAPSHOT_SHA256:
         raise RuntimeError(
             f"input snapshot changed: {snapshot_sha256} != "
@@ -161,91 +362,261 @@ def _preflight(tasks: Sequence[dict], snapshot_sha256: str) -> None:
     )
 
 
-class Budget:
-    """Track every API attempt and all provider-reported token usage."""
+@dataclass(frozen=True)
+class Reservation:
+    reservation_id: int
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    estimated_usd: float
 
-    def __init__(self) -> None:
-        self.calls = PRIOR_INTERRUPTED_CALLS
-        self.input_tokens = PRIOR_INPUT_TOKEN_RESERVE
-        self.output_tokens = PRIOR_OUTPUT_TOKEN_RESERVE
+
+class Budget:
+    """Atomically reserve every cap before dispatch, then settle fail-closed."""
+
+    def __init__(
+        self,
+        *,
+        call_cap: int = HARD_CALL_CAP,
+        input_token_cap: int = INPUT_TOKEN_CAP,
+        output_token_cap: int = OUTPUT_TOKEN_CAP,
+        usd_cap: float = USD_CAP,
+        prior_calls: int = PRIOR_INTERRUPTED_CALLS,
+        prior_input_tokens: int = PRIOR_INPUT_TOKEN_RESERVE,
+        prior_output_tokens: int = PRIOR_OUTPUT_TOKEN_RESERVE,
+    ) -> None:
+        self.call_cap = call_cap
+        self.input_token_cap = input_token_cap
+        self.output_token_cap = output_token_cap
+        self.usd_cap = usd_cap
+        self.prior_calls = prior_calls
+        self.prior_input_tokens = prior_input_tokens
+        self.prior_output_tokens = prior_output_tokens
+        self.calls = prior_calls
+        self.input_tokens = prior_input_tokens
+        self.output_tokens = prior_output_tokens
         self.usage_reported_calls = 0
+        self._reserved_calls = 0
+        self._reserved_input_tokens = 0
+        self._reserved_output_tokens = 0
+        self._next_reservation_id = 1
+        self._active: Dict[int, Reservation] = {}
+        self._lock = threading.RLock()
+
+    @staticmethod
+    def _usd(input_tokens: int, output_tokens: int) -> float:
+        return (
+            input_tokens * INPUT_USD_PER_M
+            + output_tokens * OUTPUT_USD_PER_M
+        ) / 1_000_000
 
     @property
     def estimated_usd(self) -> float:
-        return (
-            self.input_tokens * INPUT_USD_PER_M
-            + self.output_tokens * OUTPUT_USD_PER_M
-        ) / 1_000_000
+        with self._lock:
+            return self._usd(self.input_tokens, self.output_tokens)
 
-    def take_call(self) -> bool:
-        if self.calls >= HARD_CALL_CAP or self.exceeded():
-            return False
-        self.calls += 1
-        return True
+    def reserve(
+        self, input_tokens: int, output_tokens: int = MAX_COMPLETION_TOKENS
+    ) -> Optional[Reservation]:
+        """Reserve one attempt atomically, or return None before dispatch."""
 
-    def record(self, response) -> dict:
-        usage = getattr(response, "usage", None)
+        if input_tokens < 0 or output_tokens < 0:
+            raise ValueError("reservation bounds must be non-negative")
+        with self._lock:
+            projected_calls = self.calls + self._reserved_calls + 1
+            projected_input = (
+                self.input_tokens + self._reserved_input_tokens + input_tokens
+            )
+            projected_output = (
+                self.output_tokens + self._reserved_output_tokens + output_tokens
+            )
+            if (
+                projected_calls > self.call_cap
+                or projected_input > self.input_token_cap
+                or projected_output > self.output_token_cap
+                or self._usd(projected_input, projected_output) > self.usd_cap
+            ):
+                return None
+            reservation = Reservation(
+                reservation_id=self._next_reservation_id,
+                calls=1,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                estimated_usd=self._usd(input_tokens, output_tokens),
+            )
+            self._next_reservation_id += 1
+            self._active[reservation.reservation_id] = reservation
+            self._reserved_calls += reservation.calls
+            self._reserved_input_tokens += reservation.input_tokens
+            self._reserved_output_tokens += reservation.output_tokens
+            return reservation
+
+    def _settle(
+        self,
+        reservation: Reservation,
+        *,
+        input_tokens: int,
+        output_tokens: int,
+        usage_reported: bool,
+    ) -> dict:
+        with self._lock:
+            active = self._active.pop(reservation.reservation_id, None)
+            if active != reservation:
+                raise RuntimeError("invalid_or_already_settled_reservation")
+            self._reserved_calls -= reservation.calls
+            self._reserved_input_tokens -= reservation.input_tokens
+            self._reserved_output_tokens -= reservation.output_tokens
+            self.calls += reservation.calls
+            self.input_tokens += input_tokens
+            self.output_tokens += output_tokens
+            if usage_reported:
+                self.usage_reported_calls += 1
+            bound_exceeded = (
+                input_tokens > reservation.input_tokens
+                or output_tokens > reservation.output_tokens
+            )
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "usage_reported": usage_reported,
+            "conservative": not usage_reported,
+            "reservation_bound_exceeded": bound_exceeded,
+        }
+
+    @staticmethod
+    def _usage_value(usage, primary: str, fallback: str) -> Optional[int]:
+        try:
+            value = getattr(usage, primary, None)
+            if value is None:
+                value = getattr(usage, fallback, None)
+        except Exception:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        return value if value >= 0 else None
+
+    def settle_response(self, reservation: Reservation, response) -> dict:
+        try:
+            usage = getattr(response, "usage", None)
+        except Exception:
+            usage = None
         if usage is None:
-            return {"input_tokens": None, "output_tokens": None}
-        input_tokens = int(
-            getattr(usage, "prompt_tokens", None)
-            or getattr(usage, "input_tokens", 0)
-            or 0
+            return self.settle_failure(reservation)
+        input_tokens = self._usage_value(usage, "prompt_tokens", "input_tokens")
+        output_tokens = self._usage_value(
+            usage, "completion_tokens", "output_tokens"
         )
-        output_tokens = int(
-            getattr(usage, "completion_tokens", None)
-            or getattr(usage, "output_tokens", 0)
-            or 0
+        if input_tokens is None or output_tokens is None:
+            return self.settle_failure(reservation)
+        return self._settle(
+            reservation,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            usage_reported=True,
         )
-        self.input_tokens += input_tokens
-        self.output_tokens += output_tokens
-        self.usage_reported_calls += 1
-        return {"input_tokens": input_tokens, "output_tokens": output_tokens}
+
+    def settle_failure(self, reservation: Reservation) -> dict:
+        """Convert an uncertain in-flight reservation to a conservative charge."""
+
+        return self._settle(
+            reservation,
+            input_tokens=reservation.input_tokens,
+            output_tokens=reservation.output_tokens,
+            usage_reported=False,
+        )
 
     def exceeded(self) -> bool:
-        return (
-            self.input_tokens > INPUT_TOKEN_CAP
-            or self.output_tokens > OUTPUT_TOKEN_CAP
-            or self.estimated_usd > USD_CAP
-        )
+        with self._lock:
+            projected_input = self.input_tokens + self._reserved_input_tokens
+            projected_output = self.output_tokens + self._reserved_output_tokens
+            return (
+                self.calls + self._reserved_calls > self.call_cap
+                or projected_input > self.input_token_cap
+                or projected_output > self.output_token_cap
+                or self._usd(projected_input, projected_output) > self.usd_cap
+            )
+
+    def has_active_reservations(self) -> bool:
+        with self._lock:
+            return bool(self._active)
 
     def as_dict(self) -> dict:
-        return {
-            "calls": self.calls,
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "usage_reported_calls": self.usage_reported_calls,
-            "estimated_usd": round(self.estimated_usd, 6),
-            "prior_interrupted_calls": PRIOR_INTERRUPTED_CALLS,
-            "prior_input_token_reserve": PRIOR_INPUT_TOKEN_RESERVE,
-            "prior_output_token_reserve": PRIOR_OUTPUT_TOKEN_RESERVE,
-        }
+        with self._lock:
+            reserved_usd = self._usd(
+                self._reserved_input_tokens, self._reserved_output_tokens
+            )
+            return {
+                "calls": self.calls,
+                "input_tokens": self.input_tokens,
+                "output_tokens": self.output_tokens,
+                "usage_reported_calls": self.usage_reported_calls,
+                "estimated_usd": round(
+                    self._usd(self.input_tokens, self.output_tokens), 6
+                ),
+                "reserved_calls": self._reserved_calls,
+                "reserved_input_tokens": self._reserved_input_tokens,
+                "reserved_output_tokens": self._reserved_output_tokens,
+                "reserved_estimated_usd": round(reserved_usd, 6),
+                "prior_interrupted_calls": self.prior_calls,
+                "prior_input_token_reserve": self.prior_input_tokens,
+                "prior_output_token_reserve": self.prior_output_tokens,
+            }
 
 
 async def _resolve_params(client, budget: Budget) -> dict:
     legacy = {"temperature": 0.0, "max_tokens": MAX_COMPLETION_TOKENS}
     modern = {"max_completion_tokens": MAX_COMPLETION_TOKENS}
-    if not budget.take_call():
+    messages = [{"role": "user", "content": "Reply with the word ok."}]
+    reservation = budget.reserve(
+        _request_input_token_bound(messages, legacy), MAX_COMPLETION_TOKENS
+    )
+    if reservation is None:
         raise RuntimeError("authorization cap exhausted before parameter probe")
     try:
         response = await client.chat.completions.create(
             model=MODEL,
-            messages=[{"role": "user", "content": "Reply with the word ok."}],
+            messages=messages,
             **legacy,
         )
-        budget.record(response)
-        print(f"[probe] param variant={legacy}", flush=True)
-        return legacy
+    except asyncio.CancelledError:
+        budget.settle_failure(reservation)
+        raise
     except Exception as error:
-        message = str(error).lower()
-        supported_error = any(
-            marker in message
-            for marker in ("temperature", "max_tokens", "unsupported")
-        )
-        if not supported_error:
-            raise
-        print(f"[probe] param variant={modern}", flush=True)
-        return modern
+        budget.settle_failure(reservation)
+        if _is_unsupported_parameter(error):
+            print("[probe] param variant=modern", flush=True)
+            return modern
+        code = _safe_provider_error_code(error)
+        raise RuntimeError(f"parameter_probe_failed:{code}") from None
+    usage = budget.settle_response(reservation, response)
+    if not usage["usage_reported"]:
+        raise RuntimeError("parameter_probe_failed:provider_usage_missing")
+    if usage["reservation_bound_exceeded"] or budget.exceeded():
+        raise RuntimeError("parameter_probe_failed:authorization_cap_exceeded")
+    print("[probe] param variant=legacy", flush=True)
+    return legacy
+
+
+def _score_messages(task: dict) -> List[dict]:
+    pinned = task.get(PINNED_BYTES_KEY)
+    if not isinstance(pinned, bytes):
+        raise RuntimeError("judge input was not pinned during preflight")
+    encoded = base64.b64encode(pinned).decode("ascii")
+    return [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": s21.COLE_PROMPT},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{task['mime']};base64,{encoded}",
+                        "detail": "high",
+                    },
+                },
+            ],
+        }
+    ]
 
 
 def _base_row(task: dict) -> dict:
@@ -258,59 +629,74 @@ def _base_row(task: dict) -> dict:
 
 
 async def _score_task(client, task: dict, kwargs: dict, budget: Budget) -> dict:
-    encoded: Optional[str] = None
-    last_error = "no attempt"
+    messages = _score_messages(task)
+    image_size = task.get(PINNED_SIZE_KEY)
+    if not (
+        isinstance(image_size, tuple)
+        and len(image_size) == 2
+        and all(isinstance(value, int) for value in image_size)
+    ):
+        raise RuntimeError("judge input dimensions were not pinned during preflight")
+    input_bound = _request_input_token_bound(messages, kwargs, image_size)
+    last_error_code = "no_attempt"
     for attempt in range(2):
-        if not budget.take_call():
+        reservation = budget.reserve(input_bound, MAX_COMPLETION_TOKENS)
+        if reservation is None:
             return {**_base_row(task), "status": "authorization_cap_reached"}
-        if encoded is None:
-            encoded = base64.b64encode(task["path"].read_bytes()).decode()
         try:
             response = await client.chat.completions.create(
                 model=MODEL,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": s21.COLE_PROMPT},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{task['mime']};base64,{encoded}"
-                                },
-                            },
-                        ],
-                    }
-                ],
+                messages=messages,
                 **kwargs,
             )
-            usage = budget.record(response)
-            if budget.exceeded():
+        except asyncio.CancelledError:
+            budget.settle_failure(reservation)
+            raise
+        except Exception as error:  # noqa: BLE001
+            usage = budget.settle_failure(reservation)
+            last_error_code = _safe_provider_error_code(error)
+        else:
+            usage = budget.settle_response(reservation, response)
+            if not usage["usage_reported"]:
+                last_error_code = "provider_usage_missing"
+            elif usage["reservation_bound_exceeded"] or budget.exceeded():
                 return {
                     **_base_row(task),
                     "status": "authorization_cap_exceeded",
                     "usage": usage,
                 }
-            text = (response.choices[0].message.content or "").strip()
-            parsed = s21._parse_cole_json(text)
-            if parsed is not None:
-                return {
-                    **_base_row(task),
-                    "status": "ok",
-                    "scores": parsed,
-                    "smean4": statistics.mean(parsed[k] for k in s21.REPORT_AXES),
-                    "usage": usage,
-                }
-            last_error = f"unparseable: {text[:160]!r}"
-        except Exception as error:  # noqa: BLE001
-            last_error = f"{type(error).__name__}: {error}"
+            else:
+                try:
+                    text = (response.choices[0].message.content or "").strip()
+                    parsed = s21._parse_cole_json(text)
+                except Exception:  # response contents must never enter errors
+                    parsed = None
+                if parsed is not None:
+                    return {
+                        **_base_row(task),
+                        "status": "ok",
+                        "scores": parsed,
+                        "smean4": statistics.mean(
+                            parsed[key] for key in s21.REPORT_AXES
+                        ),
+                        "usage": usage,
+                    }
+                last_error_code = "response_unparseable"
         if attempt == 0:
             await asyncio.sleep(1.5)
-    return {**_base_row(task), "status": "failed", "error": last_error}
+    return {
+        **_base_row(task),
+        "status": "failed",
+        "error_code": last_error_code,
+    }
 
 
 async def _run_paid(tasks: List[dict]) -> Tuple[List[dict], Budget, bool]:
-    client = s21._load_openai_client()
+    try:
+        client = s21._load_openai_client()
+    except Exception as error:
+        code = _safe_provider_error_code(error)
+        raise RuntimeError(f"provider_client_load_failed:{code}") from None
     budget = Budget()
     kwargs = await _resolve_params(client, budget)
     semaphore = asyncio.Semaphore(CONCURRENCY)
@@ -344,6 +730,8 @@ async def _run_paid(tasks: List[dict]) -> Tuple[List[dict], Budget, bool]:
             return row
 
     rows = list(await asyncio.gather(*(worker(task) for task in tasks)))
+    if budget.has_active_reservations():
+        raise RuntimeError("active_budget_reservations_after_gather")
     return rows, budget, abort.is_set()
 
 
@@ -367,6 +755,29 @@ def _arm_means(rows: Sequence[dict]) -> dict:
             100.0 * output["general"]["smean4"] / output["gt"]["smean4"]
         )
     return output
+
+
+def _validate_complete_rows(rows: Sequence[dict], matched_ids: Sequence[str]) -> None:
+    """Require the exact 100 General + 100 GT ordered publication contract."""
+
+    if len(matched_ids) != 100 or len(set(matched_ids)) != 100:
+        raise RuntimeError("publication requires exactly 100 unique matched IDs")
+    if len(rows) != 200:
+        raise RuntimeError("publication requires exactly 200 scoring rows")
+    if any(row.get("status") != "ok" for row in rows):
+        raise RuntimeError("publication requires all 200 scoring rows to be ok")
+    try:
+        actual_pairs = [(row["arm"], row["sample_id"]) for row in rows]
+    except (KeyError, TypeError):
+        raise RuntimeError("publication rows lack required identity fields") from None
+    expected_pairs = [
+        *(("general", sample_id) for sample_id in matched_ids),
+        *(("gt", sample_id) for sample_id in matched_ids),
+    ]
+    if len(set(actual_pairs)) != 200:
+        raise RuntimeError("publication requires unique arm/sample pairs")
+    if actual_pairs != expected_pairs:
+        raise RuntimeError("publication arm/sample IDs or order differ from snapshot")
 
 
 def _paired(rows: Sequence[dict]) -> dict:
@@ -422,6 +833,9 @@ def _publish(
     matched_ids: List[str],
     snapshot_sha256: str,
 ) -> Path:
+    _validate_complete_rows(rows, matched_ids)
+    if budget.exceeded() or budget.has_active_reservations():
+        raise RuntimeError("publication requires a settled in-cap budget")
     final, staging = _target_paths()
     if final.exists() or staging.exists():
         raise RuntimeError("write-once target appeared before publication")
@@ -474,23 +888,30 @@ def main() -> int:
     mode.add_argument("--allow-api-calls", action="store_true")
     args = parser.parse_args()
 
-    tasks, matched_ids, snapshot_sha256 = _load_tasks()
-    _preflight(tasks, snapshot_sha256)
     if args.preflight:
+        tasks, _matched_ids, snapshot_sha256 = _load_tasks()
+        _preflight(tasks, snapshot_sha256)
         return 0
 
-    started = time.time()
-    rows, budget, aborted = asyncio.run(_run_paid(tasks))
-    wall_seconds = time.time() - started
-    if aborted or budget.exceeded():
-        raise RuntimeError(
-            f"paid judge aborted without publication; budget={budget.as_dict()}"
+    with _paid_run_lock():
+        tasks, matched_ids, snapshot_sha256 = _load_tasks()
+        _preflight(tasks, snapshot_sha256)
+        started = time.time()
+        rows, budget, aborted = asyncio.run(_run_paid(tasks))
+        wall_seconds = time.time() - started
+        if aborted or budget.exceeded() or budget.has_active_reservations():
+            raise RuntimeError(
+                f"paid judge aborted without publication; budget={budget.as_dict()}"
+            )
+        _validate_complete_rows(rows, matched_ids)
+        _verify_inputs_unchanged(tasks)
+        tasks_after, ids_after, snapshot_after = _load_tasks()
+        _preflight(tasks_after, snapshot_after)
+        if ids_after != matched_ids or snapshot_after != snapshot_sha256:
+            raise RuntimeError("judge inputs changed during paid execution")
+        final = _publish(
+            rows, budget, wall_seconds, matched_ids, snapshot_sha256
         )
-    tasks_after, ids_after, snapshot_after = _load_tasks()
-    _preflight(tasks_after, snapshot_after)
-    if ids_after != matched_ids or snapshot_after != snapshot_sha256:
-        raise RuntimeError("judge inputs changed during paid execution")
-    final = _publish(rows, budget, wall_seconds, matched_ids, snapshot_sha256)
     aggregate = json.loads((final / "aggregate.json").read_text())
     print(
         json.dumps(

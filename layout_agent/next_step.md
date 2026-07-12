@@ -1006,3 +1006,375 @@ jq -e '.evaluation_id == "a3-general-n100-cole-v1" and \
 - No required work remains for this workflow. Only optional zero-cost
   hardening and credential rotation remain, each as a separate scoped task.
 - Preserve all unrelated dirty/untracked work listed above.
+
+## Execution checkpoint 18 — zero-cost COLE runner hardening complete
+
+At `2026-07-12 12:27:19 CST (+0800)`, the separate zero-cost hardening task
+started. The user confirmed that the exposed OpenAI credential has been
+rotated. The user also reported that the provider dashboard currently shows
+about `$87.00`; this is recorded only as an account-level observation and is
+not attributable to this hardening task or necessarily to the completed
+General COLE judge run.
+
+No OpenAI client was loaded, no network or API call was made, token use was 0,
+and paid cost was `$0.00`. The runner and checkpoints 15--17 were read in full.
+The exact immutable-artifact verification command was:
+
+```bash
+sha256sum \
+  layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-general-n100-sega-v1/evaluation_manifest.json \
+  layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-general-n100-sega-v1/aggregate.json \
+  layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-general-n100-sega-v1/per_sample.jsonl \
+  layout_agent/evaluations/a3-cole/a3.cole-judge.v1/a3-general-n100-cole-v1/aggregate.json \
+  layout_agent/evaluations/a3-cole/a3.cole-judge.v1/a3-general-n100-cole-v1/per_sample.jsonl
+```
+
+It exited 0. All checkpoint 15 SHA-256 values remain unchanged:
+
+- SEGA manifest: `ee6f4d3284c91a0d8c5346b42d7e74f8640a63ddf77a97800931212a5d56086e`;
+- SEGA aggregate: `dc5dfe2446933df717b21987258beb933d702add6a5416c4e3819f72c66bf5ae`;
+- SEGA per-sample: `a72c699ff4eac61022c8cb12d4705afb845a80699c76fbe4923465827e663f25`;
+- COLE aggregate: `f4ea72902a598996687240074be255d13c188304342169470084b56dda42fcb8`;
+- COLE per-sample: `56671d43916762c85c7ae30aa11dd91ed1151a12741a0f2e2fa376edb45706b7`.
+
+At `2026-07-12 12:28:24 CST (+0800)`, a second local-only discovery command
+read the existing test conventions and measured the byte sizes of the 200
+already-published pinned inputs with `jq -r '.path' ... | xargs stat | awk`.
+It exited 0: count 200, minimum 8,293 bytes, maximum 2,439,506 bytes, total
+31,737,843 bytes, and average 158,689 bytes. This demonstrates that treating
+each base64 byte as one input token would conservatively but permanently
+exhaust the 3,000,000-token authorization. The implementation would instead
+reserve a documented conservative text-payload byte bound plus a deterministic
+vision-token bound derived from the exact pinned image bytes/dimensions, along
+with the full completion-token ceiling. No client was imported or loaded, API
+calls/tokens were 0, and paid cost remained `$0.00`.
+
+At `2026-07-12 12:31:33 CST (+0800)`, a local Pillow header inspection of the
+same 200 pinned paths exited 0 and found dimensions ranging across the existing
+dataset up to 3000x2000 pixels. A source-only inspection confirmed the current
+COLE request/parser boundary and found no reusable image-reservation helper.
+The reservation design therefore uses bytes pinned during preflight, derives a
+high-detail 512-pixel tile count after the documented 2048/768 normalization,
+applies deliberately conservative per-tile/base margins, and separately bounds
+the exact non-image JSON payload at one token per UTF-8 byte plus framing
+margin. This inspection did not import the runner or load a client; API calls
+and tokens were 0 and paid cost stayed `$0.00`.
+
+At `2026-07-12 12:37:33 CST (+0800)`, the first implementation pass completed
+via `apply_patch`. It modified only
+`layout_agent/judge_a3_general_cole.py`, added the focused offline module
+`tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py`, and
+continued this checkpoint. The runner now has a stable nonblocking 0600 paid
+lock, atomic four-cap reservations and conservative settlement, preflight byte
+pinning, postflight disk verification, exact 200-row publication validation,
+and allowlisted provider/parse error codes. The tests use fake clients and an
+autouse network/client prohibition. These edits were not yet test-validated at
+this timestamp. API/model calls and tokens were 0; paid cost was `$0.00`.
+The safest resume command is:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 /home/hui0705/.conda/envs/meta/bin/python -m pytest -q \
+  tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py
+```
+
+At `2026-07-12 12:38:27 CST (+0800)`, that exact focused pytest command
+completed with exit 0: `13 passed, 11 warnings in 11.04s`. The warnings are
+pre-existing Python 3.9/third-party deprecation and end-of-life notices; there
+were no test failures. The module's autouse fixture prohibited real OpenAI
+client construction and socket connection, and every response/client was a
+local fake. API/model calls and tokens were 0 and paid cost was `$0.00`.
+Remaining work is the source-diff review plus the required no-write compile,
+secret-shape, whitespace, and immutable-artifact hash gates. The safest resume
+is to inspect `git diff -- layout_agent/judge_a3_general_cole.py
+tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py` without
+running any evaluation or client.
+
+At `2026-07-12 12:40:12 CST (+0800)`, a focused source/test diff review found
+and corrected two defensive test-boundary gaps: non-string structured provider
+metadata is now treated as unknown without membership errors, and malformed
+usage access settles conservatively. Tests were added to isolate concurrent USD
+reservation enforcement and to prove a parseable response without usage never
+becomes a score. Only the runner, focused test, and this checkpoint changed;
+API/model calls and tokens remained 0 and paid cost remained `$0.00`. The
+safest resume is to rerun only the checkpoint 18 focused pytest command.
+
+At `2026-07-12 12:41:05 CST (+0800)`, the corrected focused pytest command
+completed with exit 0: `15 passed, 11 warnings in 12.23s`. The warnings were
+again limited to pre-existing Python 3.9/third-party notices. No real client or
+socket connection was possible under the autouse fixture; API/model calls and
+tokens were 0 and paid cost was `$0.00`. Remaining work is only the specified
+no-write compile, secret-shape, `git diff --check`, and checkpoint 15 artifact
+hash comparison; no additional exploration or broad tests are needed.
+
+At `2026-07-12 12:42:00 CST (+0800)`, the specified final zero-cost gates all
+completed with exit 0. The commands and results were:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 /home/hui0705/.conda/envs/meta/bin/python - <<'PY'
+from pathlib import Path
+for path in [
+    Path('layout_agent/judge_a3_general_cole.py'),
+    Path('tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py'),
+]:
+    compile(path.read_bytes(), str(path), 'exec')
+print('no-write compile: PASS (2 files)')
+PY
+
+# Inline Python scanned the runner, focused test, and next_step.md for OpenAI
+# key/Authorization shapes without printing match bodies; synthetic sk-test-
+# sentinels were allowlisted. It also rejected trailing spaces/tabs.
+# Result: secret-shape/whitespace scan: PASS (3 task files).
+
+git diff --check
+
+sha256sum -c <<'EOF'
+ee6f4d3284c91a0d8c5346b42d7e74f8640a63ddf77a97800931212a5d56086e  layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-general-n100-sega-v1/evaluation_manifest.json
+dc5dfe2446933df717b21987258beb933d702add6a5416c4e3819f72c66bf5ae  layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-general-n100-sega-v1/aggregate.json
+a72c699ff4eac61022c8cb12d4705afb845a80699c76fbe4923465827e663f25  layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-general-n100-sega-v1/per_sample.jsonl
+f4ea72902a598996687240074be255d13c188304342169470084b56dda42fcb8  layout_agent/evaluations/a3-cole/a3.cole-judge.v1/a3-general-n100-cole-v1/aggregate.json
+56671d43916762c85c7ae30aa11dd91ed1151a12741a0f2e2fa376edb45706b7  layout_agent/evaluations/a3-cole/a3.cole-judge.v1/a3-general-n100-cole-v1/per_sample.jsonl
+EOF
+```
+
+The compile and secret scan printed PASS, `git diff --check` was silent, and
+all five `sha256sum -c` entries printed `OK`. Thus every published General SEGA
+and COLE artifact remains byte-for-byte identical to checkpoint 15. No staging
+directory or evaluation artifact was created or changed.
+
+The hardening task is implementation-complete and focused-test-complete. It
+made no OpenAI/client/network/API/model call, used 0 tokens, and cost `$0.00`.
+The branch is `feat/step76-89-sega-pipeline` at
+`13105dac3931bfd4ba09ae8bfc02f130aefcc499`; the index is empty. Per delegated
+scope, nothing was staged, committed, or pushed. The only task changes are:
+
+- modified `layout_agent/judge_a3_general_cole.py`;
+- added `tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py`;
+- modified `layout_agent/next_step.md` (this checkpoint).
+
+What remains is parent/integrator review, then scoped staging, commit, and push
+of exactly those three paths while preserving every unrelated dirty/untracked
+path. The safest resume verification is:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 /home/hui0705/.conda/envs/meta/bin/python -m pytest -q \
+  tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py
+git diff --check
+```
+
+Never pass `--allow-api-calls`, never load a real client, and never rerun or
+overwrite the completed General generation, SEGA, or COLE artifacts.
+
+At `2026-07-12 12:51:16 CST (+0800)`, the independent-review repair pass added
+direct offline tests for conservative legacy-probe fallback accounting, lock
+release after an exception and lock-free `--preflight` main flow, cancellation
+of an in-flight request, and malformed image bytes/dimensions before dispatch.
+All output paths in these tests are synthetic or monkeypatched; real client
+construction and socket connection remain prohibited by the autouse fixture.
+No runner change was made at this point because the cancellation behavior must
+first be tested. API/model calls and tokens were 0 and paid cost was `$0.00`.
+The safest resume command is the single focused pytest command already shown
+above; no broad test, evaluation, network call, staging, commit, or push is
+needed before that result.
+
+At `2026-07-12 12:52:18 CST (+0800)`, that focused pytest command exited 1
+with `1 failed, 18 passed, 11 warnings in 11.08s`. The sole failure occurred
+inside the new cancellation test before the runner was entered: Python 3.9
+rejected constructing `asyncio.Event` outside the event loop later created by
+`asyncio.run`. This is a test-harness compatibility error, not evidence of a
+released reservation, and no runner change is justified by it. No client or
+socket connection occurred; API/model calls and tokens were 0 and paid cost
+was `$0.00`. The safest resume is to create the test Event inside the active
+coroutine and rerun only the same focused pytest module.
+
+At `2026-07-12 12:53:02 CST (+0800)`, after moving the synthetic Event into
+the active loop, the exact focused pytest command exited 0 with
+`19 passed, 11 warnings in 10.31s`. The cancellation test directly confirmed
+that one cancelled in-flight create attempt becomes one conservatively
+committed call at the full reserved input/output/USD bounds, leaves zero active
+or reserved capacity, and cannot reuse that unknown spend. Therefore this
+review pass required no runner change. The other new tests directly confirmed
+legacy-probe conservative settlement, exception-safe lock release/reacquire,
+lock-free offline `main --preflight`, and malformed bytes/zero dimensions
+before reservation or fake-client dispatch. The warnings remained pre-existing
+Python 3.9/third-party notices. API/model calls and tokens were 0 and paid cost
+was `$0.00`. Remaining work is only the specified static, secret, whitespace,
+and immutable-artifact hash gates.
+
+At `2026-07-12 12:53:52 CST (+0800)`, the independent-review repair and all
+allowed verification completed. The exact final gate set was:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 /home/hui0705/.conda/envs/meta/bin/python -m pytest -q \
+  tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py
+# exit 0: 19 passed, 11 warnings in 10.31s
+
+# compile(path.read_bytes(), str(path), 'exec') for the runner and focused test
+# with PYTHONDONTWRITEBYTECODE=1
+# result: no-write compile: PASS (2 files)
+
+git diff --check
+# exit 0, silent
+
+PYTHONDONTWRITEBYTECODE=1 /home/hui0705/.conda/envs/meta/bin/python - <<'PY'
+from pathlib import Path
+import re
+
+paths = [
+    Path('layout_agent/judge_a3_general_cole.py'),
+    Path('tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py'),
+    Path('layout_agent/next_step.md'),
+]
+key_pattern = re.compile(rb'(?i)sk-(?:proj-)?[a-z0-9_-]{20,}')
+auth_pattern = re.compile(
+    rb'(?i)authorization\s*:\s*bearer\s+[^\s\"\']{12,}'
+)
+problems = 0
+for path in paths:
+    data = path.read_bytes()
+    for match in key_pattern.findall(data):
+        if not match.lower().startswith(b'sk-test-'):
+            problems += 1
+    for match in auth_pattern.findall(data):
+        if b'sk-test-' not in match.lower():
+            problems += 1
+    for line in data.splitlines():
+        if line.endswith((b' ', b'\t')):
+            problems += 1
+if problems:
+    raise SystemExit('secret-shape/whitespace scan: FAIL')
+print('secret-shape/whitespace scan: PASS (3 task files; match bodies suppressed)')
+PY
+# exit 0; printed only the PASS line above
+
+sha256sum -c <<'EOF'
+ee6f4d3284c91a0d8c5346b42d7e74f8640a63ddf77a97800931212a5d56086e  layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-general-n100-sega-v1/evaluation_manifest.json
+dc5dfe2446933df717b21987258beb933d702add6a5416c4e3819f72c66bf5ae  layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-general-n100-sega-v1/aggregate.json
+a72c699ff4eac61022c8cb12d4705afb845a80699c76fbe4923465827e663f25  layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-general-n100-sega-v1/per_sample.jsonl
+f4ea72902a598996687240074be255d13c188304342169470084b56dda42fcb8  layout_agent/evaluations/a3-cole/a3.cole-judge.v1/a3-general-n100-cole-v1/aggregate.json
+56671d43916762c85c7ae30aa11dd91ed1151a12741a0f2e2fa376edb45706b7  layout_agent/evaluations/a3-cole/a3.cole-judge.v1/a3-general-n100-cole-v1/per_sample.jsonl
+EOF
+# exit 0; all five entries OK
+```
+
+Checkpoint 18 is now chronological and has no stale implementation/test work
+after its completion state. This review repair changed only the focused test
+and this handoff; the cancellation test passed against the existing hardening,
+so it forced no additional runner change. Across the complete hardening task,
+the three task paths remain the modified runner, added focused test, and this
+checkpoint. The branch/HEAD remain
+`feat/step76-89-sega-pipeline` / `13105dac3931bfd4ba09ae8bfc02f130aefcc499`,
+and the index remains empty because no staging, commit, or push was performed.
+No OpenAI client or network/API/model call was made, token use was 0, and paid
+cost was `$0.00`. Every published artifact remains byte-for-byte unchanged.
+
+No engineering or verification work remains for checkpoint 18. The safest
+resume is parent/integrator review of exactly these three paths, followed by a
+scoped commit and push of only them while preserving all unrelated work:
+
+```bash
+git diff -- layout_agent/judge_a3_general_cole.py layout_agent/next_step.md
+sed -n '1,520p' \
+  tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py
+git add -- \
+  layout_agent/judge_a3_general_cole.py \
+  tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py \
+  layout_agent/next_step.md
+```
+
+After reviewing the staged name set and diff, create the scoped hardening
+commit and push the current branch. Never rerun an evaluation or use
+`--allow-api-calls` for this completed task.
+
+## Execution checkpoint 19 — scoped hardening stage and gates passed
+
+At `2026-07-12 12:59:31 CST (+0800)`, the commit preflight required and
+confirmed branch `feat/step76-89-sega-pipeline`, HEAD
+`13105dac3931bfd4ba09ae8bfc02f130aefcc499`, an empty index, and exactly the
+three intended task worktree paths. No OpenAI client, evaluation, or API/model
+call was run; token use was 0 and paid cost was `$0.00`.
+
+The exact staging command was:
+
+```bash
+git add -- \
+  layout_agent/judge_a3_general_cole.py \
+  tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py \
+  layout_agent/next_step.md
+```
+
+The cached-set and whitespace commands were:
+
+```bash
+expected=$(printf '%s\n' \
+  layout_agent/judge_a3_general_cole.py \
+  layout_agent/next_step.md \
+  tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py | LC_ALL=C sort)
+actual=$(git diff --cached --name-only | LC_ALL=C sort)
+test "$actual" = "$expected"
+git diff --cached --check
+```
+
+Both exited 0; the exact cached path set was:
+
+```text
+layout_agent/judge_a3_general_cole.py
+layout_agent/next_step.md
+tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py
+```
+
+The no-write staged compile command was:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 /home/hui0705/.conda/envs/meta/bin/python - <<'PY'
+from pathlib import Path
+import subprocess
+for path in [
+    Path('layout_agent/judge_a3_general_cole.py'),
+    Path('tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py'),
+]:
+    source = subprocess.check_output(['git', 'show', f':{path.as_posix()}'])
+    compile(source, str(path), 'exec')
+print('no-write staged compile: PASS (2 files)')
+PY
+```
+
+It exited 0 and printed `no-write staged compile: PASS (2 files)`. The exact
+suppressed-match secret/whitespace command recorded in checkpoint 18 was run
+unchanged against the three task files; it exited 0 and printed only
+`secret-shape/whitespace scan: PASS (3 task files; match bodies suppressed)`.
+The checkpoint 15 artifact command was rerun exactly as:
+
+```bash
+sha256sum -c <<'EOF'
+ee6f4d3284c91a0d8c5346b42d7e74f8640a63ddf77a97800931212a5d56086e  layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-general-n100-sega-v1/evaluation_manifest.json
+dc5dfe2446933df717b21987258beb933d702add6a5416c4e3819f72c66bf5ae  layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-general-n100-sega-v1/aggregate.json
+a72c699ff4eac61022c8cb12d4705afb845a80699c76fbe4923465827e663f25  layout_agent/evaluations/a3-sega/a3.sega-pku-protocol.v1/a3-general-n100-sega-v1/per_sample.jsonl
+f4ea72902a598996687240074be255d13c188304342169470084b56dda42fcb8  layout_agent/evaluations/a3-cole/a3.cole-judge.v1/a3-general-n100-cole-v1/aggregate.json
+56671d43916762c85c7ae30aa11dd91ed1151a12741a0f2e2fa376edb45706b7  layout_agent/evaluations/a3-cole/a3.cole-judge.v1/a3-general-n100-cole-v1/per_sample.jsonl
+EOF
+```
+
+It exited 0 with all five entries `OK`; every published artifact remains
+byte-for-byte unchanged. The reviewed runner/test contents are unchanged since
+the exact focused command below exited 0 with
+`19 passed, 11 warnings in 10.31s`, so that paid-free test was not rerun:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 /home/hui0705/.conda/envs/meta/bin/python -m pytest -q \
+  tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py
+```
+
+What remains is zero-cost Git persistence only: restage only this updated
+`next_step.md`, revalidate the exact three-path cached set and cached diff,
+then create and push the scoped hardening commit. The safest resume is:
+
+```bash
+git add -- layout_agent/next_step.md
+git diff --cached --name-only
+git diff --cached --check
+git commit -m "fix(agentlayout): harden General COLE paid runner"
+git push
+```
+
+Preserve every unrelated dirty/untracked path and never use force push or run
+an evaluation/API call.
