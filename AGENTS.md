@@ -23,19 +23,22 @@ These rules are persistent project instructions and apply to every future sessio
 - If the user asks to reduce usage, immediately stop nonessential agents, polling,
   and commentary. Never interrupt a useful local process merely to inspect it.
 
-## Durable handoff after every execution
+## Final-only handoff and Git persistence
 
-- After every command that materially advances or blocks the task, update
-  `layout_agent/next_step.md` with the timestamp, exact command, result or error,
-  artifact path, paid/API cost, what remains, and the safest resume command.
-- A new session must be able to continue from `layout_agent/next_step.md` without
-  reconstructing hidden conversation context.
-
-## Commit and push every completed change
-
-- Before handing control back after changing files, run proportionate checks,
-  create a scoped commit containing only the task's files, and push the current
-  branch. This applies to code, tests, documentation, and handoff updates.
+- Do not update `layout_agent/next_step.md` after individual commands, checks,
+  milestones, or intermediate discoveries. Keep intermediate state in the active
+  session instead of creating repeated handoff churn.
+- Update `layout_agent/next_step.md` exactly once, immediately before handing
+  control back after execution completes, genuinely blocks, or reaches a paid
+  authorization boundary. That consolidated update must include the timestamp,
+  material commands and results, artifacts, paid/API cost, remaining work, and
+  safest resume command.
+- After the consolidated handoff, run one proportionate final verification pass,
+  create one scoped commit containing only the task files and final handoff, and
+  push once. Do not create a second handoff-only commit merely to record the first
+  commit hash or push receipt; report those in the final response instead.
+- Read-only answers that do not materially advance execution require no handoff,
+  commit, or push.
 - Never include unrelated pre-existing dirty files. Never stash, reset, clean, or
   overwrite user work to make a commit possible.
 - Always report the branch, commit hash, push result, checks run, and any files

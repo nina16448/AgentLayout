@@ -2570,6 +2570,34 @@ the single checkpoint 46, the index contains exactly four allowlisted files,
 and cached whitespace is clean. No test, readiness step, client, evaluator, or
 model call ran; API/model calls and paid cost remained zero.
 
+## Execution checkpoint 47 — final-only handoff/commit protocol adopted
+
+At `2026-07-12 16:55:16 CST (+0800)`, the user permanently replaced the high-churn persistence
+policy. Root `AGENTS.md` now forbids handoff updates after individual
+commands, checks, milestones, or intermediate discoveries. For a task that
+materially changes or advances execution, update this handoff exactly once
+immediately before returning control, then run one proportionate final
+verification, create one scoped commit containing the task files and handoff,
+and push once. Never create a second receipt-only commit merely to record the
+first commit or push; report that receipt in the final response. Read-only
+answers require no handoff or Git persistence.
+
+This protocol edit used only `apply_patch`. It deliberately preserves the
+pre-existing memory-context change inside `AGENTS.md` outside the coming
+partial stage, along with every other unrelated dirty/untracked path. No
+readiness, N=100 artifact, experiment, evaluator, OpenAI client, network API,
+or paid model call ran; calls/tokens/cost remain `0 / 0 / $0.00` for this
+protocol task.
+
+After the single scoped commit/push, the A3 experiment remains at the same
+paid boundary: batch 001 generation has not started. The safest resume is to
+obtain explicit authorization for run
+`a3-crello-test-batch-001-n100-t2-l0-v1`, model
+`gpt-5.4-mini-2026-03-17`, at most 850 actual HTTP calls, 4,500,000 input
+tokens, 800,000 output tokens, and US$7.00; then implement only the minimal
+four-cap runtime gate plus one focused verification before launch. Never
+rerun the completed N=100 or batch-001 readiness.
+
 ## Next task and stop conditions
 
 - COLE hardening and all previous N=100 artifacts remain complete; never rerun
