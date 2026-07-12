@@ -1378,3 +1378,87 @@ git push
 
 Preserve every unrelated dirty/untracked path and never use force push or run
 an evaluation/API call.
+
+## Execution checkpoint 20 — COLE hardening pushed and handed off
+
+At `2026-07-12 13:01:06 CST (+0800)`, the scoped hardening commit was created
+on `feat/step76-89-sega-pipeline`:
+
+```text
+3fc6be178a10c8e3ed15c16630e381c482626d47
+fix(agentlayout): harden General COLE paid runner
+```
+
+The exact sync command and result were:
+
+```bash
+git push
+# exit 0; 13105dac..3fc6be17, feat/step76-89-sega-pipeline ->
+# feat/step76-89-sega-pipeline on github.com:nina16448/AgentLayout.git
+```
+
+The commit contains exactly the three checkpoint 19 paths: the hardened
+General COLE runner, its focused offline guard module, and this durable
+handoff. The 19-test focused evidence and all cached/static/security gates are
+recorded in checkpoints 18--19. No OpenAI client, evaluation, or API/model call
+was made during hardening, commit, or sync; token use was 0 and paid cost was
+`$0.00`.
+
+The user confirmed that credential rotation is complete. The provider
+dashboard currently shows about `$87.00`; this remains an account-level
+observation and is not attributable to this zero-cost hardening or necessarily
+to the single completed General COLE judge run.
+
+All checkpoint 15 artifacts remain byte-for-byte unchanged:
+
+- SEGA manifest:
+  `ee6f4d3284c91a0d8c5346b42d7e74f8640a63ddf77a97800931212a5d56086e`;
+- SEGA aggregate:
+  `dc5dfe2446933df717b21987258beb933d702add6a5416c4e3819f72c66bf5ae`;
+- SEGA per-sample:
+  `a72c699ff4eac61022c8cb12d4705afb845a80699c76fbe4923465827e663f25`;
+- COLE aggregate:
+  `f4ea72902a598996687240074be255d13c188304342169470084b56dda42fcb8`;
+- COLE per-sample:
+  `56671d43916762c85c7ae30aa11dd91ed1151a12741a0f2e2fa376edb45706b7`.
+
+The following unrelated pre-existing work remains deliberately preserved and
+must not be staged, reset, cleaned, overwritten, or included in this handoff:
+
+- `AGENTS.md`
+- `layout_agent/CODEX_HANDOFF.md`
+- `layout_agent/IMPLEMENTATION_LOG.md`
+- `layout_agent/output2/step91_o4mini_ab.py`
+- `metagpt/provider/constant.py`
+- `CLAUDE-FABLE-5.md`
+- `layout_agent/REFACTOR_PLAN.md`
+- `layout_agent/SEGA_METRICS_REMOTE_AGENT_TASK.md`
+- `layout_agent/demo/`
+- `layout_agent/demo_ids.json`
+- `layout_agent/demo_v2/`
+- `layout_agent/output.md`
+- `layout_agent/output2/step97_relation_subset.py`
+- `layout_agent/output2/step97_relation_subset/`
+- `layout_agent/run_demo.py`
+- `layout_agent/runs/`
+
+The only remaining persistence step for this checkpoint is to commit and push
+`layout_agent/next_step.md` alone. The safest exact commands are:
+
+```bash
+git add -- layout_agent/next_step.md
+git diff --cached --name-only
+git diff --cached --check
+git commit -m "docs(agentlayout): record COLE hardening handoff"
+git push
+```
+
+## Next task and stop conditions
+
+- Once this checkpoint-only handoff commit is pushed, no COLE hardening work
+  remains and no completed evaluation may be rerun or overwritten.
+- The current optional next engineering task is HTTPX event-loop cleanup and
+  Numba read-only-cache robustness. It must remain zero-cost and must not run
+  General generation, SEGA, COLE, an LLM judge, or any paid API.
+- Preserve every unrelated path listed above and start that optional work only
+  as a separately scoped task.
