@@ -2425,3 +2425,32 @@ a3.adjudication-bias.v1/a3-n80-adjudication-vote-v1/aggregate.json`。
 
 **Status：A3-15B complete。** 引用 reference 組成一律以本節＋correction
 sidecar 為準。
+
+---
+
+## 26. A3-13E：Elem2Design（LaDeCo）外部 baseline，Relation N=100（2026-07-12；本機 GPU、零付費 API）
+
+公開 checkpoint `microsoft/elem2design`（LLaVA-Llama-3.1-8B LoRA、adapter revision `c4f20b5b`、code `4665358e`、base `d04e592b`）在**完全相同**的 Relation N=100 條件下與凍結 A3-T2 對比：同一批 sample IDs、R3 bitmaps、canvas、human oracle、`evaluate_layout_realization`＋`sega_metrics` evaluator。輸入嚴格防洩漏（只給 R3 bitmap／文字內容／canvas 尺寸／官方 predicted roles；遞迴 forbidden-key 掃描＋R3 逐檔 hash 核對，gpt 輪全 `{}` 佔位）。單次生成 temperature 0.7 / top_p 0.95 / seed 42。
+
+執行：8×GTX 1080 Ti 中 4 卡平行（4-bit NF4、**bnb compute dtype fp32**——Pascal fp16 ALU 1/64 殘速，fp32 實測 9.25 vs 2.09 tok/s＝4.4×；與官方 fp16 compute 的數值差異與已接受的 4-bit rounding 同級，記為文件化 patch）。全程 wall ~70 min、mean 122s/sample、零 API call、$0。程式：`layout_agent/external_baselines/elem2design/`（commit `e25e7dfd`；官方 4-bit 路徑三個 bug 的最小 patch 全部記錄在 `infer_patched.py` docstring）。
+
+**完成率**：E2D 94/100（6 失敗全為 explicit conversion failure：5 筆 n≥23 大樣本輸出截斷/重複——與其訓練上限 `max_num=25` 一致；1 筆 n=10 重複元素）；A3-T2 98/100；配對交集 **93**。`5f644f40`（n=32）兩臂皆敗。
+
+**配對結果（diff = A3-T2 − E2D；Holm within family；bootstrap seed 20260712×10k）**：
+
+| Metric | A3-T2 | E2D | W/L/T | mean diff [95% CI] | p Holm |
+| --- | ---: | ---: | --- | --- | ---: |
+| SGC | 0.7037 | 0.5355 | 74/19/0 | +0.1684 [+0.1271, +0.2077] | **1.5e-08** |
+| TLC | 0.6711 | 0.5092 | 81/11/1 | +0.1578 [+0.1221, +0.1932] | **7.5e-14** |
+| PCA | 0.7614 | 0.6450 | 50/24/19 | +0.1167 [+0.0617, +0.1713] | **0.0034** |
+| Ali↓ | 0.0012 | 0.0002 | 13/3/77 | +0.0010 [+0.0003, +0.0019] | 0.0213（E2D 較好） |
+| Ove↓ | 0.1173 | 0.2496 | 9/84/0 | −0.1347 [−0.1604, −0.1086] | **4.3e-16**（A3 較好） |
+
+**判讀（保守）**：A3-T2 在語意組織三軸全部顯著優於公開可重跑的 Elem2Design（Holm 後 p≤0.0034），Overlay 亦大幅較低；Alignment 方向不利但幅度極小（+0.0010、77/93 平手）。Caveats：(1) E2D 為單次生成、A3 為三候選＋internal selection——系統對系統比較，須在論文明述不對稱；(2) Rea/Occ 需 render+saliency 管線，**deferred 未報**（不得寫 0）；(3) 結論僅限 Relation N=100，不外推；(4) >25 元素樣本超出 E2D 訓練範圍，其失敗按協定明列不剔除亦不修補。
+
+Bundles（write-once，manifest 含 input/code/artifact hash）：
+`layout_agent/evaluations/a3-external/a3.external-baseline-eval.v1/elem2design-rel100-v1/`、
+`.../a3.external-baseline-compare.v1/a3-t2-vs-elem2design-rel100-v1/`（含 `results.md`）。
+Run artifacts（raw five-turn outputs、renders、candidate/error per sample）在 `layout_agent/runs/external/elem2design-rel100-v1/`（不入 git）。
+
+**Status：A3-13E complete。**
