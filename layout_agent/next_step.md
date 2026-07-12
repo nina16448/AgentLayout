@@ -8,10 +8,17 @@ Updated: 2026-07-12 (batch 001 paid generation paused mid-run by the user;
 boundary).
 
 Persistence protocol (root `AGENTS.md`, user-mandated): update this handoff
-**once** immediately before returning control, run one proportionate final
-verification, create one scoped commit (task files + handoff), push once. No
-per-command checkpointing, no receipt-only commits. Read-only answers need no
-persistence.
+**once** immediately before returning control, create one scoped commit (task
+files + handoff), push once. No per-command checkpointing, no receipt-only
+commits. Read-only answers need no persistence.
+
+**Session start (user-mandated, 2026-07-12): read this file, then act.** Do
+NOT re-verify artifact hashes, re-run readiness checks or session-catchup
+scripts, re-read the full experiment log or old checkpoints, or run
+disk/Git/network/process gates at session start. Verify something only when
+the action you are about to take directly depends on it (e.g. check free disk
+and no concurrent same-batch process immediately before launching a paid
+run — nothing else).
 
 ## Completed and immutable — never rerun, overwrite, or reuse authorizations
 
@@ -23,12 +30,10 @@ persistence.
   (200/200 `ok`; General S_mean4 5.4675 vs GT 6.6725 = 81.94%; 10W/85L/5T,
   sign p=5.76e-16). Both paid authorizations are **consumed**. Details and
   reproduction: `A3_EXPERIMENT_LOG.md` §24.
-- Immutable artifact SHA-256 (verify with `sha256sum -c` when in doubt):
-  - SEGA manifest `ee6f4d3284c91a0d8c5346b42d7e74f8640a63ddf77a97800931212a5d56086e`
-  - SEGA aggregate `dc5dfe2446933df717b21987258beb933d702add6a5416c4e3819f72c66bf5ae`
-  - SEGA per-sample `a72c699ff4eac61022c8cb12d4705afb845a80699c76fbe4923465827e663f25`
-  - COLE aggregate `f4ea72902a598996687240074be255d13c188304342169470084b56dda42fcb8`
-  - COLE per-sample `56671d43916762c85c7ae30aa11dd91ed1151a12741a0f2e2fa376edb45706b7`
+- Artifact SHA-256 values are recorded in each bundle's
+  `evaluation_manifest.json` and `A3_EXPERIMENT_LOG.md` §24. They have been
+  verified repeatedly; do **not** re-verify them again unless corruption is
+  actually suspected.
 - COLE runner `layout_agent/judge_a3_general_cole.py` is hardened (paid lock,
   four-cap reservation/settlement; 19 offline tests in
   `tests/metagpt/ext/agentlayout/test_judge_a3_general_cole_hardening.py`).
@@ -112,8 +117,9 @@ Resume conditions (do not resume automatically):
    3,158,244 input / 548,611 output / US$4.8624325), and explicitly decides
    whether the two validation-exhausted samples may be retried. Do not infer
    either permission from a general request to continue.
-2. Inspect only the user's changed paths; run one focused zero-cost check
-   (the paid-budget pytest above is the reference gate).
+2. Only if the user changed code: run
+   `tests/metagpt/ext/agentlayout/test_a3_paid_budget.py` (~10 s). If nothing
+   changed, skip all checks and resume directly.
 3. Resume with the exact original launch command (unchanged, cumulative
    ledger):
 
@@ -155,9 +161,9 @@ Resume conditions (do not resume automatically):
   new explicit approval.
 - Each new batch must finish generation → immediate six-axis evaluation →
   validation → cost recording → handoff → scoped persistence before the next.
-- Keep `.planning/crello-full-test/{task_plan,findings,progress}.md`
-  synchronized after material work so a new session can resume without chat
-  context.
+- Update `.planning/crello-full-test/{task_plan,findings,progress}.md` only
+  at batch completion or when a phase/authorization state changes — not per
+  command.
 - Preserve every unrelated dirty/untracked path, currently including:
   `AGENTS.md`, `layout_agent/CODEX_HANDOFF.md`,
   `layout_agent/IMPLEMENTATION_LOG.md`, `layout_agent/output2/…`,

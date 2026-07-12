@@ -31,17 +31,14 @@ deterministic 指標。
 既有 100 筆視為已完成的第一批，但正式合併前仍要唯讀確認它們存在於
 凍結的官方 dataset revision，且 sample ID 與 input hash 一致。
 
-剩餘 1,871 個 ID 會先固定排序後用 seed 42 做一次 deterministic shuffle，
-再依序切批。切批完成後必須證明：
+剩餘 1,871 個 ID 已固定排序後用 seed 42 做一次 deterministic shuffle 並
+切批完成（`a3_crello_test_batches_v1/`，唯一性/不重複/聯集覆蓋已在發布時
+`verify-batches` 證明過一次——**不需再驗**）。
 
-- 1,971 個 ID 全部唯一；
-- 新批次彼此沒有重複；
-- 新批次與既有 100 筆沒有重複；
-- 既有 100＋所有新批次的聯集剛好等於官方 test split。
+## 3. 付費前的零成本準備（✅ 已全部完成，勿重跑、勿重驗）
 
-## 3. 付費前的零成本準備
-
-在任何模型呼叫前完成：
+以下 1–8 項已於 2026-07-12 全部完成並驗證過（見 `next_step.md`）。列出僅供
+背景理解；新 session 不得重新執行或重新驗證任何一項：
 
 1. 凍結 Hugging Face dataset revision、三個 split 的官方 count，以及 test
    split 的完整有序 ID 清單與 SHA-256。
@@ -94,21 +91,17 @@ BASNet＋ISNet、offline/API-key-unset 模式計算：
 `N/A`，並保存 applicable/valid/skipped/not-applicable 數量，不能寫成 0。
 每批 evaluation 必須原子發布，失敗時不得留下可被誤認為 final 的 sidecar。
 
-### 4.3 批次驗收
+### 4.3 批次驗收（精簡版，2026-07-12 使用者裁示）
 
-每批都要產出一份人可讀報告，至少包含：
+每批結束只需確認三件事即可進下一批：
 
-- 本批 ID 範圍與 ID snapshot hash；
-- completed、failed、skipped 與錯誤類型；
-- 模型 attempts、provider usage（若有）、request/response bytes；
-- dashboard 費用增量或明確註明無法取得；
-- generation 與六軸 wall time；
-- 六軸逐筆、平均值與 denominator；
-- source、manifest、aggregate、per-sample artifact hashes；
-- staging 是否為空、write-once target 是否完整；
-- 下一批是否解鎖。
+1. run summary：completed/failed 數字與錯誤類型；
+2. 六軸 aggregate 已原子發布、無 staging 殘留；
+3. 成本在護欄內（ledger 數字即可，dashboard 能查再查）。
 
-只有本批 generation、六軸、hash reload 與成本檢查都通過，才可開始下一批。
+hash、ID snapshot、denominator 等都已由 write-once manifest 自動落盤，
+**不需要**額外的人工 reload、hash 重驗或獨立重算報告。向使用者回報時
+一段話講完 completed/failed、費用、六軸平均即可。
 
 ## 5. 費用與時間護欄
 
@@ -141,8 +134,8 @@ BASNet＋ISNet、offline/API-key-unset 模式計算：
 - 呼叫、token、美元或累計預算達上限；
 - dataset revision、ID、input hash 或 write-once target 不一致；
 - readiness 發現 GT leakage、缺素材或 text bitmap mismatch；
-- 六軸 source validation、detector inference、bundle reload 或聚合重算失敗；
-- staging 殘留、同批並行程序存在，或 Git/磁碟狀態不安全；
+- 六軸評測執行失敗或發布失敗；
+- staging 殘留、同批並行程序存在，或磁碟低於安全門檻；
 - 可用磁碟低於開始前凍結的安全門檻。
 
 失敗 sample 必須原樣保留在 error record；未經新的明確決定不得挑掉失敗樣本、
@@ -151,11 +144,11 @@ BASNet＋ISNet、offline/API-key-unset 模式計算：
 ## 7. 每批後如何保存與續跑
 
 - Raw run artifacts 保存在 write-once run 目錄，不因體積大而加入 Git。
-- 輕量 manifest、評估 sidecar、進度 ledger、實驗 log 與 `next_step.md` 做
+- 輕量 manifest、評估 sidecar、實驗 log 與 `next_step.md` 做
   scoped commit/push；不得夾帶既有 dirty/untracked 工作。
-- 每批 handoff 明確寫出最後完成批次、下一批、精確命令、成本、hash 與停止原因。
-- 新 session 先讀本文件與 `next_step.md`，再驗證磁碟、Git、網路、沒有同批程序，
-  才能接續。
+- 每批 handoff 寫出最後完成批次、下一批、精確命令、成本與（若有）停止原因。
+- **新 session 讀 `next_step.md` 後直接接續，不做任何開場驗證。** 只在按下
+  付費 run 之前檢查兩件事：磁碟餘量 ≥80 GiB、沒有同批程序在跑。
 - 任何已完成批次與既有 N=100 artifact 都不得覆寫或重跑。
 
 ## 8. 全部完成的定義
@@ -173,19 +166,12 @@ BASNet＋ISNet、offline/API-key-unset 模式計算：
 
 ## 9. 目前的授權邊界
 
-使用者目前只確認了流程方向。尚未授權任何 full-test model call、token 或美元
-支出。Revision-pinned cache/import、19 批 manifest 與 batch 001 的 P-Full、R3、
-Analyst vision readiness 已零費用完成；正式 generation 仍是 0 calls / $0.00。
-下一步是完成 batch 001 精確 input/output token ceilings 與官方計價核對，先做
-session handoff，再提交精確付費授權文字；未取得同意不得加
-`--allow-api-calls`。
+以 `layout_agent/next_step.md` 為唯一權威狀態：batch 001 已獲授權並執行到
+49/100 後由使用者暫停；續跑需要新的明確授權（剩餘 envelope 與 retry 政策
+見 `next_step.md`）。未取得同意不得加 `--allow-api-calls`。
 
 ## 10. 不忘記進度的方法
 
-- `task_plan.md` 保存目前階段、尚未完成項目與付費授權閘門。
-- `findings.md` 保存 dataset、成本、風險及後續查到的新事實。
-- `progress.md` 保存每個 session、每批命令、結果、artifact、成本與下一步。
-- `.planning/.active_plan` 固定指向 `crello-full-test`，讓支援此技能的 session
-  能自動找回本任務。
-- 每個 material command、每批驗收或任何錯誤後，同步更新 `progress.md` 與
-  `layout_agent/next_step.md`；階段狀態改變時再更新 `task_plan.md`。
+- `next_step.md` 是唯一權威 handoff；`.planning/crello-full-test/` 三份
+  ledger 只在**批次完成或階段/授權狀態改變時**更新一次，不做逐指令記錄。
+- `.planning/.active_plan` 固定指向 `crello-full-test`。
