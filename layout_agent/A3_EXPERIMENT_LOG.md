@@ -2351,3 +2351,35 @@ Holm 8/9 顯著結論穩定）、MLLM-panel preference protocol（blind A/B＋�
 - 本階段 **0 code 變更、0 API call、$0**；不動任何 write-once artifact。
 - Status：**proposed**。下一步＝使用者逐項批准 §11 後才進實作角色；
   未批准前不得呼叫模型或修改 pipeline code。
+
+---
+
+## 27. A3-14C：annotation provenance 重大更正（2026-07-12；zero-cost）
+
+使用者於本日揭露：**§16–§22 記錄為「人工／三人標註」的全部 reference tree
+標註與裁決，實際均為 AI 模型在獨立 chat sessions 中產生**（使用者為操作者）。
+代號對映（n80）：`hui`=GPT-5.6 sol、`neiji`=Claude Fable 5、`nina`=Gemini；
+pilot `T`=GPT；兩批裁決＝GPT。指示為 pilot run 的 ANNOTATION_GUIDE.md，輸入僅
+annotation packet＋contact sheets（操作者自述）。**專案不存在任何人類標註。**
+
+處置（全部 zero-cost、artifacts 位元組不動）：
+
+1. authoritative correction sidecar：`layout_agent/ANNOTATION_PROVENANCE_CORRECTION.md`
+   （含對映表、失效陳述清單、重新解讀規則、必揭露 limitations、待確認欄位）；
+   `runs/a3/PROVENANCE_CORRECTION_POINTER.txt` 指標。
+2. `source="human_oracle"` 為歷史誤標，語意更正為 `ai_reference.multi-model.v0`；
+   凍結檔不改寫（hash 鏈保持）。
+3. 重新解讀：T3＝跨家族多模型 consensus tree 注入（`T0<T2<T3` 梯度數值不變、
+   敘事改為 tree 品質/ensemble 效應）；§22.2 agreement 改稱 inter-model
+   agreement；uncertain 分布為模型別行為（Fable 50.4%、Gemini 0）。
+4. **Alternative Annotator Test 永久取消**（無人類基準）；
+   `AI_REFERENCE_PROTOCOL.md`（§26/A3-13P）之 human-calibration 前提作廢，
+   該檔加註 superseded 標記。
+5. 論文措辭規則見 correction sidecar §3；任何 human-annotated/human-validated
+   字眼禁止。
+6. 待使用者確認：pilot hui/neiji 對映、T 與裁決模型確切 snapshot、Gemini 版本。
+7. 建議後續 zero-cost 分析：n80 485 個分歧的裁決採票統計（量化 GPT 裁決對
+   GPT-5.6 sol 票的 self-preference bias）。
+
+本條目不改寫 §16–§22 原文（append-only 原則）；引用該範圍一律以本條目＋
+correction sidecar 的重新解讀為準。

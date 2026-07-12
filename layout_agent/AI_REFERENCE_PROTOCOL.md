@@ -1,8 +1,16 @@
-# A3 AI Annotation Replacement Protocol（frozen 提案，待使用者批准）
+# A3 AI Annotation Replacement Protocol（SUPERSEDED — 僅作歷史記錄）
+
+> ⚠️ **2026-07-12 作廢**：本檔全部建立在「既有 100 份標註為人類所做、可作
+> calibration set」的前提上。同日使用者揭露該前提不成立——全部標註與裁決
+> 本來就是 AI 模型（GPT-5.6 sol／Claude Fable 5／Gemini＋GPT 裁決）做的，
+> 專案不存在任何人類標註。§1 calibration set、§5 Alternative Annotator Test、
+> §6 gate、§10 預算、§11 待批事項全部作廢。現行正確版本見
+> `layout_agent/ANNOTATION_PROVENANCE_CORRECTION.md` 與 `A3_EXPERIMENT_LOG.md` §27。
+> 本檔保留不刪，作為 A3-13P 提案的歷史記錄。
 
 > 建立日期：2026-07-12
 > 作者角色：研究設計／評估方法（CODEX_HANDOFF §6 第 1 列）
-> 狀態：**PROPOSED / 0 code / 0 new calls**。本檔為凍結提案；使用者批准前不得實作、不得呼叫任何模型。
+> 原狀態：PROPOSED / 0 code / 0 new calls（現：SUPERSEDED）
 > 依據：`CODEX_HANDOFF.md` §5 九點最低協定；`new_plam.md` §5–§8；`A3_EXPERIMENT_LOG.md` §20–§25。
 
 ---
