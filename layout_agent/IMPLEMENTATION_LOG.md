@@ -5999,3 +5999,38 @@ mean total 五輪持平：33.553 / 33.487 / 33.127 / 33.383 / 33.317。
 **證據檔**：`output2/step96_legacy_perround/{curve.json, curve.md}`（curve.json 內含 provenance 區塊）。
 
 *最後更新：2026/07/09（Step 96 完成：legacy 逐輪曲線 R0→R1 −0.075、四輪全 n.s.；「價值集中第一輪」證實為 step89 專屬；n_pairs 與既有 aggregate 逐格交叉驗證）*
+
+---
+
+## Step 97：Crello-RelationSemantic-rich N=100 診斷子集（2026/07/10）
+
+**目的**：為 Layout Tree（Full Tree vs No Tree）ablation 建一個「生成前、模型盲」的診斷子集；目標論證是劑量反應——樣本語意關係越複雜，Tree 相對 No Tree 的增益越大——而非單一平均數。selection criterion 與任何模型輸出無關，非 cherry-picking。
+
+**三階段協定**（`output2/step97_relation_subset.py`，--stage 1/2/3）：
+1. **Stage 1 metadata 初篩**（離線）：1,902 個本地快照 → **800 進池**。門檻：fg（`kind != background_candidate`）≥5、非空且互異文字 ≥3、`kind=="image"` 語意素材 ≥1（純 underlay 形狀視為裝飾不算）。淘汰漏斗：fg<5＝238、text<3＝383、互異 text<3＝19、無 image＝462。
+2. **Stage 2 雙標註者**（live，gpt-5.4-mini）：每樣本兩個去相關 LLM pass（元素順序隨機化＋指示改寫），只看 title＋canvas 尺寸＋文字原文＋逐層素材圖（512px）；**不給任何幾何、不用 SEGA 半成品海報**（其照片在 GT 位置會洩漏 layout）。全池 seed=97 隨機順序跑到 keeps≥130 停（順序隨機故提前停止不引入偏差）。結果：標註 150、**共識 keeps 135**（keep 率 90%）、解析失敗 1。
+3. **Stage 3 共識＋抽樣**：keep 需兩位皆判「≥2 groups（含 implicit singletons）且 ≥1 組 ≥2 元素」。keep 一致率 94.6%、**Cohen's κ=0.572**（註：兩位 keep 基率皆 ~93%，prevalence 效應壓低 κ 上限）；tier 一致率 67.4%。keep 池 tier：medium=68、rich=67。按共識 tier 比例分層（seed=97）抽 **N=100：medium=50／rich=50**，與 eval100 重疊 6。
+
+**Tier 定義**（共識取兩位較低者）：Simple＝全 singleton 或單一 group 蓋全部；Medium＝恰 1 個 non-trivial group（≥2 元素）；Rich＝≥2 non-trivial groups 或 depth≥2（child group ≥2 元素）。
+
+**誠實揭露**：「兩位標註者」是同一 config 模型的兩個去相關 pass，非兩位人類；`stage2_annotations.jsonl` 保留完整 group 結構，人工重標可直接替換（同 Step 90 `--tree-dir` 可插拔精神）。本地快照覆蓋 1,902/1,971（96.5%）test split，缺的 69 個不在抽樣母體。
+
+**證據檔**：`output2/step97_relation_subset/{stage1_pool.json, stage2_annotations.jsonl, relation100_ids.json, stage3_report.md, RUN_METADATA.json}`。
+
+**下一步**：以 `relation100_ids.json` 跑 Full Tree vs No Tree A/B，按 medium/rich 分層報增益差。
+
+*最後更新：2026/07/10（Step 97 完成：模型盲三階段篩選；800 池→135 keeps→N=100（medium 50/rich 50）；κ=0.572；子集就緒待 Tree ablation）*
+
+---
+
+## Step 98:A3 pipeline 逐階段 walkthrough 文件(論文用,2026/07/24)
+
+**目的**:論文需要一個「單一樣本走完整條 A3 pipeline、每階段輸出逐字呈現」的英文 walkthrough。**零 API 費用**——所有產物直接取自已完成的 batch-001 run(`runs/a3/a3-crello-test-batch-001-n100-t2-l0-v1`)持久化目錄,未重跑、未改寫任何模型輸出。
+
+**樣本選擇**:從 batch-001 已完成樣本中篩 foreground ≤5,得 13 個候選。逐一檢視後選 **`5f885a9aa637ee11e3498504`**(Christmas Offer Girl in Headphones with Gift,851×315,4 素材:3 raster+1 text bitmap)。選擇理由:(1) 素材數 4 明確符合 ≤5;(2) 視覺最豐富(真人照片+緞帶+wordmark);(3) 敘事最乾淨——QC 對候選 1/3 各報一項 `out_of_bounds`、候選 2 零違規,judge 獨立視覺排序恰好把 QC-clean 的候選 2 排第一,QC 與 judge 交叉印證。落選者:有真實背景的樣本(5db16f87/5da735de 等)皆為白底 logo 型、背景分析太單調;TRECITY(5dc93d43)每個候選都被 QC 報 `missing_element`(背景另行合成的協定性誤報)+對比度檢查誤用白底假設,放論文需額外解釋兩個 QC 特例。
+
+**取捨註記**:選中樣本無底圖(blank canvas),Background Analyzer 一節展示的是 no-background 分支(全畫布 quiet region、調色權轉移給前景)——這是 A3 對 Crello 大宗 blank-canvas 樣本的真實行為,誠實呈現。
+
+**產出**:`output2/step98_a3_walkthrough/A3_PIPELINE_WALKTHROUGH.md` + `images/`(9 張:背景 placeholder、contact sheet、4 張輸入素材、3 張候選 render)。文件依序含:inputs(背景/素材/brief)→ Analyst 的 background_summary → Design Spec(intent/keywords/per-asset constraints)→ T2 Layout Tree(全 JSON+ASCII 樹)→ 3 個 composition concepts 全文 → 3 組 Coordinate Mapper 座標表 → QC 結果表 → 3 張候選圖 → Judge-Select 排序與最終選擇;附錄為 per-stage token/成本/延遲表(7 次 LLM 呼叫、$0.0301、22.0s,均由 `stage_calls.json` 加總核對)。
+
+*最後更新:2026/07/24(Step 98 完成:batch-001 樣本 5f885a9a 零成本 walkthrough 文件,QC↔judge 交叉印證敘事)*
