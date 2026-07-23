@@ -6034,3 +6034,19 @@ mean total 五輪持平：33.553 / 33.487 / 33.127 / 33.383 / 33.317。
 **產出**:`output2/step98_a3_walkthrough/A3_PIPELINE_WALKTHROUGH.md` + `images/`(9 張:背景 placeholder、contact sheet、4 張輸入素材、3 張候選 render)。文件依序含:inputs(背景/素材/brief)→ Analyst 的 background_summary → Design Spec(intent/keywords/per-asset constraints)→ T2 Layout Tree(全 JSON+ASCII 樹)→ 3 個 composition concepts 全文 → 3 組 Coordinate Mapper 座標表 → QC 結果表 → 3 張候選圖 → Judge-Select 排序與最終選擇;附錄為 per-stage token/成本/延遲表(7 次 LLM 呼叫、$0.0301、22.0s,均由 `stage_calls.json` 加總核對)。
 
 *最後更新:2026/07/24(Step 98 完成:batch-001 樣本 5f885a9a 零成本 walkthrough 文件,QC↔judge 交叉印證敘事)*
+
+---
+
+## Step 98b:第二份 walkthrough——真實背景+非平凡 layout tree 樣本(2026/07/24)
+
+**目的**:使用者要求補一個同時滿足四條件的樣本:(1) 實際背景影像、(2) 背景有可辨識主體或留白、(3) ≥1 個 group 含 ≥2 素材、(4) 有 parent-child dependency。仍為**零 API 費用**,產物取自 batch-001 持久化目錄。
+
+**篩選過程**:掃描 98 個已完成樣本,條件=有 background_asset+tree 含多成員 group+非 root parent → 13 個符合;再以背景 128×128 像素 std 區分真實影像 vs 純色 → 只剩 3 個(std>0):Sewing day(20 前景,太多)、Electronics circuit(10 前景)、**`58ac638c95a7a863ddcc7c2b`「Softest Pillows Ad with Tender Dandelion Seeds」(std 27.2,6 前景)← 選定**。蒲公英微距背景有明確主體(中央/右側種子頭)與留白(左下 bokeh)。
+
+**Tree 結構**(選樣理由):兩個 3 成員 group(`group_typography_main`/`group_decorative_soft`)+三層 `sequence_after` 鏈 `SOFTEST→pillows→EVER` +三條 `decorates` 邊,共 5 條非 root 邊。勝出候選 1 把文字鏈實現為左側留白區的垂直堆疊(x=48/62/56),與 Analyst 留白判讀、Director Concept 1 全鏈一致。
+
+**QC 誠實揭露**(文件內以 † 標注):有背景樣本的兩類協定性誤報——`missing_element: asset_0000`(背景由 renderer 合成、mapper 不放置)與 `low_text_contrast vs canvas_bg=#FFFFFF`(對比規則用白畫布預設而非實際攝影背景);有鑑別力的違規只有候選 2/3 的 `out_of_bounds` 與候選 3 的 `title_peripheral`。三候選全未過 → `degradations: ["all_qc_failed"]`,L0 政策下 judge 照常三選一,判決 01>03>02 與 QC 鑑別性違規方向一致。
+
+**產出**:`output2/step98_a3_walkthrough/A3_PIPELINE_WALKTHROUGH_2.md` + `images2/`(5 張);成本表 7 呼叫、$0.0252、27.1s,由 `stage_calls.json` 加總核對。
+
+*最後更新:2026/07/24(Step 98b 完成:58ac638c 真實背景 walkthrough;QC 協定誤報 vs 鑑別違規已明確區分)*
