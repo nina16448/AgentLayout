@@ -51,9 +51,16 @@ def _spec(elements: List[Element]) -> DesignSpec:
     )
 
 
-def test_prompt_template_has_photo_size_prior_slot():
-    assert "{photo_size_prior}" in PROMPT_TEMPLATE
-    assert "# GT-calibrated photo size prior (Step 60" in PROMPT_TEMPLATE
+def test_photo_size_prior_removed_from_prompt_but_helper_kept():
+    """"先想再畫" refactor (2026-06-25): the Step 60 photo-size-prior block was
+    cut from the lean CoordinateMapper prompt (the art director now owns sizing
+    via the composition concept). The ``_format_area_hints`` helper and the
+    PHOTO_AREA_* constants are kept so the calibration is not lost and remains
+    unit-tested below."""
+    assert "{photo_size_prior}" not in PROMPT_TEMPLATE
+    assert "# GT-calibrated photo size prior (Step 60" not in PROMPT_TEMPLATE
+    # helper survives and still produces the hint text (tested elsewhere here)
+    assert callable(GenerateLayout._format_area_hints)
 
 
 def test_calibration_constants_pinned():
@@ -61,6 +68,47 @@ def test_calibration_constants_pinned():
     assert PHOTO_AREA_GT["p50"] == 0.213
     assert PHOTO_AREA_GT["p75"] == 0.445
     assert PHOTO_AREA_TARGET == (0.20, 0.45)
+
+
+# ---------------------------------------------------------------- Step 76c text prior
+
+
+def test_text_area_prior_constants_pinned():
+    """N=1,902 full-cache calibration (2026-07-02); re-run the calibration
+    one-liner in IMPLEMENTATION_LOG Step 76c before changing these."""
+    from metagpt.ext.agentlayout.actions.generate_layout import (
+        TEXT_AREA_GT,
+        TEXT_AREA_TARGET,
+    )
+
+    assert TEXT_AREA_GT == {"p25": 0.103, "p50": 0.152, "p75": 0.213, "p90": 0.289}
+    assert TEXT_AREA_TARGET == (0.12, 0.25)
+
+
+def test_text_area_prior_in_template_and_emits_canvas_math():
+    """The prior slot must exist and render per-canvas pixel targets plus the
+    executable enlarge-fonts instruction (Step 60 pattern)."""
+    assert "{text_area_prior}" in PROMPT_TEMPLATE
+    assert "# GT-calibrated text size prior" in PROMPT_TEMPLATE
+
+    spec = _spec([
+        _el("title_1", SemanticType.TITLE, VisualType.TEXT),
+        _el("body_1", SemanticType.BODY_TEXT, VisualType.TEXT),
+        _el("photo_1", SemanticType.PRODUCT_IMAGE, VisualType.IMAGE),
+    ])
+    block = GenerateLayout._format_text_area_prior(spec)
+    # canvas 600x400 = 240,000 px^2 -> 12%-25% = 28,800-60,000 px^2
+    assert "28,800" in block and "60,000" in block
+    assert "12%-25%" in block
+    assert "title_1" in block and "body_1" in block
+    assert "photo_1" not in block  # text elements only
+    assert "ENLARGING font sizes" in block
+    assert "TIMID" in block
+
+
+def test_text_area_prior_none_without_text_elements():
+    spec = _spec([_el("photo_1", SemanticType.PRODUCT_IMAGE, VisualType.IMAGE)])
+    assert GenerateLayout._format_text_area_prior(spec) == "None"
 
 
 def test_hint_emitted_for_product_image():
@@ -114,12 +162,13 @@ def test_non_photo_image_classes_excluded():
     assert GenerateLayout._format_area_hints(spec) == "None"
 
 
-def test_prompt_pins_photo_prominent_bucket_and_attention():
-    """Step 60 second lever: the bucket appears in the size table AND as an
-    end-of-prompt ATTENTION rule (highest-compliance prompt region)."""
-    assert "photo-prominent: >=20%" in PROMPT_TEMPLATE
-    assert "ATTENTION: Photo sizing (Step 60" in PROMPT_TEMPLATE
-    assert "0.20 * canvas_width * canvas_height" in PROMPT_TEMPLATE
+def test_attention_blocks_removed_by_refactor():
+    """"先想再畫" refactor: the v1 ATTENTION/size-bucket blocks were compensations
+    for the monolithic Generator's centring bias. Splitting compose/coordinate
+    removes the need, so these strings must no longer be in the prompt."""
+    assert "photo-prominent: >=20%" not in PROMPT_TEMPLATE
+    assert "ATTENTION: Photo sizing (Step 60" not in PROMPT_TEMPLATE
+    assert "0.20 * canvas_width * canvas_height" not in PROMPT_TEMPLATE
 
 
 def test_qc_bucket_pinned():
@@ -173,32 +222,29 @@ def test_inject_photo_size_prior_noop_without_photo():
     assert spec.hard_constraints == []
 
 
-def test_prompt_template_formats_with_twelve_substitutions():
-    """Regression: PROMPT_TEMPLATE.format must not raise KeyError after the
-    photo_size_prior (Step 60), composition_directive (Step 62), self_render
-    (Step 65) and exemplars (Step 67) slots were added (all literal braces
-    stay escaped)."""
+def test_prompt_template_formats_with_lean_substitutions():
+    """Regression: after the "先想再畫" refactor the prompt's substitution set is
+    the lean CoordinateMapper one; ``.format`` must not raise KeyError."""
     rendered = PROMPT_TEMPLATE.format(
-        design_spec="{}",
+        concept_block="CONCEPT",
+        canvas_width=600,
+        canvas_height=400,
+        bg_color="#FFFFFF",
+        element_list="- title_1 (title/text)",
         safe_zones="[]",
         dominant_palette="[]",
         recommended_text_color="#111111",
-        feedback="None",
-        previous_attempt="None",
-        layout_tree="{}",
+        underlay_panels="None.",
+        text_area_prior="None",
+        feedback_block="",
         format_example="{}",
-        photo_size_prior="None",
-        composition_directive="None",
-        self_render="None",
-        exemplars="None",
     )
-    assert "# GT-calibrated photo size prior (Step 60" in rendered
+    assert "CONCEPT" in rendered
+    assert "{concept_block}" not in rendered
+    # the old slots are gone
     assert "{photo_size_prior}" not in rendered
-    assert "# Composition directive (Step 62" in rendered
     assert "{composition_directive}" not in rendered
     assert "{self_render}" not in rendered
-    assert "# Designer exemplars (Step 67" in rendered
-    assert "{exemplars}" not in rendered
 
 
 # ============================================================

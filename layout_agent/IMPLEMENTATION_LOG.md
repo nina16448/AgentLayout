@@ -5831,3 +5831,222 @@ LLM 進「求生模式」只敢置中。依 `layout_agent/REFACTOR_PLAN.md` 把�
 質性案例清單（agent_sgc−baseline_sgc 前 10）在 `aggregate.md`／`qualitative_picks.json`，最大差 `5e68da79`（vs GT Δ+0.554）可作論文對比圖。
 
 *最後更新：2026/07/08（Step 90 完成：SGC/TLC/PCA 上線＋N=100 第一版數字；方向有利未顯著、自我一致性解讀限制）*
+
+---
+
+## Step 92 — text-as-image 協定下的 matched COLE H2H（driver 就位，**尚未執行**）
+
+**動機（論文結構性缺口，非新改善實驗）**：B 軸 headline 目前是 Step 70 的「86.6% of designer Smean」，量測條件是**舊 renderer ＋ raw-asset 輸入**；但主結果已換成 Step 89 的 text-as-image 協定（N=100）。兩者放進同一張 main table，正是 `EXPERIMENT_MATRIX.md` 表三「renderer 版本／協定不可跨版本比較」明文禁止的事。本步把 B 軸重新量在 Step 89 的同一批 100 樣本上，使 **A 軸（`step89_n100/metrics.json`）／B 軸（本步）／C 軸（`_summary.json` blind pairwise）三軸同協定、同樣本集**。
+
+**新增**：`layout_agent/output2/step92_cole_h2h.py`（獨立 CLI driver，無人 import）。
+
+**可比性合約（本步最重要的設計約束）**：COLE prompt、model（`gpt-4o`）、temperature 0.0、parser 全部 `import step21_phaseb_eval` 逐字沿用——Step 70 與 Step 74 呼叫的是同一個模組。判官零重寫，**唯一變動的是餵進去的 PNG**。兩項刻意保留的行為：
+1. designer GT 是 `.jpg`，但 `_score_image` 一律套 `data:image/png` header。Step 70/74 亦然、OpenAI 依實際 bytes 判斷格式——**不「修正」它**，改了會靜默破壞與已發表數字的可比性。
+2. 評測模型由 `step21_phaseb_eval.MODEL` 釘死 `gpt-4o`，不吃 `~/.metagpt/config2.yaml` 的 pipeline model（同 Step 91 的變數隔離決策）。`--dry-run` 已實測印出 `judge=gpt-4o`，當時 config 為 o4-mini。
+
+**輸入／輸出**：
+- 讀 `output2/step89_n100/<id>/{a,b}/final.png` ＋ `output/crello_<id>/ground_truth_preview.jpg`（三者皆已確認 100/100 存在）
+- 寫 `output2/step92_cole_h2h/per_sample/<id>.json`（可續跑的工作單元）＋ `aggregate.{json,md}`
+
+**統計（順帶補上 Tier-1 的 error bar 缺口，零 scipy 依賴）**：
+- `_sign_test_p`：非平手配對的**精確**二項檢定（`math.comb`，雙尾）
+- `_bootstrap_ci`：配對 delta 均值的 percentile bootstrap，10,000 次、`seed=20260709` 寫死 → 可重現
+- 逐軸（SDL/SQL/STV/SGI/SIO）與 Smean4/Smean5 各報 Δ mean [95% CI]、W/T/L、sign p
+- `--arms a,b,gt` 時另出 B−A 配對比較，回答「深審棧到底有沒有幫助」
+
+**安全設計（避免重蹈 Step 91 的 token 記帳踩雷）**：
+- `--dry-run`：印計畫＋成本，**零 API 呼叫**（實測 `samples=100 arms=['a','gt'] calls=200 cost=$2.50`）
+- pre-flight 檢查所有圖檔存在才開始花錢；缺圖記錄不評分
+- `--skip-existing` 續跑；`--aggregate-only` 純重算報表、零呼叫
+- judge parse 失敗 → 記 `parse_failed` 並排除該配對，**絕不以 0 分充數**
+
+**驗證（合成資料，零 API）**：`sign(5,5)=1.0`、`sign(10,0)=0.00195`、`sign(0,0)=None`；常數 delta 的 bootstrap CI 塌縮到該常數；同 seed 兩次結果 bit-identical；`_paired_block` 端到端算出 `pct_of_gt_smean4=87.1`、`STV Δ=−2.0`（合成 A/GT 分數手算相符）。
+
+**執行結果（2026-07-09，N=100 全數完成、200 calls、$2.50、零 parse 失敗）**：
+
+| | Smean4 | Smean5 | Δ Smean4 [95% CI] | W/T/L | sign p |
+|---|---|---|---|---|---|
+| A 基線 | 7.120 | 7.256 | **−0.680 [−0.853, −0.512]** | 11/25/64 | <0.001 |
+| designer GT | 7.800 | 7.866 | — | — | — |
+
+→ **A 基線 = 91.3% of designer Smean4**（Smean5 92.2%）。
+
+逐軸（agent / GT / Δ mean / W-T-L / sign p）：
+
+| axis | agent | GT | Δ [95% CI] | W/T/L | p |
+|---|---|---|---|---|---|
+| SDL | 7.25 | 8.03 | −0.780 [−0.970, −0.600] | **0/48/52** | <0.001 |
+| SQL | 7.93 | 8.64 | −0.710 [−0.940, −0.490] | 7/46/47 | <0.001 |
+| STV | 6.68 | 7.67 | **−0.990 [−1.220, −0.760]**（最大 gap） | 4/37/59 | <0.001 |
+| SGI | 7.80 | 8.13 | −0.330 [−0.500, −0.170] | 11/56/33 | 0.001 |
+| SIO | 6.62 | 6.86 | −0.240 [−0.400, −0.070] | 14/53/33 | 0.008 |
+
+**發現一（convergent validity，方法學價值）**：兩個獨立評測管道給出幾乎同一個勝場數——Step 89 blind pairwise overall `cand 12 / tie 7 / gt 81` vs 本步 COLE Smean4 `11/25/64`。比較式與絕對打分兩種協定收斂，**大幅削弱「結論是 judge 協定產物」的質疑**。
+
+**發現二（SDL 零勝，已驗非 bug）**：design_layout 軸 agent **100 樣本零勝**（48 平 52 負）。原始分數分布：GT SDL 幾乎是常數 8（79/100 給 8、12 個 9、9 個 7），agent 散佈 3–9（49 個 8、32 個 7、尾巴到 3）。agent 兩次拿到 9 時 GT 也是 9 → delta=0。**judge 對 designer GT 的 SDL 給分近乎飽和**，agent 只能追平不能超越。這是 Generator-bounded 在絕對分軸上的新形式證據，且與 STV（typography）最大 gap −0.99 一致。
+
+**發現三（協定切換的真實增益）**：text-as-image 下 91.3% vs Step 70 舊協定 86.6%。**兩者不可同表**（renderer 版本＋輸入協定雙變因），但方向支持 Step 54/55/56 的 render-channel 假說：把字型/尺寸 fidelity 交還設計師素材後，殘餘 gap 縮小約 4.7 pts，剩下的才是純 placement 品質差距。
+
+**B 臂補跑（同日）**：先把 resume 粒度從「樣本」降到「臂」（`_existing_arms()` 只重用 `status==ok` 的臂，`parse_failed` 會重試），使 `--arms a,b,gt --skip-existing` 只需 **98 calls / $1.23** 而非 300 calls / $3.75。驗證：重跑後 A 臂數字 bit-identical（7.120 / 7.800 / 91.3%）＝a、gt 確實零重評。pre-flight 抓到 2 樣本缺 `b/final.png`（＝Step 89 已記錄的 B 臂 1 error＋1 crash），記錄後排除 → B 臂 n=98。
+
+| | Smean4 | Δ vs GT [95% CI] | W/T/L | sign p |
+|---|---|---|---|---|
+| A 基線 (n=100) | 7.120 | −0.680 [−0.853, −0.512] | 11/25/64 | <0.001 |
+| B 深審 (n=98) | 6.997 | −0.798 [−0.997, −0.620] | 6/22/70 | <0.001 |
+
+B = 89.8% of designer，逐軸全面劣於 A（SDL −0.888、SQL −0.888、STV −1.051、SIO −0.367），SDL 亦零勝（0/43/55）。
+
+**B − A 配對（n=98）**：Δ Smean4 = **−0.145 [−0.316, +0.026]**；B 較好 26 / 平 27 / **A 較好 45，sign p=0.032**。
+
+**推論（本步最大收穫）**：Step 89 的 blind pairwise 判 B vs A 為「方向相反但 n.s.」（B 8 / A 13）。本步以**獨立第二管道**（COLE 絕對打分）在同批樣本得**同方向且顯著**（A 45 / B 26，p=0.032）。深審棧 net negative 的結論因此跨協定成立，是 Generator-bounded 反證鏈**唯一達顯著**的負向效果。
+
+**誠實註記（避免超譯）**：sign test 顯著但 mean Δ 的 bootstrap CI `[−0.316, +0.026]` 跨 0——兩者衡量不同量。正確陳述＝「**B 更常輸給 A（顯著），但平均劣勢幅度小（~0.15 分、CI 含 0）**」，**不可**寫成「B 顯著拉低 Smean」。歸因見 Step 89 §11.3 結果四（後期輪次單元素搬移拆散對齊群）。
+
+**證據檔**：`output2/step92_cole_h2h/{aggregate.json, aggregate.md, per_sample/<id>.json}`。總計 298 calls / $3.73。
+
+---
+
+## Step 93（2026-07-09）：逐輪增益曲線正式化（E2，零新生成）
+
+**動機**：論文 5.8 引用的 +0.45/−0.19/−0.03/−0.12 出自 result.md §11.4 行文，從未以獨立表格＋樣本數＋顯著性落盤。Step 92 把 B 軸主表遷到 Step 89 同批樣本後，這條曲線已與 headline 同協定，唯一缺口是出處正式化。
+
+**實作**：`output2/step93_perround_curve.py`（純 stdlib）讀 `step89_n100/<id>/{a,b}/rounds/round*.json`（pipeline 內建 JudgeAesthetic 5 軸 total，run 當下落盤），零 API 呼叫：
+- `transition_stats`：Δ(k)＝同樣本 `total(k)−total(k−1)` 配對；輸出 n/mean/median/improved-tied-worsened/精確 sign p，並內建 `PUBLISHED` 對照欄——與 §11.4 已發布值差 >0.005 直接印 MISMATCH。
+- `round0_cross_arm`：A.R0−B.R0 配對（§11.4 口述的 best-of-3 +1.6 正式量測）。
+- `per_round_means`：每輪描述性平均（total 進 md；5 軸僅進 JSON，遵守 Finding 2 紀律）。
+
+**結果（100 樣本全數有 trace）**：
+| arm | 輪 | n | mean Δ | W/T/L | sign p |
+|---|---|---|---|---|---|
+| A | R0→R1 | 100 | **+0.440** | 30/54/16 | 0.054 |
+| A | R1→R2 | 94 | +0.138 | 21/50/23 | 0.88 |
+| B | R0→R1 | 99 | +0.455 | 29/47/23 | 0.49 |
+| B | R1→R2 | 95 | −0.189 | 16/57/22 | 0.42 |
+| B | R2→R3 | 93 | −0.032 | 16/55/22 | 0.42 |
+| B | R3→R4 | 91 | −0.121 | 19/54/18 | 1.00 |
+
+R0 跨臂：**A−B = +1.590（median +1.0；A 勝 84/平 9/B 勝 7；sign p=7.1e-18）**。
+
+**對帳**：B 臂四值與 §11.4 全中；唯一差異＝§11.4 把兩臂 R1 合寫「均 +0.45」，精確值 A +0.440 / B +0.455——論文 5.8 應引本表精確值。
+
+**新發現（5.8 措辭紀律）**：**沒有任何單一輪 transition 顯著**（最佳 A R1 p=0.054，其餘 ≥0.42）；唯一強顯著的是 R0 的 best-of-3 效果。可辯護的主張排序：(1) best-of-3 選擇承載絕大多數增益（顯著）；(2) 第一輪修復是小幅正向 drift（+0.44，邊緣）；(3) B 後期輪次負向趨勢為**描述性**陳述、單輪皆 n.s.。「R3 起淨害」不可寫成推論性結論。
+
+**證據檔**：`output2/step93_perround/perround.{json,md}`。
+
+---
+
+## Step 94（2026-07-09）：Step 71 Ali 65/100 精確 sign test 正式化（E3，零 API）
+
+**實作**：`output2/step94_signtest.py` 讀 `output/b1_root_cause_n100.json`（Step 71 per-sample 勝負計數，先 assert W+L+T=n_total），對三軸各算兩種精確二項雙尾 p（`math.comb`，與 Step 92/93 同慣例）：decisive-only（排除 ties）與保守版（ties 算進 n=100）。
+
+**結果**：
+| axis | W/L/T | decisive p | 保守 p |
+|---|---|---|---|
+| alignment | 65/3/32 | **3.56e-16** | **3.52e-03** |
+| readability | 21/41/38 | 1.51e-02（GT 方向顯著） | 1.00 |
+| occlusion | 45/55/0 | 0.368（n.s.） | 0.368 |
+
+**口試一行答案**：Ali 65 勝 3 敗——即使把全部 32 個 tie 都算成不利（保守版 p=3.5e-03）仍遠超隨機；排除 ties 的精確雙尾 p=3.6e-16。N=100 對這條 claim 綽綽有餘。論文引保守版、decisive 版放註腳（依使用者指示）。**Caveat 照舊**：sign test 只講勝場數、不涉 mean margin，Step 71 的 3 個 banner outlier 撐 aggregate 的問題不因此消失；readability 是真實系統性落後（decisive 顯著、GT 方向）。
+
+**證據檔**：`output2/step94_signtest/signtest.{json,md}`。
+
+---
+
+## Step 95（2026-07-09）：跨協定一致性聲明表（E4，純整理零實驗）
+
+**動機**：E1（Step 92）後論文同時存在舊協定（N=20/100/1,897＋N=178）與新協定（Step 89/92 text-as-image N=100）兩批數字，需要附錄級的「數字→run→協定→renderer」溯源表杜絕混用。
+
+**產出**：`output2/step95_protocol_map/PROTOCOL_MAP.md`——
+- 版本代號：renderer R1（初版）/R2（Step 55 升級）/R3（text-as-image）；協定 GEO/WJ4/H2H5/PAIR/PIPE 五類。
+- 主表 17 列：Step 20/21b/22/23/29/70/71/73-74/75/89/90/92/93/94 每個論文數字的 N、協定、renderer、證據檔、論文引用節（引用節欄需在 Overleaf 逐一核對，已標明）。
+- 禁止同表清單 6 條：91.3% vs 86.6%（雙變因）、WJ4 vs H2H5（軸數＋單邊/成對）、PIPE total vs Smean（量綱）、GEO 跨 renderer 可比但樣本集不同、12/100 不可宣稱總體勝、逐輪曲線單輪皆 n.s.（Step 93 新增紀律）。
+- 遺留事項：86.6%→91.3% 全域替換時「跨規模穩定性」敘事需改寫——91.3% 只有 N=100 R3 單一規模，建議行文拆成 WJ4 跨規模穩定（64.8%→65.8%）與 H2H5 R3 91.3%（N=100）兩句。
+
+*最後更新：2026/07/09（Step 93–95 完成：E2 逐輪曲線正式落盤——B 臂四值與 §11.4 全中、A R1 精確值 +0.440、單輪皆 n.s. 而 R0 best-of-3 +1.59 p=7e-18 才是顯著效果；E3 Ali sign test 保守 p=3.5e-03 / decisive p=3.6e-16；E4 跨協定溯源表 17 列＋禁止同表 6 條）*
+
+---
+
+## Step 96（E2'）— legacy 管線逐輪配對增益曲線（零 API）
+
+**動機**：Step 93 的曲線量在 step89／text-as-image／R3 renderer 上。論文 5.8 節描述的是 **legacy 管線**（raw-asset 輸入 ＋ refinement loop、R2 renderer），引 step89 數字＝引錯管線的證據。使用者指示 5.8 改引本表。
+
+**新增**：`layout_agent/output2/step96_legacy_perround_curve.py`（純 stdlib、零 API、無人 import）。編號跳 96 是因平行 session 已把 Step 95 用於 `step95_protocol_map/`；撞號當下改號，未觸碰對方任何檔案。
+
+**方法**：讀 `full_result/<id>/trace/per_round_judge.json`。每輪 total ＝該輪 `best_candidate_id` 對應候選的 5 軸 PIPE total（5–50，與 Step 93 同量綱、同軸）。抽查五輪確認 `best_candidate_id` 恆為 argmax，故此值等同「pipeline 實際帶往下一輪的分數」；id 缺席時退回 argmax 並計入 `fallback_to_argmax`（本次 **0 次**）。統計沿用 Step 92/93/94 慣例（`math.comb` 精確雙尾 sign test），另附 95% percentile bootstrap CI（10,000 次、seed=20260709）。
+
+**結果（n=161 個有 judge trace 的樣本）**：
+
+| transition | n pairs | mean Δ | 95% CI | W/T/L | sign p |
+|---|---|---|---|---|---|
+| R0→R1 | 160 | **−0.075** | [−0.475, +0.325] | 49/57/54 | 0.694 |
+| R1→R2 | 142 | +0.169 | [−0.275, +0.606] | 37/64/41 | 0.734 |
+| R2→R3 | 133 | +0.361 | [−0.098, +0.827] | 51/46/36 | 0.133 |
+| R3→R4 | 126 | +0.151 | [−0.333, +0.635] | 48/45/33 | 0.119 |
+
+mean total 五輪持平：33.553 / 33.487 / 33.127 / 33.383 / 33.317。
+
+**核心發現（影響論文論點，非例行補數字）**：
+1. **legacy 的 R0→R1 是 −0.075（p=0.694），不是 +0.45。**「價值集中在第一輪」是 **step89 專屬現象**，在 legacy 管線上不成立。§11.4「可寫」第 2 條（best-of-3＋一輪修復＋停）若隨 5.8 改引本表，**必須同步撤下或明確改綁 step89**。
+2. 四個 transition 全部 n.s.、四條 CI 全部跨 0 → **legacy refinement loop 逐輪零可測增益**，與 Step 20b／31／32／74 的 net-negative 結論同向且互相加強。
+3. 合併 Step 93 看：「逐輪修復無顯著增益」是**跨兩個管線、兩個協定**的一致發現（step89 最佳 p=0.054、legacy 最佳 p=0.119）。
+
+**不可寫**：R2→R3 的 +0.361 不可解讀為「第三輪最有價值」——p=0.133、CI 跨 0，且 n_pairs 已因存活者偏誤自 160 降至 133。
+
+**交叉驗證（讀取邏輯正確性）**：本步算出的 n_pairs `160/142/133/126` 與 `full_result/_aggregate/per_round_convergence.md` 的 `rounds_observed` **逐格吻合**——該檔由另一支程式於數月前獨立產生。
+
+**樣本數誠實註記**：179 個樣本目錄 → 1 個無 `per_round_judge.json`、**17 個 trace 為空 list**（pipeline 未產出任何 judge 判決＝crash／QC catastrophic）→ 可算增益者 **161**。論文若寫 N=178 須附此差額來源。n_pairs 隨輪次遞減是存活者偏誤（在 R(k−1) 已 accept 的樣本停在該輪），非缺資料。
+
+**證據檔**：`output2/step96_legacy_perround/{curve.json, curve.md}`（curve.json 內含 provenance 區塊）。
+
+*最後更新：2026/07/09（Step 96 完成：legacy 逐輪曲線 R0→R1 −0.075、四輪全 n.s.；「價值集中第一輪」證實為 step89 專屬；n_pairs 與既有 aggregate 逐格交叉驗證）*
+
+---
+
+## Step 97：Crello-RelationSemantic-rich N=100 診斷子集（2026/07/10）
+
+**目的**：為 Layout Tree（Full Tree vs No Tree）ablation 建一個「生成前、模型盲」的診斷子集；目標論證是劑量反應——樣本語意關係越複雜，Tree 相對 No Tree 的增益越大——而非單一平均數。selection criterion 與任何模型輸出無關，非 cherry-picking。
+
+**三階段協定**（`output2/step97_relation_subset.py`，--stage 1/2/3）：
+1. **Stage 1 metadata 初篩**（離線）：1,902 個本地快照 → **800 進池**。門檻：fg（`kind != background_candidate`）≥5、非空且互異文字 ≥3、`kind=="image"` 語意素材 ≥1（純 underlay 形狀視為裝飾不算）。淘汰漏斗：fg<5＝238、text<3＝383、互異 text<3＝19、無 image＝462。
+2. **Stage 2 雙標註者**（live，gpt-5.4-mini）：每樣本兩個去相關 LLM pass（元素順序隨機化＋指示改寫），只看 title＋canvas 尺寸＋文字原文＋逐層素材圖（512px）；**不給任何幾何、不用 SEGA 半成品海報**（其照片在 GT 位置會洩漏 layout）。全池 seed=97 隨機順序跑到 keeps≥130 停（順序隨機故提前停止不引入偏差）。結果：標註 150、**共識 keeps 135**（keep 率 90%）、解析失敗 1。
+3. **Stage 3 共識＋抽樣**：keep 需兩位皆判「≥2 groups（含 implicit singletons）且 ≥1 組 ≥2 元素」。keep 一致率 94.6%、**Cohen's κ=0.572**（註：兩位 keep 基率皆 ~93%，prevalence 效應壓低 κ 上限）；tier 一致率 67.4%。keep 池 tier：medium=68、rich=67。按共識 tier 比例分層（seed=97）抽 **N=100：medium=50／rich=50**，與 eval100 重疊 6。
+
+**Tier 定義**（共識取兩位較低者）：Simple＝全 singleton 或單一 group 蓋全部；Medium＝恰 1 個 non-trivial group（≥2 元素）；Rich＝≥2 non-trivial groups 或 depth≥2（child group ≥2 元素）。
+
+**誠實揭露**：「兩位標註者」是同一 config 模型的兩個去相關 pass，非兩位人類；`stage2_annotations.jsonl` 保留完整 group 結構，人工重標可直接替換（同 Step 90 `--tree-dir` 可插拔精神）。本地快照覆蓋 1,902/1,971（96.5%）test split，缺的 69 個不在抽樣母體。
+
+**證據檔**：`output2/step97_relation_subset/{stage1_pool.json, stage2_annotations.jsonl, relation100_ids.json, stage3_report.md, RUN_METADATA.json}`。
+
+**下一步**：以 `relation100_ids.json` 跑 Full Tree vs No Tree A/B，按 medium/rich 分層報增益差。
+
+*最後更新：2026/07/10（Step 97 完成：模型盲三階段篩選；800 池→135 keeps→N=100（medium 50/rich 50）；κ=0.572；子集就緒待 Tree ablation）*
+
+---
+
+## Step 98:A3 pipeline 逐階段 walkthrough 文件(論文用,2026/07/24)
+
+**目的**:論文需要一個「單一樣本走完整條 A3 pipeline、每階段輸出逐字呈現」的英文 walkthrough。**零 API 費用**——所有產物直接取自已完成的 batch-001 run(`runs/a3/a3-crello-test-batch-001-n100-t2-l0-v1`)持久化目錄,未重跑、未改寫任何模型輸出。
+
+**樣本選擇**:從 batch-001 已完成樣本中篩 foreground ≤5,得 13 個候選。逐一檢視後選 **`5f885a9aa637ee11e3498504`**(Christmas Offer Girl in Headphones with Gift,851×315,4 素材:3 raster+1 text bitmap)。選擇理由:(1) 素材數 4 明確符合 ≤5;(2) 視覺最豐富(真人照片+緞帶+wordmark);(3) 敘事最乾淨——QC 對候選 1/3 各報一項 `out_of_bounds`、候選 2 零違規,judge 獨立視覺排序恰好把 QC-clean 的候選 2 排第一,QC 與 judge 交叉印證。落選者:有真實背景的樣本(5db16f87/5da735de 等)皆為白底 logo 型、背景分析太單調;TRECITY(5dc93d43)每個候選都被 QC 報 `missing_element`(背景另行合成的協定性誤報)+對比度檢查誤用白底假設,放論文需額外解釋兩個 QC 特例。
+
+**取捨註記**:選中樣本無底圖(blank canvas),Background Analyzer 一節展示的是 no-background 分支(全畫布 quiet region、調色權轉移給前景)——這是 A3 對 Crello 大宗 blank-canvas 樣本的真實行為,誠實呈現。
+
+**產出**:`output2/step98_a3_walkthrough/A3_PIPELINE_WALKTHROUGH.md` + `images/`(9 張:背景 placeholder、contact sheet、4 張輸入素材、3 張候選 render)。文件依序含:inputs(背景/素材/brief)→ Analyst 的 background_summary → Design Spec(intent/keywords/per-asset constraints)→ T2 Layout Tree(全 JSON+ASCII 樹)→ 3 個 composition concepts 全文 → 3 組 Coordinate Mapper 座標表 → QC 結果表 → 3 張候選圖 → Judge-Select 排序與最終選擇;附錄為 per-stage token/成本/延遲表(7 次 LLM 呼叫、$0.0301、22.0s,均由 `stage_calls.json` 加總核對)。
+
+*最後更新:2026/07/24(Step 98 完成:batch-001 樣本 5f885a9a 零成本 walkthrough 文件,QC↔judge 交叉印證敘事)*
+
+---
+
+## Step 98b:第二份 walkthrough——真實背景+非平凡 layout tree 樣本(2026/07/24)
+
+**目的**:使用者要求補一個同時滿足四條件的樣本:(1) 實際背景影像、(2) 背景有可辨識主體或留白、(3) ≥1 個 group 含 ≥2 素材、(4) 有 parent-child dependency。仍為**零 API 費用**,產物取自 batch-001 持久化目錄。
+
+**篩選過程**:掃描 98 個已完成樣本,條件=有 background_asset+tree 含多成員 group+非 root parent → 13 個符合;再以背景 128×128 像素 std 區分真實影像 vs 純色 → 只剩 3 個(std>0):Sewing day(20 前景,太多)、Electronics circuit(10 前景)、**`58ac638c95a7a863ddcc7c2b`「Softest Pillows Ad with Tender Dandelion Seeds」(std 27.2,6 前景)← 選定**。蒲公英微距背景有明確主體(中央/右側種子頭)與留白(左下 bokeh)。
+
+**Tree 結構**(選樣理由):兩個 3 成員 group(`group_typography_main`/`group_decorative_soft`)+三層 `sequence_after` 鏈 `SOFTEST→pillows→EVER` +三條 `decorates` 邊,共 5 條非 root 邊。勝出候選 1 把文字鏈實現為左側留白區的垂直堆疊(x=48/62/56),與 Analyst 留白判讀、Director Concept 1 全鏈一致。
+
+**QC 誠實揭露**(文件內以 † 標注):有背景樣本的兩類協定性誤報——`missing_element: asset_0000`(背景由 renderer 合成、mapper 不放置)與 `low_text_contrast vs canvas_bg=#FFFFFF`(對比規則用白畫布預設而非實際攝影背景);有鑑別力的違規只有候選 2/3 的 `out_of_bounds` 與候選 3 的 `title_peripheral`。三候選全未過 → `degradations: ["all_qc_failed"]`,L0 政策下 judge 照常三選一,判決 01>03>02 與 QC 鑑別性違規方向一致。
+
+**產出**:`output2/step98_a3_walkthrough/A3_PIPELINE_WALKTHROUGH_2.md` + `images2/`(5 張);成本表 7 呼叫、$0.0252、27.1s,由 `stage_calls.json` 加總核對。
+
+*最後更新:2026/07/24(Step 98b 完成:58ac638c 真實背景 walkthrough;QC 協定誤報 vs 鑑別違規已明確區分)*

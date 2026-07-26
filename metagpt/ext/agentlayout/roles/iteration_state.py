@@ -58,7 +58,31 @@ class RetryAnalyst(Action):
 
 
 class RetryGeneration(Action):
-    """Sentinel cause_by tag: re-trigger LayoutGeneratorRole with Aesthetic feedback."""
+    """DEPRECATED by the "先想再畫" refactor (2026-06-25).
+
+    Kept only so legacy imports / tests that reference the symbol keep resolving.
+    The role path now uses RetryCoordinates (CoordinateMapper micro-adjust) and
+    RetryComposition (CompositionDirector re-imagine) instead.
+    """
+
+
+class RetryComposition(Action):
+    """Sentinel cause_by tag: re-trigger CompositionDirectorRole.
+
+    Emitted when the Aesthetic Judge's worst axis is design_layout or
+    innovation_originality -- the composition itself is weak, so the Director
+    must imagine fresh concepts rather than the CoordinateMapper nudging a
+    fundamentally wrong layout.
+    """
+
+
+class RetryCoordinates(Action):
+    """Sentinel cause_by tag: re-trigger LayoutGeneratorRole (CoordinateMapper).
+
+    Emitted on ACCEPT (mandatory refinement) and on rejects whose worst axis is
+    typography/colour/graphics -- the concept is fine, only the pixel-level
+    execution needs adjusting, so the existing ConceptBatch is reused.
+    """
 
 
 class IterationStop(Action):
@@ -228,24 +252,28 @@ class IterationStateRole(Role):
                 cause_by=IterationStop,
             )
 
-        # Route the verdict. ACCEPT always routes to LAYOUT_GENERATOR (mandatory
-        # refinement pass). REJECT uses next_target() (Generator early, Analyst
-        # after N).
+        # Route the verdict ("先想再畫" three-way):
+        #   ACCEPT            -> CoordinateMapper (mandatory refinement pass)
+        #   REJECT, budget up -> Analyst (rebuild spec from scratch)
+        #   REJECT design/inn -> CompositionDirector (re-imagine concepts)
+        #   REJECT otherwise  -> CoordinateMapper (typography/colour micro-adjust)
         if is_accept:
             target = FeedbackTarget.LAYOUT_GENERATOR
+        elif self._state.next_target() == FeedbackTarget.ANALYST:
+            target = FeedbackTarget.ANALYST
+        elif self._worst_axis(judgement) in ("design_layout", "innovation_originality"):
+            target = FeedbackTarget.COMPOSITION_DIRECTOR
         else:
-            target = self._state.next_target()
+            target = FeedbackTarget.LAYOUT_GENERATOR
         self._state.feedback_target = target
         feedback: AestheticFeedback = judgement.feedback
 
         if target == FeedbackTarget.LAYOUT_GENERATOR:
-            cause_cls: type[Action] = RetryGeneration
+            cause_cls: type[Action] = RetryCoordinates
             target_name = "LayoutGenerator"
-            # Refinement Loop (Step 20) + best-so-far guard (Step 31):
-            # anchor the Generator on the BEST candidate seen across ALL
-            # rounds, not just this round. Falls back to this-round's best
-            # only when best-so-far has not been populated yet (which can
-            # happen on the first verdict before _extract_best_total ran).
+            # Anchor the CoordinateMapper on the BEST candidate seen across ALL
+            # rounds (best-so-far guard, Step 31), falling back to this round's
+            # best before best-so-far is populated.
             prev_layout = (
                 self._state.best_so_far_layout or judgement.best_candidate_layout
             )
@@ -253,6 +281,13 @@ class IterationStateRole(Role):
                 self._state.best_so_far_subscores
                 or self._extract_best_subscores(judgement)
             )
+        elif target == FeedbackTarget.COMPOSITION_DIRECTOR:
+            cause_cls = RetryComposition
+            target_name = "CompositionDirector"
+            # Re-imagine from scratch: no bbox anchor (the composition is what
+            # is being thrown away).
+            prev_layout = None
+            prev_scores = None
         else:
             cause_cls = RetryAnalyst
             target_name = "Analyst"
@@ -299,6 +334,18 @@ class IterationStateRole(Role):
             if ev.candidate_id == judgement.best_candidate_id:
                 return ev.total
         return None
+
+    @classmethod
+    def _worst_axis(cls, judgement: AestheticJudgement) -> Optional[str]:
+        """Lowest-scoring COLE axis of the best candidate (drives reject routing).
+
+        design_layout / innovation_originality -> CompositionDirector;
+        any other axis -> CoordinateMapper.
+        """
+        scores = cls._extract_best_subscores(judgement)
+        if not scores:
+            return None
+        return min(scores.items(), key=lambda kv: kv[1])[0]
 
     @staticmethod
     def _extract_best_subscores(

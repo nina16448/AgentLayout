@@ -35,6 +35,7 @@ MULTI_MODAL_MODELS = [
     "gpt-4o",
     "gpt-4o-mini",
     "openai/gpt-4o",
+    "o4-mini",
     "gemini-2.0-flash-exp",
     "gemini-2.0-pro-exp-02-05",
     "claude-3-5-sonnet-v2",

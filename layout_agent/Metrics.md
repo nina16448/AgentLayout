@@ -12,6 +12,7 @@ schema 定義，複用現有的資料結構，不要另造平行格式。
 ## 輸入
 
 每個樣本需要兩份資料：
+
 1. 一棵 LayoutTree(該樣本的語意分組來源)
 2. 一份最終版面：元素列表,每個元素有 id 和 bounding box(x, y, width, height,
    像素座標)以及畫布 canvas_width, canvas_height
@@ -56,6 +57,7 @@ SGC = D_inter / (D_intra + D_inter + 1e-6)
 值域 [0, 1),越接近 1 越好;0.5 代表分組沒有反映在版面上。
 
 邊界情況:
+
 - 全部 group 都是 singleton → D_intra 無定義 → 該樣本 SGC 記為 None 並計入
   skipped_sgc 統計。
 - 只有一個 group → D_inter 無定義 → 同上,計入 skipped_sgc。

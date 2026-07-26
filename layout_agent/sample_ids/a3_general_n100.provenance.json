@@ -1,0 +1,26 @@
+{
+  "algorithm": "sorted-local-cache-shuffle-prefix.v1",
+  "asset_count_filter": null,
+  "cached_directory_count": 1902,
+  "candidate_meta_snapshot_sha256": "bdf877e748699ff7d8a7b4b4acc03c411a8cb8036cfa868def20bb29bffc3796",
+  "candidate_pool_count": 1902,
+  "candidate_pool_sha256": "52e97ceda2d76c4c77dcc2d99573245e1a4dc2a5829538c918b817bf8897d34b",
+  "dataset": "cyberagent/crello",
+  "documented_raw_test_count": 1971,
+  "exclusions": {
+    "id_mismatch": 0,
+    "invalid_json": 0,
+    "missing_meta": 0,
+    "non_object_meta": 0
+  },
+  "geometry_filter": null,
+  "notes": "Selection is frozen before A3 generation and never inspects designer geometry, semantic richness, model output, candidate renders, or evaluation scores. The difference from the documented raw split is an explicit local-cache availability limitation.",
+  "requested_count": 100,
+  "schema_version": "a3.general-selection.v1",
+  "seed": 42,
+  "selected_count": 100,
+  "selected_ids_sha256": "0e5401fb45cb83c573c82be458508e6ace003482b027b667556dfd876aed052c",
+  "selection_universe": "locally cached test snapshots with readable matching meta.json",
+  "semantic_filter": null,
+  "split": "test"
+}

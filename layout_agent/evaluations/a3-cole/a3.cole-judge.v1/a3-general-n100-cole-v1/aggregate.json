@@ -1,0 +1,92 @@
+{
+  "arm_means": {
+    "general": {
+      "SDL": 5.63,
+      "SGI": 6.08,
+      "SIO": 4.85,
+      "SQL": 6.01,
+      "STV": 5.38,
+      "n": 100,
+      "pct_of_gt_smean4": 81.94080179842638,
+      "smean4": 5.4675
+    },
+    "gt": {
+      "SDL": 6.98,
+      "SGI": 7.43,
+      "SIO": 5.59,
+      "SQL": 7.35,
+      "STV": 6.77,
+      "n": 100,
+      "smean4": 6.6725
+    }
+  },
+  "authorization": {
+    "call_cap": 220,
+    "input_token_cap": 3000000,
+    "output_token_cap": 150000,
+    "usd_cap": 4.0
+  },
+  "evaluation_id": "a3-general-n100-cole-v1",
+  "input_snapshot_sha256": "aa7c5b236bc8655bf182cfe8fc898266fbb8e136b30c3f8ae2e7e89bbcb5fa72",
+  "judge_model": "gpt-5.4-mini-2026-03-17",
+  "matched_ids_count": 100,
+  "paired": {
+    "general_vs_gt": {
+      "n_pairs": 100,
+      "per_axis": {
+        "SDL": {
+          "losses": 75,
+          "sign_p": 2.91096598559025e-16,
+          "ties": 19,
+          "wins": 6
+        },
+        "SIO": {
+          "losses": 59,
+          "sign_p": 1.016748503966658e-10,
+          "ties": 33,
+          "wins": 8
+        },
+        "SQL": {
+          "losses": 75,
+          "sign_p": 3.975760896174872e-20,
+          "ties": 23,
+          "wins": 2
+        },
+        "STV": {
+          "losses": 72,
+          "sign_p": 1.0224592793857492e-12,
+          "ties": 18,
+          "wins": 10
+        }
+      },
+      "smean4": {
+        "bootstrap": {
+          "ci95_high": -0.9925,
+          "ci95_low": -1.42,
+          "mean_delta": -1.205
+        },
+        "losses": 85,
+        "sign_p": 5.762323641301719e-16,
+        "ties": 5,
+        "wins": 10
+      }
+    }
+  },
+  "prompt_sha256": "457bb05ccc0c0bec7d23daaa5267185f1f66b7ea187fcc95b488405c6c1396f1",
+  "schema_version": "a3.cole-judge.v1",
+  "source_sidecar": "a3-general-n100-sega-v1",
+  "status_counts": {
+    "ok": 200
+  },
+  "usage": {
+    "calls": 202,
+    "estimated_usd": 0.422035,
+    "input_tokens": 312795,
+    "output_tokens": 41653,
+    "prior_input_token_reserve": 1000,
+    "prior_interrupted_calls": 1,
+    "prior_output_token_reserve": 600,
+    "usage_reported_calls": 200
+  },
+  "wall_seconds": 61.59
+}

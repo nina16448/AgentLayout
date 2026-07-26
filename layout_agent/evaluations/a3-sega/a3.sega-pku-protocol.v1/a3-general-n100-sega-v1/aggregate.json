@@ -1,0 +1,78 @@
+{
+  "schema_version": "a3.sega-evaluation.v1",
+  "protocol_version": "a3.sega-pku-protocol.v1",
+  "evaluation_id": "a3-general-n100-sega-v1",
+  "runs": {
+    "a3-general-n100-t2-l0-01": {
+      "sample_counts": {
+        "selected_n": 100,
+        "source_valid_n": 100,
+        "source_skipped_n": 0,
+        "evaluated_n": 100,
+        "validated_only_n": 0
+      },
+      "metrics": {
+        "Ali": {
+          "value": 0.001967412305375702,
+          "applicable_n": 100,
+          "valid_n": 100,
+          "skipped_n": 0,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 0,
+          "not_applicable_n": 0,
+          "zero_contribution_n": 76
+        },
+        "Ove": {
+          "value": 0.10016870165916021,
+          "applicable_n": 100,
+          "valid_n": 100,
+          "skipped_n": 0,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 0,
+          "not_applicable_n": 0,
+          "zero_contribution_n": 4
+        },
+        "Und_l": {
+          "value": null,
+          "applicable_n": 0,
+          "valid_n": 0,
+          "skipped_n": 0,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 0,
+          "not_applicable_n": 100,
+          "zero_contribution_n": 0
+        },
+        "Und_s": {
+          "value": null,
+          "applicable_n": 0,
+          "valid_n": 0,
+          "skipped_n": 0,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 0,
+          "not_applicable_n": 100,
+          "zero_contribution_n": 0
+        },
+        "Rea": {
+          "value": 0.0003544205732787414,
+          "applicable_n": 100,
+          "valid_n": 100,
+          "skipped_n": 0,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 0,
+          "not_applicable_n": 0,
+          "zero_contribution_n": 98
+        },
+        "Occ": {
+          "value": 0.0055605520877280625,
+          "applicable_n": 100,
+          "valid_n": 100,
+          "skipped_n": 0,
+          "metric_skipped_n": 0,
+          "source_skipped_n": 0,
+          "not_applicable_n": 0,
+          "zero_contribution_n": 0
+        }
+      }
+    }
+  }
+}

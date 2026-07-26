@@ -26,7 +26,8 @@ from metagpt.ext.agentlayout.roles.iteration_state import (
     IterationStateRole,
     IterationStop,
     RetryAnalyst,
-    RetryGeneration,
+    RetryComposition,
+    RetryCoordinates,
     RetryPayload,
 )
 from metagpt.ext.agentlayout.schema import (
@@ -65,14 +66,18 @@ def _judgement(decision: JudgeDecision, cand_id: str = "r0_cand_01") -> Aestheti
             suggestions=["nudge headline_1 +5% width"],
         )
     else:
+        # "先想再畫" routing: typography_color is the unique worst axis so the
+        # reject routes to the CoordinateMapper (RetryCoordinates), not the
+        # CompositionDirector. A design_layout-worst case is covered by its own
+        # dedicated test below.
         scores = JudgeScores(
             design_layout=6,
             content_relevance=6,
-            typography_color=6,
+            typography_color=5,
             graphics_images=6,
             innovation_originality=6,
         )
-        total = 30
+        total = 29
         feedback = AestheticFeedback(
             common_issues="title too small",
             suggestions=[
@@ -130,8 +135,8 @@ async def test_boundary_max_rounds_emits_iterationstop_at_third_reject():
 
     chain = [_cause(out1), _cause(out2), _cause(out3)]
 
-    assert out1.cause_by == any_to_str(RetryGeneration), f"got {chain[0]}"
-    assert out2.cause_by == any_to_str(RetryGeneration), f"got {chain[1]}"
+    assert out1.cause_by == any_to_str(RetryCoordinates), f"got {chain[0]}"
+    assert out2.cause_by == any_to_str(RetryCoordinates), f"got {chain[1]}"
     assert out3.cause_by == any_to_str(IterationStop), f"got {chain[2]}"
     assert out3.instruct_content is None
     assert role.state.iteration == 3
@@ -182,10 +187,10 @@ async def test_accept_routes_to_refinement_until_two_consecutive():
     chain: list = []
 
     for decision in (
-        JudgeDecision.REJECT,   # iter 1, ca 0 -> RetryGeneration
-        JudgeDecision.ACCEPT,   # iter 2, ca 1 -> RetryGeneration (refinement)
-        JudgeDecision.REJECT,   # iter 3, ca 0 -> RetryGeneration
-        JudgeDecision.ACCEPT,   # iter 4, ca 1 -> RetryGeneration (refinement)
+        JudgeDecision.REJECT,   # iter 1, ca 0 -> RetryCoordinates
+        JudgeDecision.ACCEPT,   # iter 2, ca 1 -> RetryCoordinates (refinement)
+        JudgeDecision.REJECT,   # iter 3, ca 0 -> RetryCoordinates
+        JudgeDecision.ACCEPT,   # iter 4, ca 1 -> RetryCoordinates (refinement)
         JudgeDecision.ACCEPT,   # iter 5, ca 2 -> IterationStop (converged)
     ):
         msg = await _feed(role, _judgement(decision))
@@ -196,10 +201,10 @@ async def test_accept_routes_to_refinement_until_two_consecutive():
     assert snapshots == [0, 1, 2, 3, 4, 5], f"got {snapshots}"
     assert consecutive_snaps == [0, 0, 1, 0, 1, 2], f"got {consecutive_snaps}"
     assert chain == [
-        "RetryGeneration",
-        "RetryGeneration",
-        "RetryGeneration",
-        "RetryGeneration",
+        "RetryCoordinates",
+        "RetryCoordinates",
+        "RetryCoordinates",
+        "RetryCoordinates",
         "IterationStop",
     ], f"got {chain}"
 
@@ -213,7 +218,7 @@ async def test_two_consecutive_accepts_terminate_immediately():
     out1 = await _feed(role, _judgement(JudgeDecision.ACCEPT))
     out2 = await _feed(role, _judgement(JudgeDecision.ACCEPT))
 
-    assert out1.cause_by == any_to_str(RetryGeneration), f"got {_cause(out1)}"
+    assert out1.cause_by == any_to_str(RetryCoordinates), f"got {_cause(out1)}"
     assert out2.cause_by == any_to_str(IterationStop), f"got {_cause(out2)}"
     assert role.state.iteration == 2
     assert role.state.consecutive_accepts == 2
@@ -229,7 +234,7 @@ async def test_mvp_3rejects_then_accept_routes_correctly():
     """3 rejects (Gen, Gen, Analyst per GENERATOR_FEEDBACK_ROUNDS=2) then ACCEPT.
 
     Refinement Loop (2026-05-20): the ACCEPT no longer terminates the loop —
-    it instead emits a RetryGeneration carrying prev_best_layout so the
+    it instead emits a RetryCoordinates carrying prev_best_layout so the
     Generator runs a mandatory polish pass.
     """
     role = IterationStateRole(max_total_rounds=5)
@@ -239,15 +244,58 @@ async def test_mvp_3rejects_then_accept_routes_correctly():
     out3 = await _feed(role, _judgement(JudgeDecision.REJECT))
     out4 = await _feed(role, _judgement(JudgeDecision.ACCEPT))
 
-    assert out1.cause_by == any_to_str(RetryGeneration)
-    assert out2.cause_by == any_to_str(RetryGeneration)
+    assert out1.cause_by == any_to_str(RetryCoordinates)
+    assert out2.cause_by == any_to_str(RetryCoordinates)
     assert out3.cause_by == any_to_str(RetryAnalyst), f"got {_cause(out3)}"
     # New Refinement Loop: accept routes to Generator (not IterationStop) for
     # the mandatory polish round.
-    assert out4.cause_by == any_to_str(RetryGeneration), f"got {_cause(out4)}"
+    assert out4.cause_by == any_to_str(RetryCoordinates), f"got {_cause(out4)}"
     assert all(
         isinstance(m.instruct_content, RetryPayload)
         for m in (out1, out2, out3, out4)
     )
     assert role.state.iteration == 4
     assert role.state.consecutive_accepts == 1
+
+
+# ============================================================
+# "先想再畫" three-way routing: design_layout-worst -> CompositionDirector
+# ============================================================
+
+
+def _reject_design_worst() -> AestheticJudgement:
+    """A reject whose unique worst axis is design_layout -> re-imagine concept."""
+    scores = JudgeScores(
+        design_layout=4,
+        content_relevance=7,
+        typography_color=7,
+        graphics_images=7,
+        innovation_originality=7,
+    )
+    return AestheticJudgement(
+        decision=JudgeDecision.REJECT,
+        best_candidate_id="r0_cand_01",
+        evaluations=[
+            Evaluation(
+                candidate_id="r0_cand_01",
+                total=32,
+                scores=scores,
+                strengths="ok",
+                weaknesses="weak composition",
+            )
+        ],
+        feedback=AestheticFeedback(common_issues="composition is off", suggestions=["rethink layout"]),
+    )
+
+
+@pytest.mark.asyncio
+async def test_design_layout_worst_routes_to_composition_director():
+    """A reject with design_layout as the worst axis (within the generator-feedback
+    budget) routes to the CompositionDirector via RetryComposition, not the
+    CoordinateMapper."""
+    role = IterationStateRole(max_total_rounds=5)
+    out = await _feed(role, _reject_design_worst())
+    assert out.cause_by == any_to_str(RetryComposition), f"got {_cause(out)}"
+    assert isinstance(out.instruct_content, RetryPayload)
+    # Re-imagining throws away the layout anchor.
+    assert out.instruct_content.prev_best_layout is None

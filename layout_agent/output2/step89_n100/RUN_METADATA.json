@@ -1,0 +1,111 @@
+{
+  "run_id": "step89_n100",
+  "title": "Step 89 -- N=100 two-arm experiment (baseline vs deep-review stack)",
+  "status": "frozen",
+  "why_it_matters": "Source of the paper's A axis (metrics.json), C axis (blind pairwise in _summary.json), the Step 90 semantic-group metrics, the Step 92 COLE H2H, and the Step 93 per-round curve. Every main-table number traces here.",
+
+  "capture": {
+    "method": "reconstructed",
+    "reason": "The run predates provenance capture (added 2026-07-09, commit 9884f3c4). No field below was recorded by the run itself; each carries its own evidence.",
+    "reconstructed_on": "2026-07-09"
+  },
+
+  "when": {
+    "started_approx": "2026-07-03T07:11:36+08:00",
+    "finished_approx": "2026-07-03T14:08:58+08:00",
+    "evidence": "Start = mtime of the driver as it stood at reconstruction time; finish = mtime of _summary.json. NOTE: the driver has since been modified (see code_state.driver_drift), so its mtime no longer reads 07-03."
+  },
+
+  "code_state": {
+    "pipeline_commit": "63dc93d43e5329d189c72c3f0f64032057ace75c",
+    "pipeline_commit_subject": "feat(agentlayout): step 76-89 -- SEGA preprocessing + text-as-image + deep-review stack",
+    "claim": "The contents of metagpt/ext/agentlayout at commit 63dc93d4 are identical to the source that executed this run.",
+    "evidence": [
+      "The run executed against an uncommitted working tree; git log has no commit between 2026-06-25 and 2026-07-08.",
+      "Commit 63dc93d4 (2026-07-09) captured that working tree unchanged.",
+      "Verified: no .py under metagpt/ext/agentlayout has an mtime later than the run start (2026-07-03T07:11:36+08:00), with the one exception below."
+    ],
+    "exception": {
+      "file": "metagpt/ext/agentlayout/tools/semantic_group_metrics.py",
+      "mtime": "2026-07-08T14:56:34+08:00",
+      "impact": "none",
+      "why": "Step 90 post-hoc metric. Verified by grep that no module under metagpt/ext/agentlayout imports it, so it is not on this run's execution path."
+    },
+    "driver_drift": {
+      "file": "layout_agent/output2/step89_n100_ab.py",
+      "changed_after_run": true,
+      "changed_in_commit": "9884f3c4daffb618fee54a515140dbbe4fea45f9",
+      "change": "Provenance wiring only: an import of provenance.capture, and a 'provenance' key added to _write_summary's dict. No change to arm configuration, pipeline invocation, judging, or scoring.",
+      "consequence": "Re-running the driver at HEAD reproduces the experiment and records provenance natively. The arm definitions below are unchanged from the run."
+    }
+  },
+
+  "models": {
+    "pipeline_llm": "gpt-4o",
+    "pipeline_llm_evidence": "~/.metagpt/config2.yaml carried gpt-4o until 2026-07-09, when it was switched to o4-mini for the Step 91 cost experiment (IMPLEMENTATION_LOG Step 91). No model is recorded in this run's artifacts; the config history is the only evidence, and it is prose, not machine-checkable.",
+    "judge_llm": "gpt-4o",
+    "judge_llm_evidence": "Blind pairwise ran through metagpt.llm.LLM, i.e. the same config2.yaml model as the pipeline.",
+    "confidence": "High for gpt-4o, but not independently verifiable from artifacts -- exactly the hole this file exists to stop recurring."
+  },
+
+  "arms": {
+    "a": {
+      "label": "baseline",
+      "n_concepts": 3,
+      "n_concepts_source": "ComposeConcept default (PipelineConfig.n_concepts=None)",
+      "max_total_rounds": 3,
+      "visual_loop": false
+    },
+    "b": {
+      "label": "deep-review stack (Steps 83-89)",
+      "n_concepts": 1,
+      "max_total_rounds": 5,
+      "visual_loop": true
+    },
+    "definition_source": "layout_agent/output2/step89_n100_ab.py, ARMS dict"
+  },
+
+  "feature_flags": {
+    "AGENTLAYOUT_VISUAL_LOOP": "1 for arm B, unset for arm A (driver writes os.environ directly)",
+    "AGENTLAYOUT_F2_SALIENCY": "unset => OFF",
+    "note": "feature_flags.py defaults every flag to OFF when its env var is unset; the driver touches only the visual-loop flag."
+  },
+
+  "data": {
+    "sample_ids": "layout_agent/output2/eval100_ids.json",
+    "n_samples": 100,
+    "ids_sha256_prefix": "2c045eb834b8d618",
+    "ids_sha256_note": "sha256 of json.dumps(ids) with default separators; recompute the same way to compare.",
+    "inputs": "SEGA-preprocessed text-as-image (bg_composite + designer-rendered text RGBA); underlay regions fed forward",
+    "designer_gt_render": "layout_agent/output/crello_<id>/ground_truth_preview.jpg"
+  },
+
+  "protocol": {
+    "input": "text-as-image (Steps 76-81)",
+    "renderer": "R3",
+    "judging": "Order-matched blind pairwise vs designer GT; exhausted-but-judged samples included (selection-effect immune)."
+  },
+
+  "headline_results": {
+    "arm_a_blind_overall": {"cand": 12, "tie": 7, "gt": 81},
+    "arm_b_blind_overall": {"cand": 9, "tie": 5, "gt": 84},
+    "n_completed": 100,
+    "known_failures": "Arm B: 1 pipeline error + 1 crash => 2 samples have no b/final.png (judge parse noise)."
+  },
+
+  "cost_usd": null,
+  "cost_note": "Not recorded. Token accounting was zeroed by a streaming+vision incompatibility discovered later (IMPLEMENTATION_LOG Step 91).",
+
+  "artifacts": [
+    "layout_agent/output2/step89_n100/_summary.json",
+    "layout_agent/output2/step89_n100/metrics.json",
+    "layout_agent/output2/step89_n100/<id>/{a,b}/{final.png,candidate.json,spec.json,rounds/}"
+  ],
+
+  "reproduce": [
+    "git checkout 63dc93d4  # or HEAD, whose only driver delta is provenance wiring",
+    "set llm.model: gpt-4o in ~/.metagpt/config2.yaml",
+    "conda run -n meta python layout_agent/output2/step89_n100_ab.py",
+    "NOTE: LLM sampling is non-deterministic. No seed was fixed and no multi-seed variance was measured, so exact counts will not reproduce."
+  ]
+}

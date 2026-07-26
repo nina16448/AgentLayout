@@ -252,6 +252,25 @@ def _paint_image_element(
         )
     paste_left, paste_top = layout_el.left, layout_el.top
     target_w, target_h = layout_el.width, layout_el.height
+    from metagpt.ext.agentlayout.tools.text_bitmap_normalizer import (
+        contain_size,
+        is_r3_text_bitmap,
+    )
+
+    if is_r3_text_bitmap(spec_el.asset_ref):
+        # R3: Mapper predicts the final bbox, but the typography bitmap must
+        # never be stretched to that bbox independently on x/y.  Use one scale
+        # factor and center the contained bitmap.  Unlike generic decorative
+        # images, normalized text may upscale beyond MAX_UPSCALE because its
+        # fixed 512px source size is a protocol normalization, not natural size.
+        draw_w, draw_h = contain_size(img.size, (target_w, target_h))
+        img = img.resize((draw_w, draw_h), Image.LANCZOS)
+        paste_left += (target_w - draw_w) // 2
+        paste_top += (target_h - draw_h) // 2
+        if layout_el.angle:
+            img = img.rotate(-layout_el.angle, expand=True, resample=Image.BICUBIC)
+        canvas.paste(img, (paste_left, paste_top), img)
+        return
     if img.size != (target_w, target_h):
         # Step 47 (2026-06-10): cap upscaling at MAX_UPSCALE x the asset's
         # native resolution. A 68px heart stretched to ~400px renders as a
@@ -417,11 +436,13 @@ def _paint_rotated_text(
     pil_align = align if align in ("center", "right") else "left"
     pad = 4
     bbox = _MEASURE_DRAW.multiline_textbbox((0, 0), text, font=font, align=pil_align)
-    layer = Image.new(
-        "RGBA",
-        (bbox[2] - bbox[0] + 2 * pad, bbox[3] - bbox[1] + 2 * pad),
-        (0, 0, 0, 0),
-    )
+    # Pillow's multiline_textbbox can return float coords (esp. for the default
+    # bitmap font fallback), and Image.new requires an int size tuple -- without
+    # the int() coercion this raises "TypeError: integer argument expected, got
+    # float" on some samples. max(1, ...) guards against a zero-size layer.
+    layer_w = max(1, int(round(bbox[2] - bbox[0] + 2 * pad)))
+    layer_h = max(1, int(round(bbox[3] - bbox[1] + 2 * pad)))
+    layer = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
     ImageDraw.Draw(layer).multiline_text(
         (pad - bbox[0], pad - bbox[1]), text, fill=color, font=font, align=pil_align
     )

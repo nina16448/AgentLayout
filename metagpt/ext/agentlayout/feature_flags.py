@@ -21,6 +21,27 @@ def _flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in _TRUTHY
 
 
+def visual_loop_enabled() -> bool:
+    """Step 77 (2026-07-02): Judge visual-observation feedback loop.
+
+    When ON, the Aesthetic Judge prompt asks for ``visual_observations`` --
+    discrete render-level defects from a closed catalogue (text_off_panel /
+    text_illegible / text_too_small / text_too_large / text_overlap /
+    text_tilted), each carrying a machine-verifiable target. The pipeline
+    computes a per-round COMPLIANCE RATE (tools/feedback_verifier.py) so a
+    failure localises to perception vs execution.
+
+    Default OFF: judge->generator feedback measured net-negative three times
+    in the old regime (Steps 20b / 59 / 65). Step 77 re-tests it in the
+    SEGA-mode text-only regime where the Step 59 execution blockers
+    (constraint-saturated generator, messy asset semantics) are gone.
+
+    Enable for the ablation:
+        export AGENTLAYOUT_VISUAL_LOOP=1
+    """
+    return _flag("AGENTLAYOUT_VISUAL_LOOP")
+
+
 def f2_saliency_enabled() -> bool:
     """F2 (Step 72, 2026-06-16): saliency-aware text placement.
 

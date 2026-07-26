@@ -1,0 +1,20 @@
+{
+  "api_model_calls": 0,
+  "count": 1971,
+  "dataset": "cyberagent/crello",
+  "network_projection": [
+    "id"
+  ],
+  "ordered_ids_canonical_sha256": "b082ec96e38798de500c8d1c82961bf20912634142218996446f2284c8b2d815",
+  "ordered_ids_file_sha256": "c3578fa5c8e0c181887a70f9e78b850b7d6adc52d3f367fe191b5f5292e0974c",
+  "paid_cost_usd": 0.0,
+  "repository_last_modified": "2026-02-27T02:45:00Z",
+  "revision": "7997e2f434ee4aa73cf4cdf22c5954cb175872e1",
+  "schema_version": "a3.crello-official-test-snapshot.v1",
+  "split": "test",
+  "split_counts": {
+    "test": 1971,
+    "train": 19479,
+    "validation": 1852
+  }
+}

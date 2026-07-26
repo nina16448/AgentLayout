@@ -29,9 +29,10 @@ The Action keeps validation 1 only; layers 2/3 belong to downstream modules.
 from __future__ import annotations
 
 import json
+import re
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import base64
 
@@ -43,9 +44,11 @@ from metagpt.ext.agentlayout.schema import (
     AestheticFeedback,
     BackgroundAnalysis,
     CandidatesBatch,
+    CompositionConcept,
     DesignSpec,
     LayoutTree,
     SemanticType,
+    VisualType,
 )
 from metagpt.logs import logger
 from metagpt.utils.common import CodeParser
@@ -67,14 +70,29 @@ _BG_MAX_EDGE_PX: int = 768
 PHOTO_AREA_GT = {"p25": 0.063, "p50": 0.213, "p75": 0.445, "p90": 0.619}
 PHOTO_AREA_TARGET = (0.20, 0.45)
 
+# Step 76c (2026-07-02): GT-calibrated TEXT union-coverage prior. Computed over
+# all 1,902 cached Crello designer layouts (text elements only, same
+# _union_coverage_ratio math as the Step 57 QC guardrail). The Step 76 A/B
+# run showed the old size-timidity resurfacing on the text axis: 96% of
+# SEGA-arm rounds fell below QC while designer text-only layouts pass 16/19.
+TEXT_AREA_GT = {"p25": 0.103, "p50": 0.152, "p75": 0.213, "p90": 0.289}
+# Target is GT p25-p75 shifted slightly up: the bias being corrected is
+# downward (candidates cluster small), so aiming at the designer median-to-
+# upper range lands them inside the distribution, not at its floor.
+TEXT_AREA_TARGET = (0.12, 0.25)
+
 
 # ============================================================
-# Prompt template (verbatim port of layout_agent/layout_generator.md)
+# Prompt template (CoordinateMapper -- "先想再畫" refactor 2026-06-25)
 # ============================================================
 
 
-# Two candidates with deliberately different compositions, so the LLM
-# understands "5 distinct compositional approaches" is the goal.
+# "先想再畫" refactor (2026-06-25): the CoordinateMapper emits exactly ONE
+# candidate per call (one per composition concept). The example is deliberately
+# ASYMMETRIC -- product image on the left half, text right-aligned in the right
+# third -- so the model does not imitate the old "everything centred" pattern.
+# The previous two-candidate example had every headline's left at
+# (540 - width/2), i.e. perfectly centred; the LLM copied that bias.
 FORMAT_EXAMPLE_JSON = """{
   "candidates": [
     {
@@ -86,44 +104,19 @@ FORMAT_EXAMPLE_JSON = """{
           "angle": 0, "z_index": 1
         },
         {
-          "id": "logo_1",
-          "left": 900, "top": 40, "width": 120, "height": 120,
-          "angle": 0, "z_index": 4
+          "id": "product_image_1",
+          "left": 0, "top": 200, "width": 650, "height": 800,
+          "angle": 0, "z_index": 2
         },
         {
           "id": "headline_1",
-          "left": 100, "top": 800, "width": 880, "height": 600,
+          "left": 680, "top": 300, "width": 360, "height": 200,
           "angle": 0, "z_index": 3,
-          "font_family": "sans-serif",
-          "font_size": 96,
+          "font_family": "display",
+          "font_size": 72,
           "font_weight": "bold",
           "color": "#1B3A6B",
-          "text_align": "center"
-        }
-      ]
-    },
-    {
-      "candidate_id": "cand_02",
-      "elements": [
-        {
-          "id": "bg_1",
-          "left": 0, "top": 0, "width": 1080, "height": 1920,
-          "angle": 0, "z_index": 1
-        },
-        {
-          "id": "logo_1",
-          "left": 900, "top": 40, "width": 120, "height": 120,
-          "angle": 0, "z_index": 4
-        },
-        {
-          "id": "headline_1",
-          "left": 80, "top": 1200, "width": 920, "height": 480,
-          "angle": 0, "z_index": 3,
-          "font_family": "cursive",
-          "font_size": 84,
-          "font_weight": "bold",
-          "color": "#C2547B",
-          "text_align": "left"
+          "text_align": "right"
         }
       ]
     }
@@ -131,423 +124,66 @@ FORMAT_EXAMPLE_JSON = """{
 }"""
 
 
-# DELIBERATE PROMPT/QC ASYMMETRY (Step 67 audit, 2026-06-14):
-# The "size reference" block below quotes 'prominent >=20%' and
-# 'medium >=15%' as STRETCH TARGETS. The downstream QC acceptance floor
-# (tools/quality_checker.py SIZE_HINT_LOWER_BOUND) is LOWER -- 0.10 and
-# 0.08 respectively. Combined with the prompt's "aim for value .. value*1.2;
-# do NOT exceed by huge margins" rule, this 1.5-2x gap counters the LLM
-# size-timidity surfaced in Step 58/60 ([[project_step58_coverage_qc_live]],
-# [[project_step60_photo_size_prior]]): anchoring the prompt to the QC
-# floor would land actual outputs *below* the floor and crater acceptance.
-# All Step 22..66 calibration was done against this gap; do NOT align the
-# two numbers without re-running headline experiments.
-PROMPT_TEMPLATE = """Role: You are a professional graphic layout designer.
-Your goal is to arrange the given design elements on a canvas
-by assigning precise pixel coordinates to each element.
+PROMPT_TEMPLATE = """Role: You are a layout technician. An art director has already decided the
+composition concept (below). Your job is to translate that ONE concept into
+exact pixel coordinates for every element -- faithfully, not creatively. Do NOT
+invent a different composition; realise the art director's intent.
 
-# Context
-Design Spec: {design_spec}
-Safe zones: {safe_zones}
-Saliency landscape (F2, Step 72): {saliency_landscape}
-Dominant palette: {dominant_palette}
-Recommended text color (default, override if needed): {recommended_text_color}
-Feedback from previous round (if any): {feedback}
+# Composition concept from the art director
+{concept_block}
 
-# Designer exemplars (Step 67, 2026-06-13; "None" when retrieval is off)
-# Real human-designer layouts for structurally similar briefs, normalised to
-# [0,1]. Study their composition language -- where they place text relative to
-# photos, how large photos are, asymmetry -- and produce candidates in that
-# language. Do NOT copy coordinates; they are a different brief.
-{exemplars}
+# Canvas
+{canvas_width} x {canvas_height} px. Background color: {bg_color}.
 
-# Aesthetic objective (Step 33, 2026-06-09)
-Every candidate you emit will be judged on these four axes (each 1-10, total
-of 4 axes is the headline score). Treat them as design objectives, not as
-post-hoc criteria. Push for 8+ on every axis when laying out elements.
+# Elements to place
+{element_list}
 
-A. Design and Layout
-   Clean, balanced, consistent layout with a clear hierarchy. The Layout
-   Tree's depth order tells you which element is most important; mirror that
-   in visual weight (size, position, prominence). Avoid clutter, dead-space
-   bands, or arbitrary placement. Maximize readability and visual flow.
+# Background analysis
+Safe zones (calm, low-saliency regions -- PREFER text here, but this is a
+preference, not a hard rule; follow the art director's concept first):
+{safe_zones}
+Dominant background palette: {dominant_palette}
+Recommended text color for contrast: {recommended_text_color}
+Baked underlay panels (Step 76 preprocessing -- solid panels the original
+designer placed to hold text, ALREADY part of the background image):
+{underlay_panels}
 
-B. Content Relevance and Effectiveness
-   The layout must SERVE the brief and the design_spec. Every hard_constraint
-   must be respected. Elements should be positioned so they communicate the
-   brief's intent (e.g. headline dominates, CTA is prominent, supporting
-   details are visually subordinate). A layout that ignores the brief is a
-   guaranteed low score on this axis.
+# Rules (only the essentials -- everything else is the art director's call)
+1. Coordinates stay on canvas: left >= 0, top >= 0, left+width <= {canvas_width},
+   top+height <= {canvas_height}.
+2. Every element id from the list above must appear exactly once.
+3. Text elements MUST include font_family, font_size, font_weight, color,
+   text_align.
+4. A decorative underlay that protects a text element must have a LOWER z_index
+   than that text (photo < underlay < text).
+5. The title's area must be >= 2.5% of the canvas area (it is the focal text).
+6. Text color must contrast with whatever sits behind it (WCAG AA, ratio >=
+   4.5). If text rides a busy photo, either put a decorative underlay behind it
+   or choose a high-contrast color.
+7. Elements with a natural reading order (title -> subtitle -> body -> CTA)
+   should flow top to bottom: an earlier element's top < a later element's top.
+   GT calibration (N=1,746 designer layouts): the DOMINANT text's center-y
+   falls in [0.35, 0.57] of canvas height (median 0.475) and it sits ABOVE
+   the supporting text in 66% of designs -- do not bury the title below
+   minor info lines.
 
-C. Typography and Color Scheme
-   Font sizes must form a clear typographic hierarchy (title >> subtitle >>
-   body). Colors must harmonize with `dominant_palette`; default text color
-   to `recommended_text_color` unless a hard_constraint says otherwise.
-   Avoid clashing colors, illegible size/contrast pairings, or two text
-   elements competing at the same visual weight.
+# Typography
+font_family must be one of: display, serif, sans-serif, script.
+Size text by role: the title is the largest, body text the smallest. Match the
+art director's typography_mood.
 
-D. Innovation and Originality
-   The 5 candidates MUST take distinctly different compositional approaches
-   (different focal anchors, different alignments, different white-space
-   strategies). Do not output 5 minor variations of the same composition.
-   Avoid trend-following generic placement (everything centered, or
-   everything top-aligned) unless the brief explicitly demands it.
+# GT-calibrated text size prior
+{text_area_prior}
 
-# Previous Attempt (only act on this block when it is NOT "None")
-{previous_attempt}
+{feedback_block}
 
-When this block is non-empty you are in REFINEMENT MODE, not cold-start mode.
-Behaviour required in refinement mode:
-  - Anchor every candidate to the previous best layout. Each element's
-    (left, top, width, height) must stay within +/-10% of its previous value
-    unless a structured_suggestion in `feedback` explicitly demands a larger
-    change for that element id.
-  - Reuse element ids verbatim from `prev_best_layout` (which equals the spec
-    element ids). Do NOT rename or invent ids.
-  - The 5 candidates may still explore distinct refinement directions
-    (different elements emphasised, different drift orientations), but ALL
-    candidates must remain in the neighbourhood of prev_best_layout. Do not
-    treat refinement mode as an excuse to relocate elements to entirely new
-    regions.
-  - Use prev_best_subscores to prioritise which dimension to push:
-    the lowest-scoring sub-dimension is the one your edits should improve.
+# How to respond
+First write 2-3 short sentences describing how you will turn THIS concept into
+coordinates -- which element goes where, and how the concept's asymmetry / flow
+is preserved. Then output exactly ONE candidate as JSON inside a ```json fenced
+block, following this shape exactly (one candidate, real element ids):
 
-# How to read `feedback` (only when it is not "None")
-The feedback object has two parts:
-  - `suggestions`: free-text human notes; use them for *context* only.
-  - `structured_suggestions`: a JSON list of typed constraints. PREFER these
-    over the free text. Each entry has the shape
-        {{"kind": ..., "target_id": ..., "metric": ..., "op": ..., "value": ...}}
-
-Translate each structured suggestion into a concrete adjustment as follows:
-
-  | kind           | what to change                                                       |
-  | -------------- | -------------------------------------------------------------------- |
-  | place_in_bbox  | OVERRIDE the element's (left,top,width,height) to                    |
-  |                | (target_bbox[0], target_bbox[1],                                     |
-  |                |  target_bbox[2]-target_bbox[0], target_bbox[3]-target_bbox[1]).      |
-  |                | This kind BYPASSES the +/-10% refinement drift cap for target_id    |
-  |                | because the Judge looked at the rendered image and decided the      |
-  |                | exact region this element should occupy.                            |
-  | resize         | the element's `width` and/or `height`                                |
-  | move           | the element's `left` / `top` (or `right` / `bottom` derived)         |
-  | spacing        | the gap between `target_id` and the element named in `metric`        |
-  |                |   (metric format: 'gap_to:OTHER_ID')                                 |
-  | typography     | One of FOUR text-style metrics on the target element:                |
-  |                |   metric=font_size    -> set `font_size` (int pixels, e.g. 96)       |
-  |                |   metric=font_weight  -> set `font_weight` (int 100-900 or named     |
-  |                |                          string like "bold" / "regular")            |
-  |                |   metric=font_family  -> set `font_family` (string e.g. "serif",    |
-  |                |                          "Inter", "Playfair Display")               |
-  |                |   metric=text_align   -> set `text_align` (one of "left" /          |
-  |                |                          "center" / "right" / "justify")            |
-  |                | Apply each typography suggestion verbatim; do NOT skip. These are   |
-  |                | how the Judge closes the visual gap to the reference once layout    |
-  |                | positions are correct. Apply to AT LEAST 4 of 5 candidates.         |
-  | color          | the element's `color` (use the exact hex string in `value`)          |
-  | zorder         | the element's `z_index` (integer)                                    |
-  | other          | apply the operator/value to the named `metric` field                 |
-
-Operators:
-  ">="     -> the field MUST be at least `value`. Aim for value to value*1.2;
-              do NOT exceed by huge margins, that creates overlap and fails QC.
-  "<="     -> the field MUST be at most `value`. Aim for value*0.8 to value.
-  "=="     -> set the field to exactly `value`.
-  "set_to" -> same as "==".
-  "increase_by" / "decrease_by" -> shift the current value by that amount.
-
-If two structured suggestions conflict with each other or with a
-hard_constraint, prefer the one that better serves design_layout
-(the Layout Tree's depth order tells you which element is more important;
-a clean, balanced, hierarchy-respecting design wins).
-
-# Layout Tree
-{layout_tree}
-
-Elements in the same branch are semantically related.
-Elements closer to the leaves have lower visual importance.
-
-# size reference (element_area / canvas_area, must satisfy lower bound)
-full-canvas: >=95%  |  hero: >=60%   |  large: >=30%
-prominent:   >=20%  |  medium: >=15% |  small: >=8%   |  caption: >=3%
-photo-prominent: >=20%  (GT-calibrated photo floor, Step 60)
-(If hard_constraints contain a size_preference for a target with hint H,
- that target's width*height divided by canvas_width*canvas_height MUST be
- at or above the lower bound of H.)
-
-# GT-calibrated photo size prior (Step 60, 2026-06-11)
-{photo_size_prior}
-
-# Composition directive (Step 62, 2026-06-12; "None" when no director ran)
-{composition_directive}
-
-# Layout constraints (Step 37 hard rules, 2026-06-09)
-The Quality Checker downstream WILL reject candidates that violate any of
-these. Generate candidates that already comply so retries are not wasted:
-
-1. DECORATIVE elements (semantic_type = "decorative_image") MUST occupy
-   STRICTLY LESS than 40% of the canvas area each. Underlays are accents,
-   not the main visual. Full-canvas plates are background_image, not
-   decorative_image.
-
-2. TITLE elements (semantic_type = "title") MUST satisfy ALL of:
-     a) area_ratio = title.width * title.height / canvas_area >= 0.025
-        (titles must be large enough to read as the design's anchor)
-     b) horizontal centre  cx = (left + width/2) / canvas_width
-        must lie in [0.10, 0.90]
-     c) vertical centre    cy = (top + height/2) / canvas_height
-        must lie in [0.05, 0.85]
-   Titles in corners or pinned to canvas edges are rejected.
-
-3. TEXT elements (semantic_type in {{title, subtitle, body_text, caption}})
-   MUST NOT have any non-text element with z_index GREATER THAN OR EQUAL
-   to the text's z_index covering >= 20% of the text bbox. Place text
-   ABOVE decorative shapes in z order, and avoid placing it directly on
-   top of high-coverage image elements.
-
-4. TEXT colours MUST have WCAG 2.1 AA contrast (>= 4.5) against the canvas
-   background colour. White text on white bg / black text on black bg are
-   rejected. When in doubt prefer the spec's recommended_text_color.
-
-5. SEQUENTIAL text from the asset_list MUST be placed in top-to-bottom
-   y-order MATCHING the asset_list sequence. If the asset list contains
-   text snippets in the order [A, B, C], the rendered A must sit above B
-   and B above C (smaller top values). This preserves the designer's
-   reading-order intent. NEVER reverse a multi-line heading (e.g. do not
-   render "RESOURCES" above "HUMAN" when the source had "HUMAN" before
-   "RESOURCES").
-
-6. PRIMARY ELEMENTS (semantic_type in title / subtitle / body_text /
-   product_image / logo) MUST overlap >= 50% with at least one of the
-   provided `safe_zones`. The safe_zones list is the CV-derived
-   background-saliency-low regions; everything OUTSIDE them is occupied
-   by the background subject (faces, products, focal imagery). Placing a
-   primary element outside the safe_zones means obscuring the background
-   subject AND making the element hard to read.
-
-   bbox format inside `safe_zones` is [left, top, RIGHT, BOTTOM]
-   (absolute pixel coords; NOT width/height). To verify rule 6, test:
-       primary.left   >= safe_left   AND primary.left  + primary.width   <= safe_right
-       primary.top    >= safe_top    AND primary.top   + primary.height  <= safe_bottom
-   A primary fully inside a safe zone passes; partial overlap counts the
-   intersection-over-element-area which must be >= 0.50.
-
-   Decorative elements may straddle safe / unsafe boundaries since their
-   job is to anchor text, but the primary text/photo MUST sit inside a
-   safe zone. Use the provided safe zones; do not invent your own.
-
-6b. SALIENCY-AWARE TEXT PLACEMENT (F2, Step 72). The `Saliency landscape`
-    block above (3x3 grid + top-K low-saliency rectangles) is a pixel-finer
-    signal than `safe_zones`. When the saliency block is populated (not
-    "None"):
-    - For TEXT primaries (title / subtitle / body_text): the bbox should
-      have a mean saliency <= 0.50. Use the listed low-saliency rectangles
-      as PREFERRED placement targets -- they are explicitly the calmest
-      regions in the whole canvas (ranked by 1 - mean_saliency).
-    - The 3x3 grid tells you the gross subject layout: a cell with
-      saliency > 0.6 has a face/product/focal subject in it -- do NOT cover
-      it with text.
-    - Hero IMAGE primaries (product_image, large image) may sit on high-
-      saliency cells (those ARE the subject); this rule targets text only.
-    - QC rule TEXT_ON_HIGH_SALIENCY (tau=0.5) will reject violators.
-
-7. COVERAGE / DEAD SPACE (Step 57, 2026-06-11). Counting every element
-   EXCEPT background_image as foreground:
-     a) the union of foreground bounding boxes MUST cover >= 10% of the
-        canvas area. Do not shrink all content into one small sliver.
-     b) no contiguous blank band (a horizontal strip or vertical strip
-        containing NO foreground element, canvas margins included) may
-        exceed 60% of the canvas height or width. Do not stack every
-        element in one third of the canvas and leave the rest empty.
-   Distribute elements so the composition engages the whole canvas; use
-   the safe_zones across the canvas, not just the first one.
-
-# Reasoning checklist (Step 42, 2026-06-10): walk through these steps
-# mentally BEFORE you emit the JSON. The checklist is your scratchpad --
-# do NOT include the reasoning in your output, just produce the
-# candidates that satisfy what you concluded.
-
-  Step 1 -- SAFE-ZONE PLAN:
-    Read `safe_zones`. For each safe zone note: region label, bbox
-    (left, top, width, height), area_ratio = w*h / (canvas_w * canvas_h).
-    Decide which safe_zone will host the title, which will host the body
-    text, which will host any logo / product image. The hero element
-    goes in the largest safe zone.
-
-  Step 2 -- ASSET INVENTORY:
-    From the spec, list every element id + semantic_type + the asset
-    behind it (text content for text elements, image asset_ref for image
-    elements). Decide which element is THE focal point of this
-    composition.
-
-  Step 3 -- HIERARCHY:
-    Set sizes so the importance ordering is visually obvious:
-      title.font_size >= 1.5 * subtitle.font_size
-      title area_ratio >= 0.025  (rule 2 above)
-      decorative_image area_ratio < 0.40  (rule 1 above)
-
-  Step 4 -- COLOR:
-    Default text color = `recommended_text_color`. Override only if a
-    hard_constraint demands it OR if dominant_palette suggests a clearly
-    better choice. Mentally check WCAG AA contrast vs canvas
-    background_color.
-
-  Step 5 -- FEEDBACK APPLICATION (only when feedback != None):
-    For every structured_suggestion, write down (mentally) the EXACT
-    target_id and the EXACT new value you will apply. Do not paraphrase
-    suggestions; apply them verbatim.
-
-  Step 6 -- DIVERSITY CHECK:
-    Plan 5 candidates that each anchor the title in a different
-    safe_zone (or vary the focal element's safe_zone if only one
-    text exists). Different safe_zone anchors = "5 distinct
-    compositional approaches" as required below.
-
-# Format example
-{format_example}
-
-# Instruction
-ATTENTION: Output exactly 5 candidates, each containing ALL element IDs from the spec.
-ATTENTION: Use element IDs EXACTLY as they appear in the spec -- do NOT rename or
-           translate them. If the spec says id='headline_1', output id='headline_1'
-           (not 'title_1', not 'header_1'). The set of ids in your output MUST
-           equal the set of ids in spec.elements.
-ATTENTION: All coordinates must satisfy:
-           left >= 0, top >= 0,
-           left + width <= canvas_width,
-           top + height <= canvas_height.
-ATTENTION: Strictly obey all hard_constraints.
-ATTENTION: For text elements, also output font_family, font_size, font_weight, color, text_align.
-ATTENTION: Typography direction (Step 49a, 2026-06-10). Designer ground truths
-           almost never use default black sans-serif titles; a layout that does
-           loses the typography_color axis automatically. Choose font_family
-           DELIBERATELY per text element:
-             - The renderer supports four families; pick via these tokens:
-                 "sans-serif" | "serif" | "cursive" (flowing script) |
-                 "display" (heavy decorative headline face)
-             - Map the design mood (style_keywords + the attached background
-               image) to a TITLE family:
-                 festive / floral / feminine / wedding / thank-you -> "cursive"
-                 promo / sale / sporty / loud / youthful          -> "display"
-                 editorial / luxury / classic / formal            -> "serif"
-                 corporate / tech / minimal / clean               -> "sans-serif"
-             - Body/caption text stays "sans-serif" or "serif" for legibility;
-               reserve "cursive"/"display" for title / subtitle / cta.
-             - Title color MUST come from the design's palette: pick a dominant
-               or complementary hue from the background image / dominant
-               palette. Use near-black (#000000-#222222) ONLY when the mood is
-               corporate/minimal AND the background is a light neutral.
-           Across the 5 candidates use at least TWO different (title
-           font_family, title color) combinations -- five identical black
-           sans-serif titles is an automatic fail.
-ATTENTION: For image elements, output geometry only -- no visual style fields needed.
-ATTENTION: Photo sizing (Step 60, 2026-06-11). Every element under a
-           `size_preference: photo-prominent` hard constraint MUST have
-           width * height >= 0.20 * canvas_width * canvas_height. This floor
-           is the designer-ground-truth MEDIAN photo size -- producing a
-           1/3 x 1/3 tile (area_ratio 0.11) or smaller is the single most
-           common amateur tell and fails QC immediately. Compute the math
-           per photo BEFORE emitting JSON: on a 1080x1920 canvas the photo
-           needs >= 414,720 px^2 (e.g. 720x576, 648x640, 1080x384). Anchor
-           the enlarged photo in the LARGEST safe zone; do NOT shrink it
-           below the floor to dodge other constraints.
-ATTENTION: Composition directive (Step 62, 2026-06-12). When the
-           "# Composition directive" block above is not "None", it is the
-           art director's decision and OUTRANKS your own compositional
-           taste. ALL 5 candidates MUST satisfy its numeric contract
-           (photo-center cell, photo area range, text-mass cell, photo-text
-           relation) -- the Quality Checker verifies every bound and rejects
-           violators immediately. Compute the math per candidate BEFORE
-           emitting JSON. The "distinctly different approaches" rule applies
-           WITHIN the directive: vary alignment, typography, exact positions
-           and spacing -- never the coarse composition itself.
-ATTENTION: Each candidate must take a distinctly different compositional approach.
-           Do not repeat similar layouts across candidates.
-ATTENTION: Canvas vertical coverage. The layout MUST occupy the full canvas
-           height -- a poster with the bottom 30% empty looks unfinished and
-           gets penalised on design_layout / typography_color. Concretely:
-               max(top + height) across all elements >= 0.85 * canvas_height
-               min(top)                              <= 0.10 * canvas_height
-           Worked example for an 800x1200 canvas: the lowest element's bottom
-           edge MUST reach y >= 1020, and at least one element MUST start at
-           y <= 120. If you only have 3 elements and the natural total height
-           is short, distribute them with larger inter-element gaps so the
-           bottom edge still hits 0.85 of canvas_height -- do NOT cluster
-           everything in the top half and leave a giant white band below.
-ATTENTION: Horizontal balance / dead-space (Step 49b, 2026-06-11). Vertical
-           coverage alone is not enough -- a layout where all elements hug
-           one half of the canvas and leave a full-height empty band on the
-           other side reads as unbalanced dead space and loses design_layout.
-           Either:
-             a) the union of non-background elements spans most of the width
-                (min(left) <= 0.15 * canvas_width AND
-                 max(left + width) >= 0.85 * canvas_width), OR
-             b) you deliberately build a single text column beside the
-                background's focal subject (photo / product). In that case
-                centre the column inside its safe zone and keep the column's
-                own left/right margins within 2x of each other -- do NOT
-                push an off-centre cluster against one edge while a wide
-                empty band sits next to it.
-ATTENTION: Decorative-image underlays. An element with
-           semantic_type=="decorative_image" is a pre-classified shape plate
-           (low colour complexity / transparent edges, not a photo). Treat
-           it as a middle stacking layer:
-             - z_index MUST be strictly LESS THAN the z_index of every title,
-               subtitle, body_text, caption, product_image, logo, icon, cta
-               and pricetag element. A typical good assignment is
-               background_image=1, decorative_image=2, image/logo/text=3+.
-             - PAIRING IS MANDATORY (Step 49b, 2026-06-11): every
-               decorative_image MUST fully contain the bbox of at least one
-               text element (title / subtitle / body_text / caption / cta),
-               with the underlay extending 10-20% beyond that text on each
-               side (so the underlay frames the text, not the reverse).
-               A free-floating plate with no text on top of it reads as
-               random clutter and loses design_layout.
-             - Do NOT make decorative_image cover >=95% of the canvas; that is
-               background territory. Keep its area below 60% of canvas.
-ATTENTION: If feedback is provided, satisfy every structured_suggestion in at
-           least 4 of 5 candidates. Use the suggestions[] free text only as
-           supplementary context. Do not ignore the structured list, but also
-           do not over-apply: a ">=" constraint is a LOWER bound, not a target
-           you must exceed by 2x.
-ATTENTION: Step 46 (2026-06-10) -- ATTACHED IMAGE IS THE CANVAS BACKGROUND.
-           The FIRST attached image is the literal background PNG
-           the renderer will composite your layout on top of. The numeric
-           `safe_zones` you see in this prompt are a COARSE summary computed
-           from that image. WHEN YOUR EYE AND THE NUMBERS DISAGREE, BELIEVE
-           THE IMAGE. Look at the image and decide:
-             - where is the focal subject (face / product / hero element)?
-             - which negative-space regions are actually empty?
-             - what colour band sits behind your candidate text positions
-               (this affects WCAG contrast)?
-             - is there a vertical / horizontal axis the composition naturally
-               wants you to align to?
-           Use these visual observations to pick concrete (left, top, width,
-           height) values. HOWEVER (Step 49b clarification, 2026-06-11): the
-           automated Quality Checker enforces rule 6 NUMERICALLY against the
-           listed safe_zones -- a primary element overlapping < 50% with
-           every listed safe_zone is rejected no matter how good it looks
-           visually. So use the image to decide WHICH listed safe_zone hosts
-           each primary element and to fine-position WITHIN it, NOT as a
-           licence to abandon the listed zones. Only decorative / secondary
-           elements may occupy image-revealed empty regions outside the
-           listed safe_zones. If the image shows a face or focal element
-           inside what the safe_zones call "safe", pick a different listed
-           safe_zone for your primary -- do NOT cover the face.
-{self_render}
-ATTENTION: If the "# Previous Attempt" block is non-empty (refinement mode),
-           every element's (left, top, width, height) must stay within +/-10%
-           of its previous value unless a structured_suggestion explicitly
-           demands a larger change for that element id. Element ids must be
-           reused verbatim. The 5 candidates must remain anchored to
-           prev_best_layout; do NOT relocate elements to entirely new regions.
-           EXCEPTION: any element appearing in a kind="place_in_bbox"
-           structured_suggestion has its drift cap LIFTED for that element
-           only. Set its (left,top,width,height) directly from target_bbox
-           verbatim, even if the move exceeds +/-10%. The Judge saw the
-           image and made this call deliberately; do not partially apply.
-Output carefully referenced "format example" in JSON format, nothing else.
-"""
+{format_example}"""
 
 
 MAX_RETRIES: int = 3
@@ -612,9 +248,8 @@ class GenerateLayout(Action):
 
     name: str = "GenerateLayout"
     desc: str = (
-        "Arrange every design element on the canvas with concrete pixel "
-        "coordinates and (for text elements) visual style. Produce 5 "
-        "compositionally distinct candidates per call."
+        "CoordinateMapper: translate ONE art-director composition concept into "
+        "exact pixel coordinates for a single layout candidate."
     )
 
     async def run(
@@ -623,82 +258,58 @@ class GenerateLayout(Action):
         spec: DesignSpec,
         tree: LayoutTree,
         bg: BackgroundAnalysis,
+        concept: CompositionConcept,
         feedback: Optional[AestheticFeedback] = None,
         prev_best_layout: Optional[Dict[str, Tuple[float, float, float, float]]] = None,
         prev_best_subscores: Optional[Dict[str, int]] = None,
-        prev_render_path: Optional[Path] = None,
         exemplars: Optional[str] = None,
+        revision: bool = False,
     ) -> CandidatesBatch:
-        """Build prompt, call LLM, parse and validate.
+        """Translate ONE art-director concept into a single coordinatised candidate.
+
+        "先想再畫" refactor (2026-06-25): the composition decision now lives in
+        ``concept`` (a CompositionConcept from ComposeConcept). This Action no
+        longer invents the layout -- it faithfully maps the concept to pixels and
+        returns a one-candidate batch. The pipeline calls it once per concept.
+
+        ``feedback`` / ``prev_best_layout`` / ``prev_best_subscores`` stay for the
+        typography/colour micro-adjust retry path: when the Judge's worst axis is
+        typography/colour it routes feedback to the CoordinateMapper without
+        asking the Director to re-imagine the composition.
 
         Pre-condition: ``spec`` must be enriched (Asset Analyzer ran).
-        Returns one batch of *raw* candidates -- the K_valid = 5 top-up loop
-        is the pipeline driver's responsibility, not this Action's.
-
-        Refinement Loop (2026-05-20): when ``prev_best_layout`` is non-empty
-        the prompt activates the ``# Previous Attempt`` block, switching the
-        Generator from cold-start to anchored refinement mode (+/-10% drift
-        per element unless a structured_suggestion demands a larger edit).
-
-        Visual self-correction (Step 65, 2026-06-12): when
-        ``prev_render_path`` points at the previous attempt's rendered PNG,
-        it is attached as the LAST image and the prompt gains the
-        self-render ATTENTION block. Callers that never render between
-        retries simply omit it and get the pre-Step-65 behaviour.
         """
         spec.assert_enriched()
 
-        # Step 46: attach the canvas background image so the LLM can see the
-        # focal subject and the real empty regions, not just the coarse
-        # safe_zones summary. Silently fall back to text-only when the model
-        # lacks vision support or the background asset is missing/unreadable.
-        # Step 65: optionally attach the previous attempt's render as the
-        # LAST image. Images are collected BEFORE the prompt is built because
-        # the prompt must only describe images that are actually attached.
+        # Attach the canvas background so the LLM sees the focal subject and the
+        # real empty regions. Step 65's self-render channel is intentionally NOT
+        # re-introduced here -- it was a negative result (doubled refusal rate).
         images: List[str] = []
-        self_render_attached = False
         if self.llm.support_image_input():
             bg_b64 = self._render_bg_image(spec)
             if bg_b64 is not None:
                 images.append(bg_b64)
             else:
-                logger.debug(
-                    "GenerateLayout: no usable background image; using text-only call."
-                )
-            if prev_render_path is not None:
-                pr_b64 = self._load_image_b64(Path(prev_render_path))
-                if pr_b64 is not None:
-                    images.append(pr_b64)
-                    self_render_attached = True
-                else:
-                    logger.debug(
-                        f"GenerateLayout: previous render {prev_render_path!r} "
-                        f"unreadable; proceeding without self-render."
-                    )
+                logger.debug("GenerateLayout: no usable background image; text-only call.")
         else:
             logger.debug(
-                f"GenerateLayout: LLM '{getattr(self.llm, 'model', '?')}' lacks "
-                f"vision support; using text-only call."
+                f"GenerateLayout: LLM '{getattr(self.llm, 'model', '?')}' lacks vision; text-only."
             )
 
         prompt = self._build_prompt(
             spec,
             tree,
             bg,
-            feedback,
-            prev_best_layout,
-            prev_best_subscores,
-            self_render_attached=self_render_attached,
+            concept,
+            feedback=feedback,
+            prev_best_layout=prev_best_layout,
+            prev_best_subscores=prev_best_subscores,
             exemplars=exemplars,
+            revision=revision,
         )
 
         if images:
-            # INFO so live-run logs can decompose refusal rates by payload:
-            # bg-only calls vs calls that also carry the self-render.
-            logger.info(
-                f"GenerateLayout: attaching {len(images)} image(s) "
-                f"(self_render={self_render_attached})."
-            )
+            logger.info(f"GenerateLayout: attaching {len(images)} background image(s).")
 
         last_err: Optional[Exception] = None
         attempt = 0
@@ -712,41 +323,21 @@ class GenerateLayout(Action):
             try:
                 return self._parse_response(rsp)
             except (ValueError, ValidationError) as err:
-                # Step 65: refusal detection moved AFTER the parse attempt --
-                # a parseable batch is always accepted, so head-scanning for
-                # refusal markers can never discard a good response.
+                # Refusal detection runs AFTER the parse attempt so a parseable
+                # batch is never misclassified as a refusal.
                 if images and self._looks_like_refusal(rsp):
-                    # Step 64: informed degradation -- drop the images and
-                    # fall back to the pre-step46 text-only mode (the numeric
-                    # safe_zones summary is still in the prompt). Grant one
-                    # replacement attempt so a refusal cannot burn the whole
-                    # budget. The `images and` guard makes this fire at most
-                    # once. Step 65: the prompt is rebuilt so it no longer
-                    # claims a self-render is attached.
+                    # Informed degradation: drop the image and retry text-only
+                    # (the `images` guard makes this fire at most once).
                     logger.warning(
-                        f"GenerateLayout attempt {attempt}/{budget}: vision "
-                        f"refusal detected ({rsp.strip()[:60]!r}); retrying "
-                        f"without image(s)."
+                        f"GenerateLayout attempt {attempt}/{budget}: vision refusal "
+                        f"({rsp.strip()[:60]!r}); retrying without image."
                     )
                     images = []
-                    if self_render_attached:
-                        self_render_attached = False
-                        prompt = self._build_prompt(
-                            spec,
-                            tree,
-                            bg,
-                            feedback,
-                            prev_best_layout,
-                            prev_best_subscores,
-                            self_render_attached=False,
-                        )
                     budget += 1
                     last_err = ValueError(f"vision refusal: {rsp.strip()[:120]}")
                     continue
                 last_err = err
-                logger.warning(
-                    f"GenerateLayout attempt {attempt}/{budget} failed: {err}"
-                )
+                logger.warning(f"GenerateLayout attempt {attempt}/{budget} failed: {err}")
 
         raise ValueError(
             f"GenerateLayout: could not produce a valid CandidatesBatch after "
@@ -810,53 +401,283 @@ class GenerateLayout(Action):
         spec: DesignSpec,
         tree: LayoutTree,
         bg: BackgroundAnalysis,
-        feedback: Optional[AestheticFeedback],
+        concept: CompositionConcept,
+        feedback: Optional[AestheticFeedback] = None,
         prev_best_layout: Optional[Dict[str, Tuple[float, float, float, float]]] = None,
         prev_best_subscores: Optional[Dict[str, int]] = None,
-        self_render_attached: bool = False,
         exemplars: Optional[str] = None,
+        revision: bool = False,
     ) -> str:
-        """Render PROMPT_TEMPLATE with all 11 substitutions.
+        """Render the lean CoordinateMapper PROMPT_TEMPLATE.
 
-        ``previous_attempt`` is the new Refinement Loop block. It is "None"
-        on cold-start (Round 0) and a compact JSON-ish description in
-        refinement mode (Round 1+). ``self_render_attached`` (Step 65)
-        activates the self-render ATTENTION block and must be True only when
-        the previous attempt's render is actually in the image payload.
+        "先想再畫" refactor: the prompt is built around ONE ``concept`` (the
+        art-director's intent) plus the minimal context the coordinate stage
+        needs. ``tree`` is accepted for signature compatibility with the
+        pipeline but no longer injected verbatim -- the concept + element list
+        carry the structure now.
         """
-        spec_str = json.dumps(spec.model_dump(), indent=2, ensure_ascii=False)
-        # Wrap tree as {"layout_tree": ...} so the LLM sees the same shape it
-        # produced as Asset Planner output.
-        tree_dump: Dict[str, Any] = {"layout_tree": tree.root.model_dump()}
-        tree_str = json.dumps(tree_dump, indent=2, ensure_ascii=False)
         safe_zones_str = json.dumps(
-            [sz.model_dump() for sz in bg.safe_zones], indent=2, ensure_ascii=False
+            [sz.model_dump() for sz in bg.safe_zones], ensure_ascii=False
         )
-        saliency_landscape_str = self._format_saliency_landscape(bg)
         palette_str = json.dumps(bg.dominant_palette, ensure_ascii=False)
-        feedback_str = (
-            "None"
-            if feedback is None
-            else json.dumps(feedback.model_dump(), indent=2, ensure_ascii=False)
-        )
-        previous_attempt_str = self._format_previous_attempt(
-            prev_best_layout, prev_best_subscores
-        )
+        bg_color = spec.canvas.background_color or "(image background; see attached)"
         return PROMPT_TEMPLATE.format(
-            design_spec=spec_str,
+            concept_block=self._format_concept_block(concept, bg, feedback),
+            canvas_width=spec.canvas.width,
+            canvas_height=spec.canvas.height,
+            bg_color=bg_color,
+            element_list=self._format_element_list(spec),
             safe_zones=safe_zones_str,
-            saliency_landscape=saliency_landscape_str,
             dominant_palette=palette_str,
             recommended_text_color=bg.recommended_text_color,
-            feedback=feedback_str,
-            previous_attempt=previous_attempt_str,
-            layout_tree=tree_str,
+            underlay_panels=self._format_underlay_panels(bg),
+            text_area_prior=self._format_text_area_prior(spec),
+            feedback_block=self._format_feedback_block(
+                feedback, prev_best_layout, prev_best_subscores, exemplars,
+                revision=revision,
+            ),
             format_example=FORMAT_EXAMPLE_JSON,
-            photo_size_prior=self._format_area_hints(spec),
-            composition_directive=self._format_composition_directive(spec),
-            self_render=_SELF_RENDER_NOTE if self_render_attached else "None",
-            exemplars=exemplars or "None",
         )
+
+    @staticmethod
+    def _format_concept_block(
+        concept: CompositionConcept,
+        bg: Optional[BackgroundAnalysis] = None,
+        feedback: Optional[AestheticFeedback] = None,
+    ) -> str:
+        """Render the art-director concept as the binding design brief.
+
+        Step 77: when the concept carries ``text_assignments``, each one is
+        rendered as a BINDING per-element destination; 'panel N' references
+        resolve to that panel's exact bbox from ``bg.underlay_regions`` so the
+        mapper gets concrete pixels, not prose.
+
+        Step 88 precedence rule: an OPEN LEDGER TARGET (a judge observation
+        with a target_bbox) OVERRIDES the concept's assignment for that
+        element. The Step 87 trace showed the mapper obeying the concept's
+        BINDING line over the ledger for three straight rounds -- the loop
+        deadlocks unless the ledger outranks the concept.
+        """
+        block = (
+            f"Name: {concept.name}\n"
+            f"Focal element: {concept.focal_element} -> {concept.focal_placement}\n"
+            f"Text placement: {concept.text_placement}\n"
+            f"Visual flow: {concept.visual_flow}\n"
+            f"Whitespace: {concept.whitespace}\n"
+            f"Typography mood: {concept.typography_mood}\n"
+            f"Text-photo relation: {concept.text_photo_relation}\n"
+        )
+        overrides = {}
+        if feedback is not None:
+            for obs in feedback.visual_observations:
+                if obs.target_bbox is not None:
+                    overrides.setdefault(obs.target_id, obs)
+
+        def _override_line(elem_id: str) -> str:
+            obs = overrides[elem_id]
+            left, top, right, bottom = obs.target_bbox
+            return (
+                f"  - {elem_id} -> LEDGER OVERRIDE ({obs.kind.value}): place "
+                f"{elem_id} INSIDE bbox [left={left}, top={top}, right={right}, "
+                f"bottom={bottom}]. This target comes from the judge's review "
+                f"and SUPERSEDES the concept's placement for this element."
+            )
+
+        if concept.text_assignments or overrides:
+            lines = []
+            regions = bg.underlay_regions if bg is not None else []
+            for elem_id, dest in concept.text_assignments.items():
+                if elem_id in overrides:
+                    lines.append(_override_line(elem_id))
+                    continue
+                resolved = dest
+                m = re.match(r"panel\s*(\d+)", dest.strip(), re.IGNORECASE)
+                if m and 1 <= int(m.group(1)) <= len(regions):
+                    region = regions[int(m.group(1)) - 1]
+                    left, top, right, bottom = region.bbox
+                    surface = (
+                        f"transparent frame over ~{region.dominant_color} backdrop"
+                        if region.panel_type == "frame"
+                        else f"fill {region.dominant_color}"
+                    )
+                    resolved = (
+                        f"{dest} = bbox [left={left}, top={top}, right={right}, "
+                        f"bottom={bottom}], {surface}: place "
+                        f"{elem_id} INSIDE this bbox, colour ~"
+                        f"{region.recommended_text_color}"
+                    )
+                lines.append(f"  - {elem_id} -> {resolved}")
+            for elem_id in overrides:
+                if elem_id not in concept.text_assignments:
+                    lines.append(_override_line(elem_id))
+            header = "Text assignments (BINDING -- realise each destination exactly"
+            if overrides:
+                header += "; LEDGER OVERRIDE lines outrank everything else"
+            block += header + "):\n" + "\n".join(lines) + "\n"
+        return block + (
+            "\nTranslate THIS concept into exact pixels. If the concept is "
+            "asymmetric, your coordinates must be asymmetric too -- do not "
+            "silently re-centre everything."
+        )
+
+    @staticmethod
+    def _format_element_list(spec: DesignSpec) -> str:
+        """Compact one-line-per-element listing (id, semantic/visual type, text).
+
+        Step 80: elements backed by a pre-rendered text bitmap (asset_ref
+        ``*_text.png``) get their NATURAL size appended -- the designer's own
+        typography at its intended scale. The mapper should place them at that
+        size (mild rescale allowed, aspect locked), which removes both the
+        font-fidelity gap and the size-timidity failure in one move.
+        """
+        lines = []
+        for el in spec.elements:
+            desc = f"- {el.id} ({el.semantic_type.value}/{el.visual_type.value})"
+            if el.content:
+                preview = el.content.strip().replace("\n", " ")
+                desc += f': "{preview[:80]}"'
+            from metagpt.ext.agentlayout.tools.text_bitmap_normalizer import (
+                is_r3_text_bitmap,
+                r3_prompt_descriptor,
+            )
+
+            if is_r3_text_bitmap(el.asset_ref):
+                desc += r3_prompt_descriptor(el.asset_ref)
+            elif el.asset_ref and el.asset_ref.endswith("_text.png"):
+                try:
+                    with Image.open(el.asset_ref) as img:
+                        nat_w, nat_h = img.size
+                    desc += (
+                        f" [pre-rendered text bitmap, natural size {nat_w}x{nat_h}px:"
+                        f" place at this size (0.8x-1.2x rescale allowed, KEEP the"
+                        f" aspect ratio); its font/colour are final -- omit"
+                        f" font_family/font_size/color for this element]"
+                    )
+                except (OSError, IOError):
+                    pass
+            lines.append(desc)
+        return "\n".join(lines) if lines else "(no elements)"
+
+    @staticmethod
+    def _format_text_area_prior(spec: DesignSpec) -> str:
+        """Render the `# GT-calibrated text size prior` block (Step 76c).
+
+        Anti-timidity prior for TEXT, mirroring the Step 60 photo prior that
+        fixed the same bias on the photo axis. Tail-end position + concrete
+        per-canvas pixel math + an executable instruction is the pattern
+        Step 60 measured as effective. Returns "None" when the spec has no
+        text elements so non-text briefs keep the prompt shape unchanged.
+        """
+        text_ids = [
+            el.id for el in spec.elements if el.visual_type == VisualType.TEXT
+        ]
+        if not text_ids:
+            return "None"
+        lo, hi = TEXT_AREA_TARGET
+        canvas_px = spec.canvas.width * spec.canvas.height
+        lo_px = int(canvas_px * lo)
+        hi_px = int(canvas_px * hi)
+        id_lines = "\n".join(f"  - {tid}" for tid in text_ids)
+        return (
+            f"ATTENTION: designer ground truths (N=1,902 Crello layouts) place TEXT\n"
+            f"so its combined union covers median {TEXT_AREA_GT['p50']:.0%} of the canvas "
+            f"(p25 {TEXT_AREA_GT['p25']:.0%},\np75 {TEXT_AREA_GT['p75']:.0%}, "
+            f"p90 {TEXT_AREA_GT['p90']:.0%}). Machine layouts that cluster small text\n"
+            f"(union < 10%) read as TIMID and fail both QC and the design_layout axis.\n"
+            f"For THIS {spec.canvas.width}x{spec.canvas.height} canvas, the text "
+            f"elements below must together\ncover {lo:.0%}-{hi:.0%} of the canvas = "
+            f"{lo_px:,}-{hi_px:,} px^2 total:\n"
+            f"{id_lines}\n"
+            f"Reach the target by ENLARGING font sizes (the title takes the largest\n"
+            f"share and may exceed 10% alone), NOT by stretching boxes around tiny\n"
+            f"text or overlapping text blocks."
+        )
+
+    @staticmethod
+    def _format_underlay_panels(bg: BackgroundAnalysis) -> str:
+        """Render the Step 76 baked-underlay feed-forward block.
+
+        Exact pixel bboxes on purpose: the CoordinateMapper responds to
+        explicit math-and-constraint instructions (Step 60), unlike the
+        Director which gets the same panels described in words only.
+        Returns "None." when the preprocessor did not run (non-SEGA inputs).
+        """
+        if not bg.underlay_regions:
+            return "None."
+        lines = []
+        for i, region in enumerate(bg.underlay_regions, 1):
+            left, top, right, bottom = region.bbox
+            if region.panel_type == "frame":
+                surface = (
+                    f"a transparent outlined frame; the backdrop showing "
+                    f"through is ~{region.dominant_color}"
+                )
+            else:
+                surface = f"fill {region.dominant_color}"
+            lines.append(
+                f"- panel {i}: bbox [left={left}, top={top}, right={right}, "
+                f"bottom={bottom}], {surface}. Text placed on "
+                f"this panel must fit INSIDE the bbox and use a contrasting "
+                f"colour (recommended {region.recommended_text_color})."
+            )
+        return "\n".join(lines)
+
+    def _format_feedback_block(
+        self,
+        feedback: Optional[AestheticFeedback],
+        prev_best_layout: Optional[Dict[str, Tuple[float, float, float, float]]],
+        prev_best_subscores: Optional[Dict[str, int]],
+        exemplars: Optional[str],
+        revision: bool = False,
+    ) -> str:
+        """Render the optional retry block.
+
+        Empty string on the cold first pass. Two modes (Step 84):
+          * micro-adjust (``revision=False``): typography/colour feedback --
+            keep the composition, nudge what the judge flagged.
+          * revision (``revision=True``): the concept was re-imagined after a
+            design reject. The previous layout is included as the REJECTED
+            baseline so the mapper has a contrast reference -- the user's
+            observation: without seeing the old coordinates, "fix it" has
+            nothing to fix against.
+        """
+        if feedback is None and not prev_best_layout and not exemplars:
+            return ""
+        if revision:
+            parts = [
+                "# Previous REJECTED layout (contrast reference -- do NOT keep it)\n"
+                "The concept above is a REVISION written against the judge's "
+                "criticisms below. The coordinates below are the rejected "
+                "attempt: your NEW layout must VISIBLY differ wherever a "
+                "criticism points at it. Re-submitting near-identical geometry "
+                "is a failure."
+            ]
+        else:
+            parts = ["# Adjust the previous attempt (keep the composition; fix what the judge flagged)"]
+        if feedback is not None:
+            if feedback.keep_constraints:
+                keep_lines = "\n".join(
+                    f"  - {obs.target_id} must STAY INSIDE bbox {obs.target_bbox}"
+                    f" ({obs.kind.value} -- already fixed)"
+                    for obs in feedback.keep_constraints
+                    if obs.target_bbox is not None
+                )
+                if keep_lines:
+                    parts.append(
+                        "KEEP constraints (already satisfied by the previous "
+                        "round -- do NOT undo these while adjusting anything "
+                        "else):\n" + keep_lines
+                    )
+            parts.append(json.dumps(
+                feedback.model_dump(exclude={"keep_constraints"}),
+                indent=2, ensure_ascii=False,
+            ))
+        prev = self._format_previous_attempt(prev_best_layout, prev_best_subscores)
+        if prev != "None":
+            parts.append(prev)
+        if exemplars:
+            parts.append(f"Reference exemplars:\n{exemplars}")
+        return "\n".join(parts)
 
     @staticmethod
     def _format_saliency_landscape(bg: BackgroundAnalysis) -> str:
@@ -1116,11 +937,26 @@ class GenerateLayout(Action):
 
     @staticmethod
     def _parse_response(rsp: str) -> CandidatesBatch:
-        """Strip markdown fences if present, then validate against CandidatesBatch."""
+        """Extract the candidate JSON and validate against CandidatesBatch.
+
+        The CoordinateMapper prompt asks the model to write 2-3 sentences of
+        reasoning before the JSON. Three extraction layers handle that:
+          1. a ```json fenced block (the requested format) -> CodeParser;
+          2. otherwise, the substring from the first '{' to the last '}'
+             (strips a bare reasoning prefix/suffix around raw JSON);
+          3. otherwise, the whole stripped text.
+        """
         text = rsp.strip()
         if "```" in text:
             try:
-                text = CodeParser.parse_code(text=text, lang="json") or text
+                fenced = CodeParser.parse_code(text=text, lang="json")
+                if fenced:
+                    text = fenced
             except Exception:
                 pass
+        if not text.lstrip().startswith("{"):
+            lo = text.find("{")
+            hi = text.rfind("}")
+            if lo != -1 and hi != -1 and hi > lo:
+                text = text[lo : hi + 1]
         return CandidatesBatch.model_validate_json(text)

@@ -1,0 +1,368 @@
+{
+  "schema_version": "a3.sega-evaluation.v1",
+  "protocol_version": "a3.sega-pku-protocol.v1",
+  "evaluation_id": "a3-general-n100-sega-v1",
+  "created_at": "2026-07-12T00:25:31.630832+00:00",
+  "mode": "evaluate",
+  "command": "/home/hui0705/.conda/envs/meta/bin/python /home/hui0705/MetaGPT/layout_agent/evaluate_a3_sega.py --run-dir /home/hui0705/MetaGPT/layout_agent/runs/a3/a3-general-n100-t2-l0-01 --evaluation-id a3-general-n100-sega-v1 --output-root /home/hui0705/MetaGPT/layout_agent/evaluations/a3-sega --saliency-mode basnet-isnet",
+  "command_argv": [
+    "/home/hui0705/.conda/envs/meta/bin/python",
+    "/home/hui0705/MetaGPT/layout_agent/evaluate_a3_sega.py",
+    "--run-dir",
+    "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-general-n100-t2-l0-01",
+    "--evaluation-id",
+    "a3-general-n100-sega-v1",
+    "--output-root",
+    "/home/hui0705/MetaGPT/layout_agent/evaluations/a3-sega",
+    "--saliency-mode",
+    "basnet-isnet"
+  ],
+  "source_runs": [
+    {
+      "run_id": "a3-general-n100-t2-l0-01",
+      "run_dir": "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-general-n100-t2-l0-01",
+      "summary": {
+        "path": "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-general-n100-t2-l0-01/a3_run_summary.json",
+        "sha256": "87dc57fd371b1ffd5142f9faf2dbb24c90a5b5f461e2cd68f332fa94526ff9b8",
+        "size_bytes": 10724
+      },
+      "manifest": {
+        "path": "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-general-n100-t2-l0-01/run_manifest.json",
+        "sha256": "27114e229958c361f1949a634b8ae76f884b317c0e05e00042eb898cce1b6b1d",
+        "size_bytes": 3478
+      },
+      "sample_ids": {
+        "path": "/home/hui0705/MetaGPT/layout_agent/runs/a3/a3-general-n100-t2-l0-01/sample_ids.json",
+        "sha256": "ceaa3334634219ff114959607e15f2f409cc255c3a1b7edb616ca528d06ee6d1",
+        "size_bytes": 2702
+      },
+      "summary_counts": {
+        "reported_total": 100,
+        "reported_completed": null,
+        "reported_failed": 0,
+        "reported_sample_n": 100,
+        "completed_n": 100,
+        "failed_n": 0,
+        "other_status_n": 0,
+        "formal_complete": true
+      },
+      "selection": {
+        "max_samples": null,
+        "selected_n": 100,
+        "formal_complete_run": true
+      },
+      "observed_counts": {
+        "selected_n": 100,
+        "source_valid_n": 100,
+        "source_skipped_n": 0,
+        "evaluated_n": 100,
+        "validated_only_n": 0
+      }
+    }
+  ],
+  "matched_samples": {
+    "count": 100,
+    "ordered_sample_ids": [
+      "59526eab95a7a863ddcdeb6c",
+      "5e7380974b3890eb0747d5c4",
+      "5da04604abc8ea6d1cbe2935",
+      "5f4799b9a637ee11e3cda600",
+      "595298e195a7a863ddce04c2",
+      "592fdcc595a7a863ddcdbde1",
+      "5d68df79e79a2a634ea55321",
+      "5c1e2e71133a78539266d649",
+      "5fbe1dc7a637ee11e37e5003",
+      "5a21a25cd8141396fe9a3ddd",
+      "5a21793fd8141396fe9a2b83",
+      "5c1e235d133a78539251c177",
+      "589b10aa95a7a863ddcc47e9",
+      "592d1c4f95a7a863ddcd99a0",
+      "5cd6984b7d4459dfe140c0b4",
+      "5db2addfabc8ea6d1c333fbc",
+      "5a328987d8141396fe9b856b",
+      "5f96895da637ee11e38af71a",
+      "59158b7095a7a863ddcd869c",
+      "5f881e9fa637ee11e348d19b",
+      "58b031ab95a7a863ddcc9590",
+      "58a4176f95a7a863ddcc6f46",
+      "58dbb63195a7a863ddccf77a",
+      "592fd54295a7a863ddcdb8e3",
+      "5f4e0040a637ee11e3bec594",
+      "5d4ae4aecf657b21effa9831",
+      "5e8f0039499b85dcc77d42f6",
+      "5b856b601cc8aa54294702eb",
+      "5aba3fb6f07aee69771b82ba",
+      "5fc4a73aa637ee11e335eb3e",
+      "5b407f331eb1c99e2a9c842a",
+      "5f50b4f1a637ee11e35331dc",
+      "5bf823e88caf671e1c07e8f0",
+      "5947c48595a7a863ddcddb2e",
+      "58ab189395a7a863ddcc7847",
+      "58ab0a6395a7a863ddcc737e",
+      "5cb89d0dadbc796055f8979f",
+      "5b8d554818654940f7f6384d",
+      "5bc0ac6978e1194aa673953f",
+      "5f85a97fa637ee11e360ac15",
+      "5b2e12d91eb1c99e2a182b41",
+      "5ca5cf0023c829c821fceeaf",
+      "5888dd7995a7a863ddcc2e86",
+      "5e7a36214b3890eb072fb652",
+      "592d1dd995a7a863ddcd9b7d",
+      "59527b2495a7a863ddcdf4c5",
+      "5e68e281b04a3d1f19b3ab85",
+      "5f718be2a637ee11e33eb689",
+      "589b130695a7a863ddcc4876",
+      "5b855d491cc8aa5429cfba88",
+      "5f96de4aa637ee11e3f23147",
+      "5bd1e93f78e1194aa6b847de",
+      "5df9fcaa9fea0cc37404d2d2",
+      "589dd69895a7a863ddcc5c93",
+      "5df218709fea0cc374bd7e9f",
+      "5ab0f6f7f07aee69772a1f1d",
+      "5bc09e2c78e1194aa64f905f",
+      "5fa157eba637ee11e309840c",
+      "591589eb95a7a863ddcd84d7",
+      "5c89040985ea3c16f9b71287",
+      "5cf14cf58cba87f9434f1d6f",
+      "5930135495a7a863ddcdc0ac",
+      "5ea2a28b499b85dcc726d7d6",
+      "5f994d42a637ee11e3dddca6",
+      "5dbbff2eabc8ea6d1c15c382",
+      "5db2bcf8abc8ea6d1c4c9cb8",
+      "5df211c29fea0cc374abbbba",
+      "5cd68c8b7d4459dfe1341b4b",
+      "5e8ece9d4b3890eb0711d458",
+      "5a3288d4d8141396fe9b8539",
+      "5f5b5a3da637ee11e3e5adbf",
+      "5931159f95a7a863ddcdc76c",
+      "5e45421a1cc98b350acda05c",
+      "5d234fcd8cba87f94325280c",
+      "58a4172995a7a863ddcc6eb8",
+      "5f6af7baa637ee11e3909ab1",
+      "5f48b9b9a637ee11e341870b",
+      "5abd0af44b568b8eec968c46",
+      "5aab8c95f07aee69776b2742",
+      "5fbb62b5a637ee11e3cce210",
+      "589dcf6a95a7a863ddcc5a05",
+      "5ce6d6a47d4459dfe1cd2b44",
+      "5df38d389fea0cc374c15178",
+      "5bd1c85078e1194aa6186300",
+      "58b5643195a7a863ddcca2ad",
+      "5a227705d8141396fe9a4657",
+      "5dbc2153abc8ea6d1c4e3c45",
+      "5e6f7e1c4b3890eb07240f9b",
+      "5e86d9124b3890eb0788e268",
+      "5cde64e47d4459dfe1b81863",
+      "5e8b2b454b3890eb0748ba51",
+      "5b855e7a1cc8aa5429da23d2",
+      "58e264ae95a7a863ddcd0528",
+      "5f23d114a637ee11e35f5c9e",
+      "58affed095a7a863ddcc8f6a",
+      "5cab554023c829c8214ab6a6",
+      "5e41700e9fea0cc37440961e",
+      "5fb77b26a637ee11e35420db",
+      "5b714f7b1cc8aa542914b74d",
+      "58ab0a9b95a7a863ddcc7397"
+    ],
+    "ordered_sample_ids_sha256": "561a3ee2f52fe78861623d16f77d9ab1af3069dcb702a9852ab6a10ff599e894"
+  },
+  "protocol_lineage": {
+    "schema_version": "a3.sega-evaluation.v1",
+    "protocol_version": "a3.sega-pku-protocol.v1",
+    "bbox_input": "A3 B0 left-top-width-height",
+    "bbox_metric_frame": "xyxy, clipped to canvas",
+    "validity_filter": {
+      "minimum_canvas_fraction": 0.001,
+      "comparison": "area >= threshold"
+    },
+    "alignment": "PKU layout-wide-min aggregation quirk",
+    "overlay_denominator": "non-underlay element count",
+    "underlay": "P-Full v1 has no legal underlay class; current A3 is N/A",
+    "readability": "background-only float64 Sobel; definition-aligned, not PKU bit-exact",
+    "blank_background": {
+      "renderer_contract": "R3",
+      "rgb": [
+        255,
+        255,
+        255
+      ]
+    },
+    "occlusion": {
+      "mode": "basnet-isnet",
+      "detector": {
+        "contract": "frozen BASNet + ISNet, pixel-wise maximum",
+        "fusion": "pixelwise_max",
+        "fail_closed": true,
+        "network_downloads_allowed": false,
+        "basnet": {
+          "model_id": "creative-graphic-design/BASNet",
+          "revision": "c04f6d78a10d2d558260629c3b00a9ed0568dbc6",
+          "load_contract": {
+            "revision_argument": "c04f6d78a10d2d558260629c3b00a9ed0568dbc6",
+            "from_pretrained_path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/snapshots/c04f6d78a10d2d558260629c3b00a9ed0568dbc6",
+            "local_files_only": true,
+            "trust_remote_code": true,
+            "force_download": false
+          },
+          "snapshot_path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/snapshots/c04f6d78a10d2d558260629c3b00a9ed0568dbc6",
+          "artifacts": {
+            "config.json": {
+              "path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/blobs/c4646206f7c2ccdcc26b6ec82f44ab4688a92479",
+              "sha256": "ab4be234682c7d12e4c3e13ffcc8b280065cf843041eb09b11ac34da5474e895",
+              "size_bytes": 299
+            },
+            "model.safetensors": {
+              "path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/blobs/83db9a738691a9eca622ec38fac24b31e5b47121bec65570a3cf83f0f00ede32",
+              "sha256": "83db9a738691a9eca622ec38fac24b31e5b47121bec65570a3cf83f0f00ede32",
+              "size_bytes": 348466168
+            },
+            "configuration_basnet.py": {
+              "path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/blobs/fe1998bb960a364ef88af93a437752eb4053ef4c",
+              "sha256": "c1bc7468735626fe48cf2ba2c5f7837ef48df791bbb005725e2b097b16d74041",
+              "size_bytes": 364
+            },
+            "modeling_basnet.py": {
+              "path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/blobs/4291067986b33b05b634598002e9b3c15547719a",
+              "sha256": "f8dd9e81d5ea0fc414ca0e0f0a30375d65234a5e91434f4c2b20804f95ff3491",
+              "size_bytes": 16207
+            }
+          }
+        },
+        "isnet": {
+          "model_id": "rembg/isnet-general-use",
+          "artifact": {
+            "path": "/home/hui0705/.u2net/isnet-general-use.onnx",
+            "sha256": "60920e99c45464f2ba57bee2ad08c919a52bbf852739e96947fbb4358c0d964a",
+            "md5": "fc16ebd8b0c10d971d3513d564d01e29",
+            "size_bytes": 178648008
+          },
+          "provider": "CPUExecutionProvider",
+          "download_path": "forbidden; direct verified ONNX bytes"
+        },
+        "pku_deviation": "ISNet replaces the PFPN branch used by PKU PosterLayout",
+        "implementation_sha256": "3b0a3a42df7000c8664cbc76e0084560a0dac0554dee640ca7d463b039ea3165",
+        "runtime_identity": {
+          "basnet": {
+            "model_id": "creative-graphic-design/BASNet",
+            "requested_revision": "c04f6d78a10d2d558260629c3b00a9ed0568dbc6",
+            "resolved_snapshot": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/snapshots/c04f6d78a10d2d558260629c3b00a9ed0568dbc6",
+            "from_pretrained_path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/snapshots/c04f6d78a10d2d558260629c3b00a9ed0568dbc6",
+            "local_files_only": true,
+            "trust_remote_code": true,
+            "force_download": false,
+            "model_class_module": "transformers_modules.c04f6d78a10d2d558260629c3b00a9ed0568dbc6.modeling_basnet",
+            "model_class_name": "BASNetModel",
+            "config_class_module": "transformers_modules.c04f6d78a10d2d558260629c3b00a9ed0568dbc6.configuration_basnet",
+            "config_class_name": "BASNetConfig",
+            "torch_version": "2.3.1+cu121",
+            "transformers_version": "4.57.6",
+            "executed_code": {
+              "configuration_basnet.py": {
+                "executed_path": "/home/hui0705/.cache/huggingface/modules/transformers_modules/c04f6d78a10d2d558260629c3b00a9ed0568dbc6/configuration_basnet.py",
+                "executed_sha256": "c1bc7468735626fe48cf2ba2c5f7837ef48df791bbb005725e2b097b16d74041",
+                "authoritative_path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/blobs/fe1998bb960a364ef88af93a437752eb4053ef4c",
+                "authoritative_sha256": "c1bc7468735626fe48cf2ba2c5f7837ef48df791bbb005725e2b097b16d74041"
+              },
+              "modeling_basnet.py": {
+                "executed_path": "/home/hui0705/.cache/huggingface/modules/transformers_modules/c04f6d78a10d2d558260629c3b00a9ed0568dbc6/modeling_basnet.py",
+                "executed_sha256": "f8dd9e81d5ea0fc414ca0e0f0a30375d65234a5e91434f4c2b20804f95ff3491",
+                "authoritative_path": "/home/hui0705/.cache/huggingface/hub/models--creative-graphic-design--BASNet/blobs/4291067986b33b05b634598002e9b3c15547719a",
+                "authoritative_sha256": "f8dd9e81d5ea0fc414ca0e0f0a30375d65234a5e91434f4c2b20804f95ff3491"
+              }
+            }
+          },
+          "isnet": {
+            "requested_model_name": "isnet-general-use",
+            "session_model_name": "isnet-general-use",
+            "session_reported_name": "isnet-general-use",
+            "session_class_module": "rembg.sessions.dis_general_use",
+            "session_class_name": "DisSession",
+            "rembg_version": "2.0.61",
+            "onnxruntime_version": "1.19.2",
+            "requested_providers": [
+              "CPUExecutionProvider"
+            ],
+            "active_providers": [
+              "CPUExecutionProvider"
+            ],
+            "available_providers": [
+              "AzureExecutionProvider",
+              "CPUExecutionProvider"
+            ],
+            "verified_artifact": {
+              "path": "/home/hui0705/.u2net/isnet-general-use.onnx",
+              "sha256": "60920e99c45464f2ba57bee2ad08c919a52bbf852739e96947fbb4358c0d964a",
+              "md5": "fc16ebd8b0c10d971d3513d564d01e29",
+              "size_bytes": 178648008
+            },
+            "session_construction": "direct verified bytes; downloader bypassed"
+          }
+        }
+      },
+      "sobel_fallback_forbidden": true
+    },
+    "code_runtime_lineage": {
+      "sources": {
+        "sega_metrics.py": {
+          "path": "/home/hui0705/MetaGPT/metagpt/ext/agentlayout/evaluation/sega_metrics.py",
+          "sha256": "d224caffcd4b6bbbe99b90b73c6c2df71aec59b521174741e0678cad32c48cef",
+          "size_bytes": 20675
+        },
+        "a3_sega_evaluator.py": {
+          "path": "/home/hui0705/MetaGPT/metagpt/ext/agentlayout/evaluation/a3_sega_evaluator.py",
+          "sha256": "afd178554579d2b6e8487d7ffe91d75dea37fecf899d21341b26ef0cfc375391",
+          "size_bytes": 68355
+        },
+        "evaluate_a3_sega.py": {
+          "path": "/home/hui0705/MetaGPT/layout_agent/evaluate_a3_sega.py",
+          "sha256": "372a62c4e688a3f9f7c32d6ee93e067ffbd06179ce4bc32868d0a0a956f90c5f",
+          "size_bytes": 17316
+        },
+        "saliency_basnet_isnet.py": {
+          "path": "/home/hui0705/MetaGPT/metagpt/ext/agentlayout/evaluation/saliency_basnet_isnet.py",
+          "sha256": "3b0a3a42df7000c8664cbc76e0084560a0dac0554dee640ca7d463b039ea3165",
+          "size_bytes": 18912
+        }
+      },
+      "runtime": {
+        "python": {
+          "version": "3.9.25",
+          "implementation": "CPython",
+          "executable": "/home/hui0705/.conda/envs/meta/bin/python3.9"
+        },
+        "platform": {
+          "system": "Linux",
+          "release": "5.15.0-139-generic",
+          "machine": "x86_64",
+          "platform": "Linux-5.15.0-139-generic-x86_64-with-glibc2.31"
+        },
+        "numpy": "1.26.4",
+        "cv2": "4.10.0",
+        "Pillow": "11.3.0",
+        "torch": "2.3.1+cu121",
+        "torchvision": "0.18.1+cu121",
+        "transformers": "4.57.6",
+        "rembg": "2.0.61",
+        "onnxruntime": "1.19.2",
+        "pydantic": "2.9.2",
+        "pooch": "v1.9.0",
+        "onnxruntime_available_providers": [
+          "AzureExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      }
+    }
+  },
+  "write_policy": {
+    "source_runs_read_only": true,
+    "output_is_versioned_sidecar": true,
+    "existing_output_overwrite": false,
+    "atomic_staging_publish": true,
+    "atomic_no_replace_publish": "renameat2(RENAME_NOREPLACE)"
+  },
+  "cost": {
+    "llm_api_calls": 0,
+    "llm_cost_usd": 0.0,
+    "model_downloads": 0
+  }
+}

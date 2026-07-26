@@ -35,22 +35,26 @@ from metagpt.utils.common import CodeParser
 class AssetInput(BaseModel):
     """A single raw asset before Analyst processes it.
 
-    Exactly one of ``asset_ref`` (image file path) or ``content`` (text string)
-    must be set. The CLIP preprocessor independently produces an embedding key
-    for each asset; that key is *not* surfaced to the Analyst — Analyst always
-    outputs ``embedding_key: null`` per the spec.
+    At least one of ``asset_ref`` (image file path) or ``content`` (text
+    string) must be set. Step 80 (2026-07-03) allows BOTH simultaneously for
+    pre-rendered text assets (``*_text.png``): the image carries the
+    designer's typography verbatim, while ``content`` carries the text string
+    so the Director can still reason about semantics. The CLIP preprocessor
+    independently produces an embedding key for each asset; that key is *not*
+    surfaced to the Analyst — Analyst always outputs ``embedding_key: null``
+    per the spec.
     """
 
     asset_ref: Optional[str] = None
     content: Optional[str] = None
 
     @model_validator(mode="after")
-    def _exactly_one_payload(self) -> "AssetInput":
+    def _at_least_one_payload(self) -> "AssetInput":
         has_ref = self.asset_ref is not None and self.asset_ref != ""
         has_content = self.content is not None and self.content != ""
-        if has_ref == has_content:
+        if not has_ref and not has_content:
             raise ValueError(
-                "AssetInput must set exactly one of 'asset_ref' or 'content'."
+                "AssetInput must set at least one of 'asset_ref' or 'content'."
             )
         return self
 
@@ -134,7 +138,7 @@ and output a structured Design Spec JSON for downstream layout agents.
 
 # Context
 User brief: {user_brief}
-Asset list (each item has asset_ref or content, and embedding_key): {asset_list}
+Asset list (each item has asset_ref, content, or BOTH for pre-rendered text): {asset_list}
 Previous feedback from Aesthetic Judge (if any): {feedback}
 
 # Constraint extraction rules
@@ -217,6 +221,25 @@ Rules for `_underlay.png` assets:
   visually supports. When the pairing is implied by the brief you MAY add a
   `z_order` hard_constraint with hint "above_background" on the underlay
   so the Layout Generator stacks it correctly.
+
+# Pre-rendered text assets (asset filename heuristic, Step 80)
+ATTENTION: Any asset whose `asset_ref` ends with the suffix `_text.png` is a
+PRE-RENDERED TEXT layer: the designer's typography (font, colour, effects)
+already baked into a transparent PNG. Its `content` field carries the text
+string it displays.
+
+Rules for `_text.png` assets:
+- The element you emit MUST have:
+    visual_type:   "image"      (it is placed as a bitmap, never re-typeset)
+    asset_ref:     <the exact `_text.png` path from asset_list>
+    content:       <the exact text string provided with the asset>
+    semantic_type: judged from the CONTENT string -- "title" for the main
+                   heading, "subtitle" / "body_text" / "cta" / "caption" as
+                   appropriate (same judgement as for plain text snippets).
+- Do NOT additionally emit a plain text element for the same string -- the
+  bitmap IS the text.
+- Do NOT mark these as `decorative_image` / `product_image` -- they carry the
+  design's message.
 
 # Format example
 {format_example}
